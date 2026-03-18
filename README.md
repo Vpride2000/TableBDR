@@ -1,73 +1,165 @@
-# React + TypeScript + Webpack
+# TableBDR — Budget Management Table with PostgreSQL
 
-This template provides a minimal setup to get React working in Webpack with HMR and some ESLint rules.
+A React + TypeScript + Webpack project with a collapsible budget table connected to PostgreSQL. Displays telecom and connectivity service budgets with expandable row groups.
 
-Currently, two official plugins are available:
+## 🚀 Quick Start
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+### Prerequisites
+- Node.js 20.18.2+
+- PostgreSQL 13+ (local or remote)
+- npm
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 1. Clone & Install
+```bash
+git clone https://github.com/Vpride2000/TableBDR.git
+cd TableBDR
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 2. Configure Environment
+Create `.env` file in root:
+```env
+PGHOST=127.0.0.1
+PGPORT=5432
+PGUSER=postgres
+PGPASSWORD=pgpwd4habr
+PGDATABASE=postgres
+SERVER_PORT=4000
 ```
+
+### 3. Start Backend (TypeScript)
+```bash
+npm run server
+```
+- Starts Express API on `http://localhost:4000`
+- Initializes PostgreSQL `service_budget` table
+- Populates 10 sample budget rows on first run
+
+### 4. Start Frontend (Development)
+In another terminal:
+```bash
+npm run dev
+```
+- Webpack dev server on `http://localhost:3005`
+- Hot Module Replacement (HMR) enabled
+- Auto-proxies `/api/*` requests to backend
+
+### 5. Open in Browser
+```
+http://localhost:3005
+```
+
+## 📦 Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start Webpack dev server (React HMR) |
+| `npm run server` | Start TypeScript backend (Express + PostgreSQL) |
+| `npm run test:db` | Test PostgreSQL connection |
+| `npm run build` | Build for production |
+| `npm run lint` | Run ESLint |
+
+## 🏗️ Project Structure
+
+```
+TableBDR/
+├── src/
+│   ├── App.tsx              # Main React component
+│   ├── BudgetTable.tsx      # Collapsible budget table
+│   ├── BudgetTable.css      # Table styles
+│   ├── App.css
+│   ├── index.css
+│   ├── main.tsx             # React entry point
+│   └── types.d.ts           # Type definitions
+├── server/
+│   └── index.ts             # Express API (TypeScript)
+├── scripts/
+│   └── testPostgresConnection.ts  # DB connection test
+├── public/
+│   └── icons.svg, favicon.svg
+├── webpack.config.js        # Webpack configuration
+├── tsconfig.json            # TypeScript config reference
+├── tsconfig.app.json        # Frontend TypeScript config
+├── tsconfig.server.json     # Backend TypeScript config
+├── .env                     # Local environment (not in git)
+└── package.json
+```
+
+## 🗄️ Database Schema
+
+**Table:** `service_budget`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL PRIMARY KEY | Row identifier |
+| `service_name` | TEXT | Service name |
+| `category` | TEXT | Service category (e.g., "Интернет", "Телефония") |
+| `monthly_cost` | NUMERIC | Monthly cost in rubles |
+| `notes` | TEXT | Additional notes |
+
+**Sample data:** 10 telecom service budget entries (automatically seeded)
+
+## 📋 Features
+
+- ✅ React 19 + TypeScript
+- ✅ Webpack bundler with dev server
+- ✅ PostgreSQL integration
+- ✅ Collapsible table rows (2 per group)
+- ✅ Express backend API
+- ✅ Full TypeScript (frontend + backend)
+- ✅ Hot Module Replacement (HMR)
+- ✅ ESLint + TypeScript strict mode
+
+## 🔌 API Endpoints
+
+### `GET /api/budget`
+Returns all budget entries.
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "service_name": "Мобильный интернет 10 ГБ",
+    "category": "Интернет",
+    "monthly_cost": 400,
+    "notes": "Базовый тариф для сотрудников в полевых условиях"
+  },
+  ...
+]
+```
+
+### `GET /api/health`
+Health check endpoint.
+
+**Response:**
+```json
+{ "status": "ok" }
+```
+
+## 🛠️ Development
+
+### Modify Table Data
+Edit `/server/index.ts` → `seed` array to add/modify budget entries.
+
+### TypeScript Configuration
+- **Frontend:** `tsconfig.app.json`
+- **Backend:** `tsconfig.server.json`
+
+### Build for Production
+```bash
+npm run build
+```
+Output: `dist/bundle.js`
+
+## 📝 Notes
+
+- `.env` is ignored by Git (keep secrets safe)
+- `node_modules` and `dist` are excluded from version control
+- Backend auto-seeds database on first run
+- Webpack proxy redirects `/api/*` to backend during dev
+
+## 📄 License
+
+MIT
+

@@ -1,16 +1,23 @@
-require('dotenv').config();
-
-const express = require('express');
-const { Client } = require('pg');
+import 'dotenv/config';
+import express, { Express, Request, Response } from 'express';
+import { Client, QueryResult } from 'pg';
 
 const PORT = process.env.SERVER_PORT ? Number(process.env.SERVER_PORT) : 4000;
 
-const app = express();
+const app: Express = express();
 
 // Use JSON payloads if needed later
 app.use(express.json());
 
-async function createDbClient() {
+interface ServiceBudgetRow {
+  id: number;
+  service_name: string;
+  category: string;
+  monthly_cost: number;
+  notes: string;
+}
+
+async function createDbClient(): Promise<Client> {
   const client = new Client({
     host: process.env.PGHOST || '127.0.0.1',
     port: Number(process.env.PGPORT || 5432),
@@ -22,7 +29,7 @@ async function createDbClient() {
   return client;
 }
 
-async function ensureBudgetTable(client) {
+async function ensureBudgetTable(client: Client): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS service_budget (
       id SERIAL PRIMARY KEY,
@@ -33,8 +40,10 @@ async function ensureBudgetTable(client) {
     );
   `);
 
-  const { rows } = await client.query('SELECT COUNT(*)::int AS count FROM service_budget');
-  const count = rows[0]?.count ?? 0;
+  const result: QueryResult<{ count: number }> = await client.query(
+    'SELECT COUNT(*)::int AS count FROM service_budget'
+  );
+  const count = result.rows[0]?.count ?? 0;
 
   if (count === 0) {
     const seed = [
@@ -118,13 +127,13 @@ async function ensureBudgetTable(client) {
   }
 }
 
-app.get('/api/budget', async (req, res) => {
+app.get('/api/budget', async (req: Request, res: Response): Promise<void> => {
   const client = await createDbClient();
   try {
-    const { rows } = await client.query(
-      'SELECT id, service_name, category, monthly_cost, notes FROM service_budget ORDER BY id ASC',
+    const result: QueryResult<ServiceBudgetRow> = await client.query(
+      'SELECT id, service_name, category, monthly_cost, notes FROM service_budget ORDER BY id ASC'
     );
-    res.json(rows);
+    res.json(result.rows);
   } catch (err) {
     console.error('Failed to fetch budget rows', err);
     res.status(500).json({ error: 'Failed to fetch budget data' });
@@ -133,11 +142,11 @@ app.get('/api/budget', async (req, res) => {
   }
 });
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (req: Request, res: Response): void => {
   res.json({ status: 'ok' });
 });
 
-async function start() {
+async function start(): Promise<void> {
   const client = await createDbClient();
   try {
     await ensureBudgetTable(client);
@@ -153,7 +162,7 @@ async function start() {
   });
 }
 
-start().catch((err) => {
+start().catch((err: unknown) => {
   console.error('Unexpected error starting server', err);
   process.exit(1);
 });

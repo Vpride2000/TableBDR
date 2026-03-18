@@ -1,12 +1,7 @@
-#!/usr/bin/env node
+import 'dotenv/config';
+import { Client } from 'pg';
 
-// Simple script to verify connectivity to a local PostgreSQL server.
-// Usage: node scripts/testPostgresConnection.js
-
-require('dotenv').config();
-const { Client } = require('pg');
-
-async function main() {
+async function main(): Promise<void> {
   const client = new Client({
     host: process.env.PGHOST || '127.0.0.1',
     port: Number(process.env.PGPORT || 5432),
