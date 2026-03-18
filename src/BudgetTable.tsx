@@ -6,6 +6,12 @@ export type BudgetRow = {
   service_name: string;
   category: string;
   monthly_cost: number;
+  consumption: string;
+  contract_date: string;
+  renewal_date: string;
+  provider: string;
+  status: string;
+  discount_percent: number;
   notes: string;
 };
 
@@ -61,8 +67,13 @@ export default function BudgetTable() {
               <th>ID</th>
               <th>Сервис</th>
               <th>Категория</th>
-              <th>Месяц (₽)</th>
-              <th>Примечание</th>
+              <th>Стоимость (₽)</th>
+              <th>Потребление</th>
+              <th>Дата контракта</th>
+              <th>Продление</th>
+              <th>Провайдер</th>
+              <th>Статус</th>
+              <th>Скидка %</th>
             </tr>
           </thead>
           {groups.map((group, groupIndex) => {
@@ -78,8 +89,19 @@ export default function BudgetTable() {
                   <td>{firstRow.service_name}</td>
                   <td>{firstRow.category}</td>
                   <td>{firstRow.monthly_cost}</td>
+                  <td>{firstRow.consumption}</td>
+                  <td>{firstRow.contract_date}</td>
+                  <td>{firstRow.renewal_date}</td>
+                  <td>{firstRow.provider}</td>
                   <td>
-                    <span className="budget-row__notes">{firstRow.notes}</span>
+                    <span
+                      className={`status status--${firstRow.status.toLowerCase()}`}
+                    >
+                      {firstRow.status}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="discount">{firstRow.discount_percent}%</span>
                     <button
                       className="budget-row__toggle"
                       type="button"
@@ -95,7 +117,20 @@ export default function BudgetTable() {
                     <td>{secondRow.service_name}</td>
                     <td>{secondRow.category}</td>
                     <td>{secondRow.monthly_cost}</td>
-                    <td>{secondRow.notes}</td>
+                    <td>{secondRow.consumption}</td>
+                    <td>{secondRow.contract_date}</td>
+                    <td>{secondRow.renewal_date}</td>
+                    <td>{secondRow.provider}</td>
+                    <td>
+                      <span
+                        className={`status status--${secondRow.status.toLowerCase()}`}
+                      >
+                        {secondRow.status}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="discount">{secondRow.discount_percent}%</span>
+                    </td>
                   </tr>
                 )}
               </tbody>

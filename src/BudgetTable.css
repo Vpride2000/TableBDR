@@ -1,7 +1,8 @@
 .budget {
-  max-width: 960px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 24px 16px;
+  overflow-x: auto;
 }
 
 .budget h1 {
@@ -14,19 +15,22 @@
   width: 100%;
   border-collapse: collapse;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.9rem;
+  white-space: nowrap;
 }
 
 .budget-table th,
 .budget-table td {
-  padding: 10px 12px;
+  padding: 10px 8px;
   border: 1px solid rgba(0, 0, 0, 0.12);
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .budget-table th {
   background: rgba(0, 0, 0, 0.04);
   font-weight: 600;
+  font-size: 0.85rem;
 }
 
 .budget-row--toggle {
@@ -48,8 +52,9 @@
   cursor: pointer;
   color: inherit;
   font-size: 0.9rem;
-  margin-left: 10px;
+  margin-left: 8px;
   padding: 0;
+  display: inline;
 }
 
 .budget-row__toggle:focus-visible {
@@ -57,13 +62,32 @@
   outline-offset: 2px;
 }
 
-.budget-row__notes {
+.status {
   display: inline-block;
-  max-width: 320px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: middle;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.status--активна {
+  background: rgba(76, 175, 80, 0.2);
+  color: #2e7d32;
+}
+
+.status--пассивна {
+  background: rgba(244, 67, 54, 0.2);
+  color: #b71c1c;
+}
+
+.discount {
+  display: inline-block;
+  background: rgba(255, 193, 7, 0.2);
+  color: #f57f17;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 0.85rem;
 }
 
 .hint {
@@ -74,4 +98,19 @@
 
 .hint--error {
   color: #b00020;
+}
+
+@media (max-width: 1024px) {
+  .budget {
+    padding: 16px 8px;
+  }
+
+  .budget-table {
+    font-size: 0.8rem;
+  }
+
+  .budget-table th,
+  .budget-table td {
+    padding: 6px 4px;
+  }
 }
