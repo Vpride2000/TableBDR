@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import './BudgetTable.css';
+import './styles.css';
 
 export type BudgetRow = {
   id: number;
@@ -85,22 +85,22 @@ export default function BudgetTable() {
                   className="budget-row budget-row--toggle"
                   onClick={() => toggleGroup(groupIndex)}
                 >
-                  <td>{firstRow.id}</td>
-                  <td>{firstRow.service_name}</td>
-                  <td>{firstRow.category}</td>
-                  <td>{firstRow.monthly_cost}</td>
-                  <td>{firstRow.consumption}</td>
-                  <td>{firstRow.contract_date}</td>
-                  <td>{firstRow.renewal_date}</td>
-                  <td>{firstRow.provider}</td>
-                  <td>
+                  <td data-label="ID">{firstRow.id}</td>
+                  <td data-label="Сервис">{firstRow.service_name}</td>
+                  <td data-label="Категория">{firstRow.category}</td>
+                  <td data-label="Стоимость">{firstRow.monthly_cost}</td>
+                  <td data-label="Потребление">{firstRow.consumption}</td>
+                  <td data-label="Дата контракта">{firstRow.contract_date}</td>
+                  <td data-label="Продление">{firstRow.renewal_date}</td>
+                  <td data-label="Провайдер">{firstRow.provider}</td>
+                  <td data-label="Статус">
                     <span
                       className={`status status--${firstRow.status.toLowerCase()}`}
                     >
                       {firstRow.status}
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Скидка">
                     <span className="discount">{firstRow.discount_percent}%</span>
                     <button
                       className="budget-row__toggle"
@@ -113,22 +113,22 @@ export default function BudgetTable() {
                 </tr>
                 {isExpanded && secondRow && (
                   <tr className="budget-row budget-row--detail">
-                    <td>{secondRow.id}</td>
-                    <td>{secondRow.service_name}</td>
-                    <td>{secondRow.category}</td>
-                    <td>{secondRow.monthly_cost}</td>
-                    <td>{secondRow.consumption}</td>
-                    <td>{secondRow.contract_date}</td>
-                    <td>{secondRow.renewal_date}</td>
-                    <td>{secondRow.provider}</td>
-                    <td>
+                    <td data-label="ID">{secondRow.id}</td>
+                    <td data-label="Сервис">{secondRow.service_name}</td>
+                    <td data-label="Категория">{secondRow.category}</td>
+                    <td data-label="Стоимость">{secondRow.monthly_cost}</td>
+                    <td data-label="Потребление">{secondRow.consumption}</td>
+                    <td data-label="Дата контракта">{secondRow.contract_date}</td>
+                    <td data-label="Продление">{secondRow.renewal_date}</td>
+                    <td data-label="Провайдер">{secondRow.provider}</td>
+                    <td data-label="Статус">
                       <span
                         className={`status status--${secondRow.status.toLowerCase()}`}
                       >
                         {secondRow.status}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Скидка">
                       <span className="discount">{secondRow.discount_percent}%</span>
                     </td>
                   </tr>

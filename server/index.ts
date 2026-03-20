@@ -23,6 +23,34 @@ interface ServiceBudgetRow {
   notes: string;
 }
 
+interface CustomerRow {
+  id: number;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+}
+
+interface OrderRow {
+  id: number;
+  customer_id: number;
+  order_date: string;
+  amount: number;
+  status: string;
+}
+
+interface OrderCustomerRow {
+  order_id: number;
+  order_date: string;
+  amount: number;
+  order_status: string;
+  customer_id: number;
+  customer_name: string;
+  email: string;
+  phone: string;
+  address: string;
+}
+
 async function createDbClient(): Promise<Client> {
   const client = new Client({
     host: process.env.PGHOST || '127.0.0.1',
@@ -326,6 +354,62 @@ async function ensureBudgetTable(client: Client): Promise<void> {
   }
 }
 
+async function ensureOrdersCustomersTables(client: Client): Promise<void> {
+  await client.query(`
+    DROP TABLE IF EXISTS orders CASCADE;
+    DROP TABLE IF EXISTS customers CASCADE;
+
+    CREATE TABLE customers (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT,
+      address TEXT
+    );
+
+    CREATE TABLE orders (
+      id SERIAL PRIMARY KEY,
+      customer_id INT NOT NULL REFERENCES customers(id),
+      order_date DATE NOT NULL,
+      amount NUMERIC NOT NULL,
+      status TEXT NOT NULL
+    );
+  `);
+
+  const custCount = await client.query('SELECT COUNT(*)::int AS count FROM customers');
+  const orderCount = await client.query('SELECT COUNT(*)::int AS count FROM orders');
+
+  if ((custCount.rows[0]?.count ?? 0) === 0 && (orderCount.rows[0]?.count ?? 0) === 0) {
+    const customers = [
+      { name: 'Иван Иванов', email: 'ivan@example.com', phone: '+7 (910) 123-45-67', address: 'Москва, ул. Ленина, 1' },
+      { name: 'Мария Петрова', email: 'maria@example.com', phone: '+7 (911) 234-56-78', address: 'Санкт-Петербург, Невский пр., 20' },
+      { name: 'Олег Смирнов', email: 'oleg@example.com', phone: '+7 (912) 345-67-89', address: 'Казань, ул. Пушкина, 5' },
+    ];
+
+    for (const c of customers) {
+      await client.query(
+        'INSERT INTO customers (name, email, phone, address) VALUES ($1, $2, $3, $4)',
+        [c.name, c.email, c.phone, c.address]
+      );
+    }
+
+    const orders = [
+      { customer_id: 1, order_date: '2025-02-10', amount: 150000, status: 'Создан' },
+      { customer_id: 2, order_date: '2025-03-01', amount: 54000, status: 'Выполнен' },
+      { customer_id: 3, order_date: '2025-01-15', amount: 220000, status: 'Отменен' },
+    ];
+
+    for (const o of orders) {
+      await client.query(
+        'INSERT INTO orders (customer_id, order_date, amount, status) VALUES ($1, $2, $3, $4)',
+        [o.customer_id, o.order_date, o.amount, o.status]
+      );
+    }
+
+    console.log('✅ Seeded customers and orders tables');
+  }
+}
+
 app.get('/api/budget', async (req: Request, res: Response): Promise<void> => {
   const client = await createDbClient();
   try {
@@ -341,6 +425,130 @@ app.get('/api/budget', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+app.get('/api/guide-data', async (req: Request, res: Response): Promise<void> => {
+  const client = await createDbClient();
+  try {
+    const result: QueryResult<OrderCustomerRow> = await client.query(
+      `SELECT
+         o.id AS order_id,
+         o.order_date,
+         o.amount,
+         o.status AS order_status,
+         c.id AS customer_id,
+         c.name AS customer_name,
+         c.email,
+         c.phone,
+         c.address
+       FROM orders o
+       JOIN customers c ON o.customer_id = c.id
+       ORDER BY o.id ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Failed to fetch guide data', err);
+    res.status(500).json({ error: 'Failed to fetch guide data' });
+  } finally {
+    await client.end();
+  }
+});
+
+app.post('/api/guide-data', async (req: Request, res: Response): Promise<void> => {
+  const {
+    order_date,
+    amount,
+    order_status,
+    customer_name,
+    email,
+    phone,
+    address,
+  } = req.body;
+
+  if (!order_date || amount == null || !order_status || !customer_name || !email) {
+    res.status(400).json({ error: 'Invalid payload' });
+    return;
+  }
+
+  const client = await createDbClient();
+  try {
+    await client.query('BEGIN');
+
+    const customerInsert = await client.query(
+      'INSERT INTO customers (name, email, phone, address) VALUES ($1, $2, $3, $4) RETURNING id',
+      [customer_name, email, phone, address]
+    );
+    const customerId = customerInsert.rows[0].id;
+
+    const orderInsert = await client.query(
+      'INSERT INTO orders (customer_id, order_date, amount, status) VALUES ($1, $2, $3, $4) RETURNING id',
+      [customerId, order_date, amount, order_status]
+    );
+
+    const orderId = orderInsert.rows[0].id;
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      order_id: orderId,
+      order_date,
+      amount,
+      order_status,
+      customer_id: customerId,
+      customer_name,
+      email,
+      phone,
+      address,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Failed to create guide data', err);
+    res.status(500).json({ error: 'Failed to create guide data' });
+  } finally {
+    await client.end();
+  }
+});
+
+app.put('/api/guide-data/:orderId', async (req: Request, res: Response): Promise<void> => {
+  const orderId = Number(req.params.orderId);
+  const {
+    order_date,
+    amount,
+    order_status,
+    customer_id,
+    customer_name,
+    email,
+    phone,
+    address,
+  } = req.body;
+
+  if (Number.isNaN(orderId) || !order_date || amount == null || !order_status || !customer_id) {
+    res.status(400).json({ error: 'Invalid payload' });
+    return;
+  }
+
+  const client = await createDbClient();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'UPDATE customers SET name = $1, email = $2, phone = $3, address = $4 WHERE id = $5',
+      [customer_name, email, phone, address, customer_id]
+    );
+
+    await client.query(
+      'UPDATE orders SET order_date = $1, amount = $2, status = $3 WHERE id = $4',
+      [order_date, amount, order_status, orderId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Failed to update guide data', err);
+    res.status(500).json({ error: 'Failed to update guide data' });
+  } finally {
+    await client.end();
+  }
+});
+
 app.get('/api/health', (req: Request, res: Response): void => {
   res.json({ status: 'ok' });
 });
@@ -349,8 +557,9 @@ async function start(): Promise<void> {
   const client = await createDbClient();
   try {
     await ensureBudgetTable(client);
+    await ensureOrdersCustomersTables(client);
   } catch (err) {
-    console.error('Error ensuring budget table exists', err);
+    console.error('Error ensuring database tables exist', err);
     process.exit(1);
   } finally {
     await client.end();
