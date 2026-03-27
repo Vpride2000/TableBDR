@@ -350,6 +350,22 @@ code,
   background: #6b7280;
 }
 
+.table-compact {
+  font-size: 0.75rem;
+  min-width: 720px;
+}
+
+.table-compact th,
+.table-compact td {
+  padding: 4px 5px;
+  line-height: 1.1;
+}
+
+.table-compact th {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 .guide-new-row {
   text-align: left;
   background: rgba(0, 0, 0, 0.02);
