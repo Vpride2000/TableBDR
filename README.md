@@ -32,8 +32,6 @@ SERVER_PORT=4000
 npm run server
 ```
 - Starts Express API on `http://localhost:4000`
-- Initializes PostgreSQL `service_budget` table
-- Populates 10 sample budget rows on first run
 
 ### 4. Start Frontend (Development)
 In another terminal:
@@ -87,17 +85,14 @@ TableBDR/
 
 ## 🗄️ Database Schema
 
-**Table:** `service_budget`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | SERIAL PRIMARY KEY | Row identifier |
-| `service_name` | TEXT | Service name |
-| `category` | TEXT | Service category (e.g., "Интернет", "Телефония") |
-| `monthly_cost` | NUMERIC | Monthly cost in rubles |
-| `notes` | TEXT | Additional notes |
-
-**Sample data:** 10 telecom service budget entries (automatically seeded)
+Проект использует доменную схему GN/PAO для бюджета связи:
+- `GN_bdr`
+- `GN_department`
+- `GN_departament_object`
+- `GN_dogovor`
+- `GN_contractor`
+- `GN_budget_network_item`
+- `PAO__budget_network_item`
 
 ## 📋 Features
 
@@ -111,23 +106,6 @@ TableBDR/
 - ✅ ESLint + TypeScript strict mode
 
 ## 🔌 API Endpoints
-
-### `GET /api/budget`
-Returns all budget entries.
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "service_name": "Мобильный интернет 10 ГБ",
-    "category": "Интернет",
-    "monthly_cost": 400,
-    "notes": "Базовый тариф для сотрудников в полевых условиях"
-  },
-  ...
-]
-```
 
 ### `GET /api/health`
 Health check endpoint.
@@ -156,7 +134,6 @@ Output: `dist/bundle.js`
 
 - `.env` is ignored by Git (keep secrets safe)
 - `node_modules` and `dist` are excluded from version control
-- Backend auto-seeds database on first run
 - Webpack proxy redirects `/api/*` to backend during dev
 
 ## 📄 License

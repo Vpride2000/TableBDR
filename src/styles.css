@@ -244,15 +244,259 @@ code,
   border-bottom-color: var(--accent);
 }
 
+.budget-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin: 8px 0 16px;
+}
+
+.page-action-btn {
+  cursor: pointer;
+  border: 1px solid #1d4ed8;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.page-action-btn--secondary {
+  border-color: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.06);
+  color: inherit;
+}
+
+.limit-cell-button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: #1d4ed8;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.limit-cell-button:hover,
+.limit-cell-button:focus-visible {
+  color: #1e40af;
+}
+
+.contract-cell-button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: #7c3aed;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.contract-cell-button:hover,
+.contract-cell-button:focus-visible {
+  color: #6d28d9;
+}
+
+.contract-details {
+  padding: 20px;
+}
+
+.contract-details-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 12px;
+}
+
+.contract-details-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: var(--text-h);
+}
+
+.contract-close-btn {
+  padding: 8px 16px;
+  border: 1px solid #d1d5db;
+  background: #f3f4f6;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  color: #374151;
+  transition: background-color 0.2s;
+}
+
+.contract-close-btn:hover {
+  background: #e5e7eb;
+}
+
+.contract-details-table {
+  width: 100%;
+}
+
+.contract-details-count {
+  margin-top: 12px;
+  font-size: 0.95rem;
+  color: #6b7280;
+  text-align: right;
+}
+
+.add-row-page .guide-new-row {
+  margin-top: 0;
+}
+
+.add-row-form-vertical {
+  max-width: 780px;
+}
+
+.form-fields-vertical {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.form-field-comment {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  opacity: 0.85;
+}
+
+.form-field input {
+  padding: 8px 10px;
+  font-size: 0.92rem;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.form-field select {
+  padding: 8px 10px;
+  font-size: 0.92rem;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.form-submit-btn {
+  align-self: flex-start;
+  padding: 8px 14px;
+  font-size: 0.95rem;
+  border: 1px solid #1d4ed8;
+  border-radius: 6px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.form-submit-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.limit-details-page {
+  max-width: 980px;
+}
+
+.limit-details-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.limit-details-card {
+  max-width: 840px;
+}
+
+.limit-details-meta {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+  font-size: 0.92rem;
+}
+
+.limit-lines-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.limit-lines-table {
+  min-width: 720px;
+}
+
+.limit-lines-table td input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.limit-calculation-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.limit-difference-ok {
+  color: #15803d;
+}
+
+.limit-difference-warning {
+  color: #b45309;
+}
+
+.limit-details-actions {
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .guide {
-  width: min(1100px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
   text-align: left;
   padding: 0 16px;
 }
 
 .guide h1 {
   margin: 0 0 16px;
+}
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.guide-section {
+  min-width: 0;
+}
+
+.guide-section h2 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  line-height: 1.2;
 }
 
 .budget-table {
@@ -303,7 +547,44 @@ code,
 
 .guide-table-wrap {
   overflow-x: auto;
-  margin-top: 16px;
+  margin-top: 8px;
+}
+
+.budget-summary-wrap {
+  margin-bottom: 14px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.budget-summary-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.budget-summary-wrap h2 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+
+.guide-table.budget-summary-table {
+  width: auto;
+  min-width: 420px;
+}
+
+.budget-summary-department-row td {
+  font-weight: 600;
+}
+
+.budget-summary-detail-row td {
+  font-size: 0.72rem;
+  opacity: 0.9;
+}
+
+.budget-summary-total-row td {
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .guide-table {
@@ -364,6 +645,64 @@ code,
 .table-compact th {
   font-size: 0.72rem;
   font-weight: 600;
+}
+
+.table-sort-button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.table-sort-button:hover {
+  text-decoration: underline;
+}
+
+.table-sort-button:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: 2px;
+}
+
+.filter-row th {
+  padding: 2px 4px;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.column-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  font-size: 0.76rem;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: var(--color-bg, #fff);
+  color: inherit;
+  outline: none;
+}
+
+.column-filter-input:focus {
+  border-color: #1976d2;
+  box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.15);
+}
+
+.guide-section .guide-table.table-compact {
+  min-width: 420px;
+}
+
+@media (max-width: 1200px) {
+  .guide-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .guide-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .guide-new-row {
