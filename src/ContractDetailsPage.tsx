@@ -41,7 +41,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
     void loadContractRows();
   }, [contractName]);
 
-  const columns = ['Статья бюджета УС', 'Подразделение', 'Статья бюджета', 'Предмет договора'];
+    const columns = ['Подразделение', 'Статья бюджета УС', 'Статья бюджета', 'Предмет договора'];
 
   return (
     <section className="contract-details">

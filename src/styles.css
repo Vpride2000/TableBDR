@@ -617,7 +617,7 @@ code,
   padding: 3px 5px;
 }
 
-.guide-table button {
+.guide-table button:not(.limit-cell-button):not(.contract-cell-button) {
   margin-right: 6px;
   cursor: pointer;
   border: none;
@@ -627,13 +627,122 @@ code,
   border-radius: 3px;
 }
 
-.guide-table button:last-child {
+.guide-table button:not(.limit-cell-button):not(.contract-cell-button):last-child {
   background: #6b7280;
 }
 
 .table-compact {
   font-size: 0.75rem;
   min-width: 720px;
+}
+
+.forecast-table .number-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.forecast-month-input {
+  width: 100%;
+  min-width: 88px;
+  box-sizing: border-box;
+  text-align: right;
+  font: inherit;
+  padding: 3px 6px;
+}
+
+.forecast-section {
+  padding: 0;
+  margin: 0;
+}
+
+.forecast-section-content {
+  margin: 0;
+  padding: 0;
+}
+
+.forecast-section-content h2 {
+  margin: 0;
+  line-height: 1;
+}
+
+.forecast-table-wrap {
+  margin: 0;
+  padding: 0;
+}
+
+.forecast-pivot-wrap {
+  margin-top: 6px;
+  padding: 0;
+}
+
+.forecast-subtitle {
+  margin: 0 0 4px;
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.forecast-table {
+  margin: 0;
+  font-size: 0.66rem;
+  min-width: 0;
+  width: max-content;
+}
+
+.forecast-table th,
+.forecast-table td {
+  padding: 0;
+  line-height: 1;
+}
+
+.forecast-table .number-cell {
+  padding: 0;
+}
+
+.forecast-pivot-table .number-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.forecast-pivot-table {
+  margin: 0;
+  font-size: 0.66rem;
+  min-width: 0;
+  width: max-content;
+}
+
+.forecast-pivot-table th,
+.forecast-pivot-table td {
+  padding: 0;
+  line-height: 1;
+}
+
+.forecast-total-col {
+  background: rgba(0, 0, 0, 0.05);
+  font-weight: 700;
+}
+
+.forecast-table .forecast-month-col {
+  width: 64px;
+  min-width: 64px;
+  max-width: 64px;
+}
+
+.forecast-month-input {
+  width: 64px;
+  min-width: 64px;
+  max-width: 64px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  height: 16px;
+  line-height: 1;
+  appearance: textfield;
+}
+
+.forecast-month-input::-webkit-outer-spin-button,
+.forecast-month-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .table-compact th,

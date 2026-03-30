@@ -5,6 +5,10 @@ type Row = Record<string, unknown>;
 type SortDirection = 'asc' | 'desc';
 const BDR_UPDATED_EVENT_KEY = 'bdr:last-update';
 type SelectOption = { value: string; label: string };
+const FINANCIAL_NUMBER_FORMATTER = new Intl.NumberFormat('ru-RU', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 const BDR_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> = {
   'Статья бюджета УС': { endpoint: '/api/gn/pao-budget-items', labelKey: 'PAO__budget_network_item' },
@@ -16,6 +20,10 @@ const BDR_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> 
 };
 
 const LOCKED_EDIT_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Лимит', 'Един. лимит']);
+const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Един. лимит', 'Предмет договора']);
+const COLUMN_TITLES: Record<string, string> = {
+  GN_bdr_ID: '№',
+};
 
 interface SortState {
   key: string;
@@ -45,6 +53,10 @@ function parseNumericValue(value: unknown): number {
     return Number.isNaN(parsed) ? 0 : parsed;
   }
   return 0;
+}
+
+function formatFinancialValue(value: unknown): string {
+  return FINANCIAL_NUMBER_FORMATTER.format(parseNumericValue(value));
 }
 
 interface BudgetTableProps {
@@ -136,6 +148,11 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
 
     return next;
   }, [columns]);
+
+  const visibleMainColumns = useMemo(
+    () => orderedColumns.filter((col) => !MAIN_HIDDEN_COLUMNS.has(col)),
+    [orderedColumns]
+  );
 
   const sortedData = useMemo(() => {
     if (!sort) return data;
@@ -348,13 +365,6 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
 
   return (
     <section className="budget">
-  
-      <div className="budget-actions">
-        <button type="button" className="page-action-btn" onClick={onAddRow}>
-          Добавить строку
-        </button>
-      </div>
-
       {loading && <p className="hint">Загрузка данных...</p>}
       {error && <p className="hint hint--error">Ошибка: {error}</p>}
       {!loading && !error && data.length === 0 && <p className="hint">Нет данных.</p>}
@@ -424,123 +434,133 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
       )}
 
       {!loading && !error && data.length > 0 && (
-        <div className="guide-table-wrap">
-          <table className="guide-table table-compact">
-            <thead>
-              <tr>
-                {orderedColumns.map((col) => (
-                  <th key={col}>
-                    <button
-                      type="button"
-                      className="table-sort-button"
-                      onClick={() => toggleSort(col)}
-                    >
-                      {col}
-                      {getSortMarker(col)}
-                    </button>
-                  </th>
-                ))}
-                <th>Действия</th>
-              </tr>
-              <tr className="filter-row">
-                {orderedColumns.map((col) => (
-                  <th key={col}>
-                    <input
-                      className="column-filter-input"
-                      type="text"
-                      value={filters[col] ?? ''}
-                      onChange={(e) => setFilter(col, e.target.value)}
-                      placeholder="Фильтр..."
-                    />
-                  </th>
-                ))}
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {filteredData.map((row, i) => {
-                const rowId = Number(row['GN_bdr_ID']);
-                const isEditing = editingRowId === rowId;
+        <>
+          <div className="guide-table-wrap">
+            <table className="guide-table table-compact">
+              <thead>
+                <tr>
+                  {visibleMainColumns.map((col) => (
+                    <th key={col}>
+                      <button
+                        type="button"
+                        className="table-sort-button"
+                        onClick={() => toggleSort(col)}
+                      >
+                        {COLUMN_TITLES[col] ?? col}
+                        {getSortMarker(col)}
+                      </button>
+                    </th>
+                  ))}
+                  <th>Действия</th>
+                </tr>
+                <tr className="filter-row">
+                  {visibleMainColumns.map((col) => (
+                    <th key={col}>
+                      {col === 'GN_bdr_ID' ? null : (
+                        <input
+                          className="column-filter-input"
+                          type="text"
+                          value={filters[col] ?? ''}
+                          onChange={(e) => setFilter(col, e.target.value)}
+                          placeholder="Фильтр..."
+                        />
+                      )}
+                    </th>
+                  ))}
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {filteredData.map((row, i) => {
+                  const rowId = Number(row['GN_bdr_ID']);
+                  const isEditing = editingRowId === rowId;
 
-                return (
-                  <tr key={i} className={isEditing ? 'editing' : ''}>
-                    {orderedColumns.map((col) => (
-                      <td key={col}>
-                        {isEditing && col !== 'GN_bdr_ID' && LOCKED_EDIT_COLUMNS.has(col) ? (
-                          String(draft[col] ?? '')
-                        ) : isEditing && col !== 'GN_bdr_ID' && BDR_SELECT_CONFIG[col] ? (
-                          (() => {
-                            const options = getSelectOptionsForColumn(col);
-                            const needsDepartment = col === 'Объект';
-                            const needsContractor = col === 'Договор';
-                            const disabled =
-                              (needsDepartment && !draft['Подразделение']) ||
-                              (needsContractor && !draft['Контрагент']);
+                  return (
+                    <tr key={i} className={isEditing ? 'editing' : ''}>
+                      {visibleMainColumns.map((col) => (
+                        <td key={col}>
+                          {isEditing && col !== 'GN_bdr_ID' && LOCKED_EDIT_COLUMNS.has(col) ? (
+                            String(draft[col] ?? '')
+                          ) : isEditing && col !== 'GN_bdr_ID' && BDR_SELECT_CONFIG[col] ? (
+                            (() => {
+                              const options = getSelectOptionsForColumn(col);
+                              const needsDepartment = col === 'Объект';
+                              const needsContractor = col === 'Договор';
+                              const disabled =
+                                (needsDepartment && !draft['Подразделение']) ||
+                                (needsContractor && !draft['Контрагент']);
 
-                            return (
-                          <select
-                            value={String(draft[col] ?? '')}
-                            onChange={(event) => updateDraft(col, event.target.value)}
-                            disabled={disabled}
-                          >
-                            <option value="">
-                              {needsDepartment && !draft['Подразделение']
-                                ? 'Сначала выберите Подразделение'
-                                : needsContractor && !draft['Контрагент']
-                                  ? 'Сначала выберите Контрагента'
-                                  : 'Выберите значение'}
-                            </option>
-                            {options.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
+                              return (
+                            <select
+                              value={String(draft[col] ?? '')}
+                              onChange={(event) => updateDraft(col, event.target.value)}
+                              disabled={disabled}
+                            >
+                              <option value="">
+                                {needsDepartment && !draft['Подразделение']
+                                  ? 'Сначала выберите Подразделение'
+                                  : needsContractor && !draft['Контрагент']
+                                    ? 'Сначала выберите Контрагента'
+                                    : 'Выберите значение'}
                               </option>
-                            ))}
-                          </select>
-                            );
-                          })()
-                        ) : isEditing && col !== 'GN_bdr_ID' ? (
-                          <input
-                            value={String(draft[col] ?? '')}
-                            onChange={(event) => updateDraft(col, event.target.value)}
-                          />
-                        ) : !isEditing && col === 'Лимит' ? (
-                          <button
-                            type="button"
-                            className="limit-cell-button"
-                            onClick={() => onOpenLimit(rowId)}
-                          >
-                            {String(row[col] ?? '')}
-                          </button>
-                        ) : !isEditing && col === 'Договор' && String(row[col] ?? '').trim() !== '' ? (
-                          <button
-                            type="button"
-                            className="contract-cell-button"
-                            onClick={() => onOpenContract(String(row[col] ?? ''))}
-                          >
-                            {String(row[col] ?? '')}
-                          </button>
+                              {options.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                              );
+                            })()
+                          ) : isEditing && col !== 'GN_bdr_ID' ? (
+                            <input
+                              value={String(draft[col] ?? '')}
+                              onChange={(event) => updateDraft(col, event.target.value)}
+                            />
+                          ) : !isEditing && col === 'Лимит' ? (
+                            <button
+                              type="button"
+                              className="limit-cell-button"
+                              onClick={() => onOpenLimit(rowId)}
+                            >
+                              {formatFinancialValue(row[col])}
+                            </button>
+                          ) : !isEditing && col === 'Договор' && String(row[col] ?? '').trim() !== '' ? (
+                            <button
+                              type="button"
+                              className="contract-cell-button"
+                              onClick={() => onOpenContract(String(row[col] ?? ''))}
+                            >
+                              {String(row[col] ?? '')}
+                            </button>
+                          ) : (
+                            String((isEditing ? draft[col] : row[col]) ?? '')
+                          )}
+                        </td>
+                      ))}
+                      <td>
+                        {!isEditing ? (
+                          <button type="button" onClick={() => startEdit(row)}>испр</button>
                         ) : (
-                          String((isEditing ? draft[col] : row[col]) ?? '')
+                          <>
+                            <button type="button" onClick={() => void saveEdit()} disabled={saving}>сохр</button>
+                            <button type="button" onClick={cancelEdit} disabled={saving}>отм</button>
+                          </>
                         )}
                       </td>
-                    ))}
-                    <td>
-                      {!isEditing ? (
-                        <button type="button" onClick={() => startEdit(row)}>испр</button>
-                      ) : (
-                        <>
-                          <button type="button" onClick={() => void saveEdit()} disabled={saving}>сохр</button>
-                          <button type="button" onClick={cancelEdit} disabled={saving}>отм</button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {saveError && <p className="hint hint--error">Ошибка редактирования: {saveError}</p>}
-        </div>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {saveError && <p className="hint hint--error">Ошибка редактирования: {saveError}</p>}
+          </div>
+
+          <div className="budget-actions">
+            <button type="button" className="page-action-btn" onClick={onAddRow}>
+              Добавить строку
+            </button>
+          </div>
+        </>
       )}
     </section>
   );
