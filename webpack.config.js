@@ -18,6 +18,7 @@ module.exports = {
             compilerOptions: {
               jsx: 'react-jsx',
             },
+            transpileOnly: true,
           },
         },
         exclude: /node_modules/,
