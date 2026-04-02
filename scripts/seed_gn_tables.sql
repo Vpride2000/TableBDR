@@ -49,7 +49,38 @@ INSERT INTO "GN_departament_object" ("GN_departament_object", "GN_department_FK"
   ('Склад оборудования', 5),
   ('Переговорная зона',  3);
 
--- 7. БДР (зависят от всех выше)
+-- 7. Договора (зависят от GN_contractor и GN_dogovor)
+INSERT INTO "GN_contracts" (
+  "GN_contract_contractor_FK",
+  "GN_contract_dogovor_FK",
+  "GN_contract_sed_launch_date",
+  "GN_contract_asez_load_date",
+  "GN_contract_state",
+  "GN_contract_status_updated_at"
+) VALUES
+  (1, 1, '2026-01-10', '2026-01-12', 'Запущен',     '2026-01-13'),
+  (2, 2, '2026-01-15', '2026-01-16', 'В работе',     '2026-01-17'),
+  (3, 3, '2026-01-20', '2026-01-22', 'Проверка',     '2026-01-23'),
+  (4, 4, '2026-01-25', '2026-01-27', 'Согласование', '2026-01-28'),
+  (5, 5, '2026-02-01', '2026-02-03', 'Завершен',     '2026-02-04');
+
+-- 8. ОКДП ТКО для ИС ПРИТ
+INSERT INTO "GN_invest_okdp_tko_is_prit" ("GN_invest_okdp_tko_is_prit") VALUES
+  ('3531100000000'),
+  ('3531200000000'),
+  ('3531300000000'),
+  ('3531400000000'),
+  ('3531500000000');
+
+-- 9. Огрузочный реквизит
+INSERT INTO "GN_invest_ogruz_rekvizit" ("GN_invest_ogruz_rekvizit") VALUES
+  ('Реквизит А'),
+  ('Реквизит Б'),
+  ('Реквизит В'),
+  ('Реквизит Г'),
+  ('Реквизит Д');
+
+-- 10. БДР (зависят от всех выше)
 INSERT INTO "GN_bdr" (
   "PAO_budget_network_item_FK",
   "GN_department_FK",

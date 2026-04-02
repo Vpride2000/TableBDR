@@ -4,15 +4,15 @@ import Guide from './Guide'
 import AddBudgetRowPage from './AddBudgetRowPage'
 import LimitDetailsPage from './LimitDetailsPage'
 import ContractDetailsPage from './ContractDetailsPage'
-import InvestProgramPage from './InvestProgramPage'
+import ContractsPage from './ContractsPage'
 import InvestProgramTablePage from './InvestProgramTablePage'
 import './styles.css'
 
-type Page = 'budget' | 'guide' | 'forecasts' | 'invest-program' | 'invest-program-table'
+type Page = 'budget' | 'guide' | 'forecasts' | 'contracts' | 'invest-program-table'
 
 function pageFromHash(hash: string): Page {
   if (hash === '#invest-program-table') return 'invest-program-table'
-  if (hash === '#invest-program') return 'invest-program'
+  if (hash === '#contracts') return 'contracts'
   if (hash === '#forecasts') return 'forecasts'
   if (hash === '#guide') return 'guide'
   return 'budget'
@@ -410,12 +410,12 @@ export default function App() {
   }, [isAddRowPopup, isLimitPopup, isContractPopup])
 
   function goTo(nextPage: Page): void {
-    if (nextPage === 'invest-program-table') {
-      window.location.hash = '#invest-program-table'
+    if (nextPage === 'contracts') {
+      window.location.hash = '#contracts'
       return
     }
-    if (nextPage === 'invest-program') {
-      window.location.hash = '#invest-program'
+    if (nextPage === 'invest-program-table') {
+      window.location.hash = '#invest-program-table'
       return
     }
     if (nextPage === 'forecasts') {
@@ -496,42 +496,45 @@ export default function App() {
   return (
     <main>
       <nav className="app-nav">
+        <div className="app-nav-center">
+          <a
+            href="#budget"
+            onClick={() => goTo('budget')}
+          >
+            Бюджет
+          </a>
+          <a
+            href="#contracts"
+            onClick={() => goTo('contracts')}
+          >
+            Договора
+          </a>
+          <a
+            href="#forecasts"
+            onClick={() => goTo('forecasts')}
+          >
+            Прогнозы
+          </a>
+          <a
+            href="#invest-program-table"
+            onClick={() => goTo('invest-program-table')}
+          >
+            Инвест.таблица
+          </a>
+        </div>
         <a
+          className="app-nav-guide"
           href="#guide"
           onClick={() => goTo('guide')}
         >
           Справочник
         </a>
-        <a
-          href="#budget"
-          onClick={() => goTo('budget')}
-        >
-          Бюджет
-        </a>
-        <a
-          href="#forecasts"
-          onClick={() => goTo('forecasts')}
-        >
-          Прогнозы
-        </a>
-        <a
-          href="#invest-program"
-          onClick={() => goTo('invest-program')}
-        >
-          Инвест.программа
-        </a>
-        <a
-          href="#invest-program-table"
-          onClick={() => goTo('invest-program-table')}
-        >
-          Инвест.таблица
-        </a>
       </nav>
 
       {page === 'guide' && <Guide />}
       {page === 'budget' && <BudgetTable onAddRow={openAddRowWindow} onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
+      {page === 'contracts' && <ContractsPage />}
       {page === 'forecasts' && <Forecasts />}
-      {page === 'invest-program' && <InvestProgramPage />}
       {page === 'invest-program-table' && <InvestProgramTablePage />}
     </main>
   )

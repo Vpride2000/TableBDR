@@ -54,6 +54,38 @@ CREATE TABLE IF NOT EXISTS "GN_departament_object" (
 COMMENT ON TABLE "GN_departament_object" IS 'Объекты Общества';
 
 
+CREATE TABLE IF NOT EXISTS "GN_contracts" (
+	"GN_contract_id" SERIAL NOT NULL UNIQUE,
+	"GN_contract_contractor_FK" INTEGER NOT NULL,
+	"GN_contract_dogovor_FK" INTEGER NOT NULL,
+	"GN_contract_sed_launch_date" DATE NOT NULL,
+	"GN_contract_asez_load_date" DATE NOT NULL,
+	"GN_contract_state" TEXT NOT NULL,
+	"GN_contract_status_updated_at" DATE NOT NULL,
+	PRIMARY KEY("GN_contract_id")
+);
+
+COMMENT ON TABLE "GN_contracts" IS 'Договора';
+
+
+CREATE TABLE IF NOT EXISTS "GN_invest_okdp_tko_is_prit" (
+	"GN_invest_okdp_tko_is_prit_id" SERIAL NOT NULL UNIQUE,
+	"GN_invest_okdp_tko_is_prit" TEXT NOT NULL,
+	PRIMARY KEY("GN_invest_okdp_tko_is_prit_id")
+);
+
+COMMENT ON TABLE "GN_invest_okdp_tko_is_prit" IS 'ОКДП ТКО для ИС ПРИТ';
+
+
+CREATE TABLE IF NOT EXISTS "GN_invest_ogruz_rekvizit" (
+	"GN_invest_ogruz_rekvizit_id" SERIAL NOT NULL UNIQUE,
+	"GN_invest_ogruz_rekvizit" TEXT NOT NULL,
+	PRIMARY KEY("GN_invest_ogruz_rekvizit_id")
+);
+
+COMMENT ON TABLE "GN_invest_ogruz_rekvizit" IS 'Огрузочный реквизит';
+
+
 CREATE TABLE IF NOT EXISTS "GN_bdr" (
 	"GN_bdr_ID" SERIAL NOT NULL UNIQUE,
 	"PAO_budget_network_item_FK" INTEGER NOT NULL,
@@ -78,6 +110,12 @@ ADD FOREIGN KEY("GN_contarctor_FK") REFERENCES "GN_contractor"("GN_c_id")
 ON UPDATE NO ACTION ON DELETE NO ACTION;
 ALTER TABLE "GN_departament_object"
 ADD FOREIGN KEY("GN_department_FK") REFERENCES "GN_department"("GN_Dep_id")
+ON UPDATE NO ACTION ON DELETE NO ACTION;
+ALTER TABLE "GN_contracts"
+ADD FOREIGN KEY("GN_contract_contractor_FK") REFERENCES "GN_contractor"("GN_c_id")
+ON UPDATE NO ACTION ON DELETE NO ACTION;
+ALTER TABLE "GN_contracts"
+ADD FOREIGN KEY("GN_contract_dogovor_FK") REFERENCES "GN_dogovor"("GN_dgv_id")
 ON UPDATE NO ACTION ON DELETE NO ACTION;
 ALTER TABLE "GN_bdr"
 ADD FOREIGN KEY("PAO_budget_network_item_FK") REFERENCES "PAO__budget_network_item"("PAO_b_id")

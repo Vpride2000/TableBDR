@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import './styles.css';
 
 type Row = Record<string, unknown>;
@@ -10,6 +10,8 @@ interface TableSection {
   entity: string;
   idColumn: string;
   data: Row[];
+  expanded: boolean;
+  loaded: boolean;
   loading: boolean;
   error: string | null;
 }
@@ -21,6 +23,8 @@ const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: s
   { title: 'Контрагенты', endpoint: '/api/gn/contractors', entity: 'contractors', idColumn: 'GN_c_id' },
   { title: 'Договоры', endpoint: '/api/gn/dogovors', entity: 'dogovors', idColumn: 'GN_dgv_id' },
   { title: 'Объекты', endpoint: '/api/gn/objects', entity: 'objects', idColumn: 'GN_do_id' },
+  { title: 'ОКДП ТКО для ИС ПРИТ', endpoint: '/api/gn/invest-okdp-tko-is-prit', entity: 'invest-okdp-tko-is-prit', idColumn: 'GN_invest_okdp_tko_is_prit_id' },
+  { title: 'Огрузочный реквизит', endpoint: '/api/gn/invest-ogruz-rekvizit', entity: 'invest-ogruz-rekvizit', idColumn: 'GN_invest_ogruz_rekvizit_id' },
 ];
 
 const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: string; valueKey: string; labelKey: string }>> = {
@@ -162,31 +166,67 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
 
 export default function Guide() {
   const [sections, setSections] = useState<TableSection[]>(
-    TABLE_DEFS.map((def) => ({ ...def, data: [], loading: true, error: null }))
+    TABLE_DEFS.map((def) => ({
+      ...def,
+      data: [],
+      expanded: false,
+      loaded: false,
+      loading: false,
+      error: null,
+    }))
   );
-
-  useEffect(() => {
-    TABLE_DEFS.forEach((def, idx) => {
-      fetch(def.endpoint)
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json() as Promise<Row[]>;
-        })
-        .then((data) => {
-          setSections((prev) =>
-            prev.map((s, i) => (i === idx ? { ...s, data, loading: false } : s))
-          );
-        })
-        .catch((err: Error) => {
-          setSections((prev) =>
-            prev.map((s, i) => (i === idx ? { ...s, error: err.message, loading: false } : s))
-          );
-        });
-    });
-  }, []);
 
   function onSectionRowsUpdate(endpoint: string, rows: Row[]): void {
     setSections((prev) => prev.map((section) => (section.endpoint === endpoint ? { ...section, data: rows } : section)));
+  }
+
+  function loadSectionData(endpoint: string): void {
+    setSections((prev) =>
+      prev.map((section) =>
+        section.endpoint === endpoint ? { ...section, loading: true, error: null } : section
+      )
+    );
+
+    void fetch(endpoint)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<Row[]>;
+      })
+      .then((data) => {
+        setSections((prev) =>
+          prev.map((section) =>
+            section.endpoint === endpoint
+              ? { ...section, data, loaded: true, loading: false, error: null }
+              : section
+          )
+        );
+      })
+      .catch((err: Error) => {
+        setSections((prev) =>
+          prev.map((section) =>
+            section.endpoint === endpoint
+              ? { ...section, loading: false, error: err.message, loaded: false }
+              : section
+          )
+        );
+      });
+  }
+
+  function toggleSection(endpoint: string): void {
+    const section = sections.find((item) => item.endpoint === endpoint);
+    if (!section) return;
+
+    const nextExpanded = !section.expanded;
+
+    setSections((prev) =>
+      prev.map((item) =>
+        item.endpoint === endpoint ? { ...item, expanded: nextExpanded } : item
+      )
+    );
+
+    if (nextExpanded && !section.loaded && !section.loading) {
+      loadSectionData(endpoint);
+    }
   }
 
   function buildFkOptions(section: TableSection): Record<string, SelectOption[]> {
@@ -212,16 +252,28 @@ export default function Guide() {
   }
 
   return (
-    <section className="guide">    
+    <section className="guide guide-directory">    
       <div className="guide-grid">
         {sections.map((section) => (
           <div key={section.endpoint} className="guide-section">
-            <h2>{section.title}</h2>
-            <DataTable
-              section={section}
-              onSectionRowsUpdate={onSectionRowsUpdate}
-              fkOptions={buildFkOptions(section)}
-            />
+            <h2>
+              <span>{section.title}</span>
+              <button
+                type="button"
+                className="guide-section-toggle"
+                onClick={() => toggleSection(section.endpoint)}
+                aria-expanded={section.expanded}
+              >
+                {section.expanded ? 'Свернуть' : 'Развернуть'}
+              </button>
+            </h2>
+            {section.expanded && (
+              <DataTable
+                section={section}
+                onSectionRowsUpdate={onSectionRowsUpdate}
+                fkOptions={buildFkOptions(section)}
+              />
+            )}
           </div>
         ))}
       </div>

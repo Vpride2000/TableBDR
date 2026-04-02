@@ -15,6 +15,98 @@ interface GnTableConfig {
   editableColumns: string[];
 }
 
+interface ReferenceTableDefinition {
+  entity: string;
+  tableName: string;
+  idColumn: string;
+  valueColumn: string;
+  title: string;
+  seedValues: string[];
+}
+
+const INVEST_REFERENCE_TABLES: ReferenceTableDefinition[] = [
+  {
+    entity: 'invest-okdp-tko-is-prit',
+    tableName: 'GN_invest_okdp_tko_is_prit',
+    idColumn: 'GN_invest_okdp_tko_is_prit_id',
+    valueColumn: 'GN_invest_okdp_tko_is_prit',
+    title: 'ОКДП ТКО для ИС ПРИТ',
+    seedValues: [
+      '3531100000000',
+      '3531200000000',
+      '3531300000000',
+      '3531400000000',
+      '3531500000000',
+    ],
+  },
+  {
+    entity: 'invest-ogruz-rekvizit',
+    tableName: 'GN_invest_ogruz_rekvizit',
+    idColumn: 'GN_invest_ogruz_rekvizit_id',
+    valueColumn: 'GN_invest_ogruz_rekvizit',
+    title: 'Огрузочный реквизит',
+    seedValues: [
+      'Реквизит А',
+      'Реквизит Б',
+      'Реквизит В',
+      'Реквизит Г',
+      'Реквизит Д',
+    ],
+  },
+];
+
+interface ContractRowSeed {
+  contractorId: number;
+  dogovorId: number;
+  sedLaunchDate: string;
+  asezLoadDate: string;
+  state: string;
+  statusUpdatedAt: string;
+}
+
+const CONTRACT_ROW_SEEDS: ContractRowSeed[] = [
+  {
+    contractorId: 1,
+    dogovorId: 1,
+    sedLaunchDate: '2026-01-10',
+    asezLoadDate: '2026-01-12',
+    state: 'Запущен',
+    statusUpdatedAt: '2026-01-13',
+  },
+  {
+    contractorId: 2,
+    dogovorId: 2,
+    sedLaunchDate: '2026-01-15',
+    asezLoadDate: '2026-01-16',
+    state: 'В работе',
+    statusUpdatedAt: '2026-01-17',
+  },
+  {
+    contractorId: 3,
+    dogovorId: 3,
+    sedLaunchDate: '2026-01-20',
+    asezLoadDate: '2026-01-22',
+    state: 'Проверка',
+    statusUpdatedAt: '2026-01-23',
+  },
+  {
+    contractorId: 4,
+    dogovorId: 4,
+    sedLaunchDate: '2026-01-25',
+    asezLoadDate: '2026-01-27',
+    state: 'Согласование',
+    statusUpdatedAt: '2026-01-28',
+  },
+  {
+    contractorId: 5,
+    dogovorId: 5,
+    sedLaunchDate: '2026-02-01',
+    asezLoadDate: '2026-02-03',
+    state: 'Завершен',
+    statusUpdatedAt: '2026-02-04',
+  },
+];
+
 const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
   departments: {
     tableName: 'GN_department',
@@ -45,6 +137,28 @@ const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
     tableName: 'GN_departament_object',
     idColumn: 'GN_do_id',
     editableColumns: ['GN_departament_object', 'GN_department_FK'],
+  },
+  contracts: {
+    tableName: 'GN_contracts',
+    idColumn: 'GN_contract_id',
+    editableColumns: [
+      'GN_contract_contractor_FK',
+      'GN_contract_dogovor_FK',
+      'GN_contract_sed_launch_date',
+      'GN_contract_asez_load_date',
+      'GN_contract_state',
+      'GN_contract_status_updated_at',
+    ],
+  },
+  'invest-okdp-tko-is-prit': {
+    tableName: 'GN_invest_okdp_tko_is_prit',
+    idColumn: 'GN_invest_okdp_tko_is_prit_id',
+    editableColumns: ['GN_invest_okdp_tko_is_prit'],
+  },
+  'invest-ogruz-rekvizit': {
+    tableName: 'GN_invest_ogruz_rekvizit',
+    idColumn: 'GN_invest_ogruz_rekvizit_id',
+    editableColumns: ['GN_invest_ogruz_rekvizit'],
   },
 };
 
@@ -80,6 +194,72 @@ async function createDbClient(): Promise<Client> {
   });
   await client.connect();
   return client;
+}
+
+async function ensureInvestReferenceTables(client: Client): Promise<void> {
+  for (const definition of INVEST_REFERENCE_TABLES) {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "${definition.tableName}" (
+        "${definition.idColumn}" SERIAL NOT NULL UNIQUE,
+        "${definition.valueColumn}" TEXT NOT NULL,
+        PRIMARY KEY("${definition.idColumn}")
+      )
+    `);
+
+    const rowCountResult = await client.query<{ row_count: string }>(
+      `SELECT COUNT(*)::text AS row_count
+       FROM "${definition.tableName}"`
+    );
+
+    if (Number(rowCountResult.rows[0]?.row_count ?? '0') > 0) {
+      continue;
+    }
+
+    for (const value of definition.seedValues) {
+      await client.query(
+        `INSERT INTO "${definition.tableName}" ("${definition.valueColumn}") VALUES ($1)`,
+        [value]
+      );
+    }
+  }
+}
+
+async function ensureContractsTable(client: Client): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_contracts" (
+      "GN_contract_id" SERIAL NOT NULL UNIQUE,
+      "GN_contract_contractor_FK" INTEGER NOT NULL REFERENCES "GN_contractor"("GN_c_id") ON DELETE NO ACTION,
+      "GN_contract_dogovor_FK" INTEGER NOT NULL REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE NO ACTION,
+      "GN_contract_sed_launch_date" DATE NOT NULL,
+      "GN_contract_asez_load_date" DATE NOT NULL,
+      "GN_contract_state" TEXT NOT NULL,
+      "GN_contract_status_updated_at" DATE NOT NULL,
+      PRIMARY KEY("GN_contract_id")
+    )
+  `);
+
+  const rowCountResult = await client.query<{ row_count: string }>(
+    `SELECT COUNT(*)::text AS row_count
+     FROM "GN_contracts"`
+  );
+
+  if (Number(rowCountResult.rows[0]?.row_count ?? '0') > 0) {
+    return;
+  }
+
+  for (const seed of CONTRACT_ROW_SEEDS) {
+    await client.query(
+      `INSERT INTO "GN_contracts" (
+         "GN_contract_contractor_FK",
+         "GN_contract_dogovor_FK",
+         "GN_contract_sed_launch_date",
+         "GN_contract_asez_load_date",
+         "GN_contract_state",
+         "GN_contract_status_updated_at"
+       ) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [seed.contractorId, seed.dogovorId, seed.sedLaunchDate, seed.asezLoadDate, seed.state, seed.statusUpdatedAt]
+    );
+  }
 }
 
 interface LimitCalculationLineInput {
@@ -210,6 +390,45 @@ app.get('/api/gn/objects', async (req: Request, res: Response): Promise<void> =>
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch GN_departament_object' });
+  } finally {
+    await client.end();
+  }
+});
+
+app.get('/api/gn/contracts', async (req: Request, res: Response): Promise<void> => {
+  const client = await createDbClient();
+  try {
+    const result = await client.query('SELECT * FROM "GN_contracts" ORDER BY "GN_contract_id" ASC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch GN_contracts' });
+  } finally {
+    await client.end();
+  }
+});
+
+app.get('/api/gn/invest-okdp-tko-is-prit', async (req: Request, res: Response): Promise<void> => {
+  const client = await createDbClient();
+  try {
+    const result = await client.query('SELECT * FROM "GN_invest_okdp_tko_is_prit" ORDER BY "GN_invest_okdp_tko_is_prit_id" ASC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch GN_invest_okdp_tko_is_prit' });
+  } finally {
+    await client.end();
+  }
+});
+
+app.get('/api/gn/invest-ogruz-rekvizit', async (req: Request, res: Response): Promise<void> => {
+  const client = await createDbClient();
+  try {
+    const result = await client.query('SELECT * FROM "GN_invest_ogruz_rekvizit" ORDER BY "GN_invest_ogruz_rekvizit_id" ASC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch GN_invest_ogruz_rekvizit' });
   } finally {
     await client.end();
   }
@@ -850,6 +1069,15 @@ app.get('/api/health', (req: Request, res: Response): void => {
 });
 
 async function start(): Promise<void> {
+  const client = await createDbClient();
+
+  try {
+    await ensureInvestReferenceTables(client);
+    await ensureContractsTable(client);
+  } finally {
+    await client.end();
+  }
+
   app.listen(PORT, () => {
     console.log(`🚀 Backend listening at http://localhost:${PORT}`);
   });
