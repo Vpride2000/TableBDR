@@ -4,11 +4,15 @@ import Guide from './Guide'
 import AddBudgetRowPage from './AddBudgetRowPage'
 import LimitDetailsPage from './LimitDetailsPage'
 import ContractDetailsPage from './ContractDetailsPage'
+import InvestProgramPage from './InvestProgramPage'
+import InvestProgramTablePage from './InvestProgramTablePage'
 import './styles.css'
 
-type Page = 'budget' | 'guide' | 'forecasts'
+type Page = 'budget' | 'guide' | 'forecasts' | 'invest-program' | 'invest-program-table'
 
 function pageFromHash(hash: string): Page {
+  if (hash === '#invest-program-table') return 'invest-program-table'
+  if (hash === '#invest-program') return 'invest-program'
   if (hash === '#forecasts') return 'forecasts'
   if (hash === '#guide') return 'guide'
   return 'budget'
@@ -406,6 +410,14 @@ export default function App() {
   }, [isAddRowPopup, isLimitPopup, isContractPopup])
 
   function goTo(nextPage: Page): void {
+    if (nextPage === 'invest-program-table') {
+      window.location.hash = '#invest-program-table'
+      return
+    }
+    if (nextPage === 'invest-program') {
+      window.location.hash = '#invest-program'
+      return
+    }
     if (nextPage === 'forecasts') {
       window.location.hash = '#forecasts'
       return
@@ -502,11 +514,25 @@ export default function App() {
         >
           Прогнозы
         </a>
+        <a
+          href="#invest-program"
+          onClick={() => goTo('invest-program')}
+        >
+          Инвест.программа
+        </a>
+        <a
+          href="#invest-program-table"
+          onClick={() => goTo('invest-program-table')}
+        >
+          Инвест.таблица
+        </a>
       </nav>
 
       {page === 'guide' && <Guide />}
       {page === 'budget' && <BudgetTable onAddRow={openAddRowWindow} onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
       {page === 'forecasts' && <Forecasts />}
+      {page === 'invest-program' && <InvestProgramPage />}
+      {page === 'invest-program-table' && <InvestProgramTablePage />}
     </main>
   )
 }

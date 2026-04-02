@@ -965,3 +965,54 @@ code,
 .hint--error {
   color: #b00020;
 }
+
+.invest-program-section {
+  padding-top: 0;
+}
+
+.invest-program-content {
+  padding: 14px;
+}
+
+.invest-program-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.invest-program-card {
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 10px 12px;
+}
+
+.invest-program-card h3 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+  color: #0c4a6e;
+}
+
+.invest-program-card p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #1f2937;
+}
+
+.invest-program-table-wrap {
+  margin-top: 8px;
+}
+
+.invest-program-table-min {
+  width: max-content;
+  min-width: 0;
+  font-size: 0.66rem;
+}
+
+.invest-program-table-min th,
+.invest-program-table-min td {
+  padding: 2px 4px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
