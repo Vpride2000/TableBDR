@@ -180,6 +180,11 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
     );
   }, [sortedData, filters, orderedColumns]);
 
+  const filteredLimitTotal = useMemo(
+    () => filteredData.reduce((sum, row) => sum + parseNumericValue(row['Лимит']), 0),
+    [filteredData]
+  );
+
   const summaryByDepartment = useMemo(() => {
     const totals = new Map<string, { total: number; byPaoItem: Map<string, number> }>();
 
@@ -439,18 +444,29 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
             <table className="guide-table table-compact">
               <thead>
                 <tr>
-                  {visibleMainColumns.map((col) => (
-                    <th key={col}>
-                      <button
-                        type="button"
-                        className="table-sort-button"
-                        onClick={() => toggleSort(col)}
-                      >
-                        {COLUMN_TITLES[col] ?? col}
-                        {getSortMarker(col)}
-                      </button>
-                    </th>
-                  ))}
+                  {visibleMainColumns.map((col) => {
+                    const isLimitColumn = col === 'Лимит';
+
+                    return (
+                      <th key={col}>
+                        <button
+                          type="button"
+                          className="table-sort-button"
+                          onClick={() => toggleSort(col)}
+                        >
+                          <span className={isLimitColumn ? 'budget-limit-header' : undefined}>
+                            {COLUMN_TITLES[col] ?? col}
+                            {isLimitColumn && (
+                              <span className="budget-limit-header-total">
+                                {FINANCIAL_NUMBER_FORMATTER.format(filteredLimitTotal)}
+                              </span>
+                            )}
+                          </span>
+                          {getSortMarker(col)}
+                        </button>
+                      </th>
+                    );
+                  })}
                   <th>Действия</th>
                 </tr>
                 <tr className="filter-row">

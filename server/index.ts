@@ -282,6 +282,19 @@ interface LimitCalculationResponseLine {
   note: string;
 }
 
+interface ForecastMonthlyApiRowInput {
+  rowId?: unknown;
+  monthlyValues?: unknown;
+  monthlyFactValues?: unknown;
+}
+
+interface ForecastMonthlyDbRow {
+  row_id: number | string;
+  month_index: number | string;
+  month_value: number | string;
+  month_fact_value: number | string;
+}
+
 async function ensureLimitCalculationTable(client: Client): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS "GN_bdr_limit_calculation" (
@@ -293,6 +306,46 @@ async function ensureLimitCalculationTable(client: Client): Promise<void> {
       "line_note" TEXT NOT NULL DEFAULT '',
       UNIQUE ("GN_bdr_ID_FK", "line_order")
     )
+  `);
+}
+
+async function ensureForecastMonthlyTable(client: Client): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_bdr_monthly_forecast" (
+      "GN_bdr_monthly_forecast_id" SERIAL PRIMARY KEY,
+      "budget_item" TEXT NOT NULL,
+      "contractor" TEXT NOT NULL,
+      "dogovor" TEXT NOT NULL,
+      "department" TEXT NOT NULL,
+      "GN_bdr_ID_FK" INTEGER,
+      "month_index" SMALLINT NOT NULL CHECK ("month_index" BETWEEN 0 AND 11),
+      "month_value" NUMERIC NOT NULL DEFAULT 0,
+      "month_fact_value" NUMERIC NOT NULL DEFAULT 0,
+      "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE ("budget_item", "contractor", "dogovor", "department", "month_index")
+    )
+  `);
+
+  await client.query(`
+    ALTER TABLE "GN_bdr_monthly_forecast"
+    ADD COLUMN IF NOT EXISTS "GN_bdr_ID_FK" INTEGER
+  `);
+
+  await client.query(`
+    ALTER TABLE "GN_bdr_monthly_forecast"
+    ADD COLUMN IF NOT EXISTS "month_fact_value" NUMERIC NOT NULL DEFAULT 0
+  `);
+
+  await client.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS "GN_bdr_monthly_forecast_row_month_uniq"
+    ON "GN_bdr_monthly_forecast" ("GN_bdr_ID_FK", "month_index")
+    WHERE "GN_bdr_ID_FK" IS NOT NULL
+  `);
+
+  await client.query(`
+    ALTER TABLE "GN_bdr_monthly_forecast"
+    DROP CONSTRAINT IF EXISTS "GN_bdr_monthly_forecast_budget_item_contractor_dogovor_depa_key"
   `);
 }
 
@@ -316,6 +369,210 @@ function buildFallbackCalculationLine(quantity: number, limit: number, unitLimit
     note: '',
   };
 }
+
+app.get('/api/gn/forecast-monthly', async (req: Request, res: Response): Promise<void> => {
+  const client = await createDbClient();
+  try {
+    await ensureForecastMonthlyTable(client);
+
+    const result = await client.query<ForecastMonthlyDbRow>(
+      `SELECT
+         "GN_bdr_ID_FK" AS row_id,
+         "month_index" AS month_index,
+        "month_value" AS month_value,
+        "month_fact_value" AS month_fact_value
+       FROM "GN_bdr_monthly_forecast"
+       WHERE "GN_bdr_ID_FK" IS NOT NULL
+       ORDER BY
+         "GN_bdr_ID_FK" ASC,
+         "month_index" ASC`
+    );
+
+    const grouped = new Map<number, {
+      rowId: number;
+      monthlyValues: number[];
+      monthlyFactValues: number[];
+    }>();
+
+    result.rows.forEach((row) => {
+      const rowId = Number(row.row_id);
+      const monthIndex = Number(row.month_index);
+      const monthValue = Number(row.month_value ?? 0);
+      const monthFactValue = Number(row.month_fact_value ?? 0);
+      if (!Number.isFinite(rowId)) {
+        return;
+      }
+
+      const existing = grouped.get(rowId) ?? {
+        rowId,
+        monthlyValues: new Array<number>(12).fill(0),
+        monthlyFactValues: new Array<number>(12).fill(0),
+      };
+
+      if (monthIndex >= 0 && monthIndex < 12) {
+        existing.monthlyValues[monthIndex] = Number.isFinite(monthValue) ? monthValue : 0;
+        existing.monthlyFactValues[monthIndex] = Number.isFinite(monthFactValue) ? monthFactValue : 0;
+      }
+
+      grouped.set(rowId, existing);
+    });
+
+    res.json({ rows: [...grouped.values()] });
+  } catch (err) {
+    console.error('Failed to fetch monthly forecast', err);
+    res.status(500).json({ error: 'Failed to fetch monthly forecast' });
+  } finally {
+    await client.end();
+  }
+});
+
+app.put('/api/gn/forecast-monthly', async (req: Request, res: Response): Promise<void> => {
+  const payload = req.body as { rows?: ForecastMonthlyApiRowInput[] };
+
+  if (!Array.isArray(payload.rows)) {
+    res.status(400).json({ error: 'Rows are required' });
+    return;
+  }
+
+  const validatedRows: Array<{
+    rowId: number;
+    monthlyValues: number[];
+    monthlyFactValues: number[];
+  }> = [];
+
+  try {
+    payload.rows.forEach((row, index) => {
+      const monthlyValuesRaw = row.monthlyValues;
+      if (!Array.isArray(monthlyValuesRaw) || monthlyValuesRaw.length !== 12) {
+        throw new Error(`Invalid monthlyValues in row ${index + 1}`);
+      }
+
+      const monthlyValues = monthlyValuesRaw.map((value, monthIndex) =>
+        toFiniteNumber(value, `row ${index + 1} month ${monthIndex + 1}`)
+      );
+
+      const monthlyFactValuesRaw = row.monthlyFactValues;
+      const monthlyFactValues = Array.isArray(monthlyFactValuesRaw)
+        ? monthlyFactValuesRaw.map((value, monthIndex) =>
+            toFiniteNumber(value, `row ${index + 1} fact month ${monthIndex + 1}`)
+          )
+        : new Array<number>(12).fill(0);
+
+      if (monthlyFactValues.length !== 12) {
+        throw new Error(`Invalid monthlyFactValues in row ${index + 1}`);
+      }
+
+      validatedRows.push({
+        rowId: toFiniteNumber(row.rowId, `row ${index + 1} rowId`),
+        monthlyValues,
+        monthlyFactValues,
+      });
+    });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid payload' });
+    return;
+  }
+
+  const client = await createDbClient();
+  try {
+    await client.query('BEGIN');
+    await ensureForecastMonthlyTable(client);
+
+    for (const row of validatedRows) {
+      const namesResult = await client.query<{
+        budget_item: string;
+        contractor: string;
+        dogovor: string;
+        department: string;
+      }>(
+        `SELECT
+           COALESCE(NULLIF(TRIM(bni."GN_budget_network_item"), ''), '—') AS budget_item,
+           COALESCE(NULLIF(TRIM(cnt."GN_contarctor"), ''), '—') AS contractor,
+           COALESCE(NULLIF(TRIM(dgv."GN_dogovor"), ''), '—') AS dogovor,
+           COALESCE(NULLIF(TRIM(dep."GN_department"), ''), '—') AS department
+         FROM "GN_bdr" b
+         JOIN "GN_budget_network_item" bni ON b."GN_budget_network_item_FK" = bni."GN_b_id"
+         JOIN "GN_contractor" cnt ON b."GN_contracor_FK" = cnt."GN_c_id"
+         JOIN "GN_dogovor" dgv ON b."GN_dogovor_FK" = dgv."GN_dgv_id"
+         JOIN "GN_department" dep ON b."GN_department_FK" = dep."GN_Dep_id"
+         WHERE b."GN_bdr_ID" = $1
+         LIMIT 1`,
+        [row.rowId]
+      );
+
+      if (namesResult.rowCount === 0) {
+        throw new Error(`Row ${row.rowId} not found`);
+      }
+
+      const names = namesResult.rows[0];
+
+      for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+        await client.query(
+          `INSERT INTO "GN_bdr_monthly_forecast" (
+             "GN_bdr_ID_FK",
+             "budget_item",
+             "contractor",
+             "dogovor",
+             "department",
+             "month_index",
+             "month_value",
+             "month_fact_value"
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT ("GN_bdr_ID_FK", "month_index") WHERE "GN_bdr_ID_FK" IS NOT NULL
+           DO UPDATE SET
+             "budget_item" = EXCLUDED."budget_item",
+             "contractor" = EXCLUDED."contractor",
+             "dogovor" = EXCLUDED."dogovor",
+             "department" = EXCLUDED."department",
+             "month_value" = EXCLUDED."month_value",
+             "month_fact_value" = EXCLUDED."month_fact_value",
+             "updated_at" = NOW()`,
+          [
+            row.rowId,
+            names.budget_item,
+            names.contractor,
+            names.dogovor,
+            names.department,
+            monthIndex,
+            row.monthlyValues[monthIndex],
+            row.monthlyFactValues[monthIndex],
+          ]
+        );
+      }
+
+      const rowLimit = row.monthlyValues.reduce((sum, value) => sum + value, 0);
+      await client.query(
+        `UPDATE "GN_bdr"
+         SET "GN_bdr_limit" = $1
+         WHERE "GN_bdr_ID" = $2`,
+        [rowLimit, row.rowId]
+      );
+    }
+
+    const deleteResult = await client.query(`
+      DELETE FROM "GN_bdr_monthly_forecast" forecast
+      WHERE forecast."GN_bdr_ID_FK" IS NOT NULL
+        AND NOT EXISTS (
+        SELECT 1
+        FROM "GN_bdr" b
+        WHERE b."GN_bdr_ID" = forecast."GN_bdr_ID_FK"
+      )
+    `);
+    const deletedStaleRows = deleteResult.rowCount ?? 0;
+
+    await client.query('COMMIT');
+    res.json({
+      savedRows: validatedRows.length,
+      deletedStaleRows,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Failed to save monthly forecast', err);
+    res.status(500).json({ error: 'Failed to save monthly forecast' });
+  } finally {
+    await client.end();
+  }
+});
 
 app.get('/api/gn/departments', async (req: Request, res: Response): Promise<void> => {
   const client = await createDbClient();
@@ -1074,6 +1331,7 @@ async function start(): Promise<void> {
   try {
     await ensureInvestReferenceTables(client);
     await ensureContractsTable(client);
+    await ensureForecastMonthlyTable(client);
   } finally {
     await client.end();
   }

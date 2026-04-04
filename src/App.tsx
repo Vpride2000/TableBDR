@@ -21,6 +21,7 @@ function pageFromHash(hash: string): Page {
 type ForecastSourceRow = Record<string, unknown>
 
 interface ForecastRow {
+  rowId: number
   'Статья бюджета': string
   Контрагент: string
   Договор: string
@@ -29,7 +30,14 @@ interface ForecastRow {
   totalLimit: number
 }
 
+interface ForecastMonthlyApiRow {
+  rowId: number
+  monthlyValues: number[]
+  monthlyFactValues?: number[]
+}
+
 type ForecastMonthlyEdits = Record<string, number[]>
+type ForecastMonthlyFactEdits = Record<string, number[]>
 
 const FORECAST_HIERARCHY_COLUMNS: Array<keyof Pick<ForecastRow, 'Статья бюджета' | 'Контрагент' | 'Договор' | 'Подразделение'>> = [
   'Статья бюджета',
@@ -37,6 +45,7 @@ const FORECAST_HIERARCHY_COLUMNS: Array<keyof Pick<ForecastRow, 'Статья б
   'Договор',
   'Подразделение',
 ]
+const FORECAST_FILTER_PLACEHOLDER = 'Все'
 
 const FORECAST_MONTH_LABELS = [
   'Янв',
@@ -57,6 +66,9 @@ const FORECAST_NUMBER_FORMATTER = new Intl.NumberFormat('ru-RU', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
+
+const FORECAST_UPDATED_EVENT_KEY = 'forecast:last-update'
+const BDR_UPDATED_EVENT_KEY = 'bdr:last-update'
 
 function toForecastKeyPart(value: unknown): string {
   const normalized = String(value ?? '').trim()
@@ -115,7 +127,43 @@ function buildRowSpans(rows: ForecastRow[]): Array<Record<string, number>> {
 }
 
 function getForecastRowKey(row: ForecastRow): string {
-  return `${row['Статья бюджета']}|${row.Контрагент}|${row.Договор}|${row.Подразделение}`
+  return String(row.rowId)
+}
+
+function normalizeMonthlyValues(values: number[]): number[] {
+  const normalized = new Array<number>(12).fill(0)
+
+  for (let index = 0; index < 12; index += 1) {
+    const value = values[index]
+    normalized[index] = Number.isFinite(value) ? value : 0
+  }
+
+  return normalized
+}
+
+function buildForecastRows(rows: ForecastSourceRow[]): ForecastRow[] {
+  const mapped = rows.map((row) => {
+    const rowId = toForecastNumber(row['GN_bdr_ID'])
+    const limit = toForecastNumber(row['Лимит'])
+
+    return {
+      rowId,
+      'Статья бюджета': toForecastKeyPart(row['Статья бюджета']),
+      Контрагент: toForecastKeyPart(row['Контрагент']),
+      Договор: toForecastKeyPart(row['Договор']),
+      Подразделение: toForecastKeyPart(row['Подразделение']),
+      monthlyValues: distributeByMonths(limit),
+      totalLimit: limit,
+    }
+  })
+
+  return mapped.sort((a, b) => {
+    for (const column of FORECAST_HIERARCHY_COLUMNS) {
+      const compare = a[column].localeCompare(b[column], 'ru')
+      if (compare !== 0) return compare
+    }
+    return a.rowId - b.rowId
+  })
 }
 
 function Forecasts() {
@@ -123,99 +171,153 @@ function Forecasts() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [monthlyEdits, setMonthlyEdits] = useState<ForecastMonthlyEdits>({})
-
-  useEffect(() => {
+  const [monthlyFactEdits, setMonthlyFactEdits] = useState<ForecastMonthlyFactEdits>({})
+  const [forecastFilters, setForecastFilters] = useState<Record<(typeof FORECAST_HIERARCHY_COLUMNS)[number], string>>({
+    'Статья бюджета': '',
+    Контрагент: '',
+    Договор: '',
+    Подразделение: '',
+  })
+  function loadForecastData(): Promise<void> {
     setLoading(true)
     setError(null)
 
-    fetch('/api/gn/bdr')
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json() as Promise<ForecastSourceRow[]>
+    return Promise.all([
+      fetch('/api/gn/bdr'),
+      fetch('/api/gn/forecast-monthly'),
+    ])
+      .then(async ([bdrResponse, forecastResponse]) => {
+        if (!bdrResponse.ok) throw new Error(`HTTP ${bdrResponse.status}`)
+        if (!forecastResponse.ok) throw new Error(`HTTP ${forecastResponse.status}`)
+
+        const [bdrRows, forecastPayload] = await Promise.all([
+          bdrResponse.json() as Promise<ForecastSourceRow[]>,
+          forecastResponse.json() as Promise<{ rows?: ForecastMonthlyApiRow[] }>,
+        ])
+
+        const nextMonthlyEdits: ForecastMonthlyEdits = {}
+        const nextMonthlyFactEdits: ForecastMonthlyFactEdits = {}
+        ;(forecastPayload.rows ?? []).forEach((row) => {
+          const key = String(toForecastNumber(row.rowId))
+
+          const values = Array.isArray(row.monthlyValues)
+            ? row.monthlyValues.map((value) => toForecastNumber(value))
+            : []
+          const factValues = Array.isArray(row.monthlyFactValues)
+            ? row.monthlyFactValues.map((value) => toForecastNumber(value))
+            : []
+
+          nextMonthlyEdits[key] = normalizeMonthlyValues(values)
+          nextMonthlyFactEdits[key] = normalizeMonthlyValues(factValues)
+        })
+
+        setRows(bdrRows)
+        setMonthlyEdits(nextMonthlyEdits)
+        setMonthlyFactEdits(nextMonthlyFactEdits)
       })
-      .then((data) => setRows(data))
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    void loadForecastData()
   }, [])
 
-  const forecastRows = useMemo(() => {
-    const aggregate = new Map<string, ForecastRow>()
+  useEffect(() => {
+    function onStorage(event: StorageEvent): void {
+      if (event.key !== FORECAST_UPDATED_EVENT_KEY) return
+      void loadForecastData()
+    }
 
-    rows.forEach((row) => {
-      const budget = toForecastKeyPart(row['Статья бюджета'])
-      const contractor = toForecastKeyPart(row['Контрагент'])
-      const contract = toForecastKeyPart(row['Договор'])
-      const department = toForecastKeyPart(row['Подразделение'])
-      const key = [budget, contractor, contract, department].join('||')
-      const limit = toForecastNumber(row['Лимит'])
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
-      const existing = aggregate.get(key)
-      if (existing) {
-        existing.totalLimit += limit
-        existing.monthlyValues = distributeByMonths(existing.totalLimit)
-      } else {
-        aggregate.set(key, {
-          'Статья бюджета': budget,
-          Контрагент: contractor,
-          Договор: contract,
-          Подразделение: department,
-          monthlyValues: distributeByMonths(limit),
-          totalLimit: limit,
-        })
-      }
+  const forecastRows = useMemo(() => buildForecastRows(rows), [rows])
+
+  const filteredForecastRows = useMemo(() => {
+    return forecastRows.filter((row) =>
+      FORECAST_HIERARCHY_COLUMNS.every((column) => {
+        const filterValue = forecastFilters[column].trim()
+        if (!filterValue) return true
+        return row[column] === filterValue
+      })
+    )
+  }, [forecastRows, forecastFilters])
+
+  const filteredRowSpans = useMemo(() => buildRowSpans(filteredForecastRows), [filteredForecastRows])
+
+  const forecastFilterOptions = useMemo(() => {
+    const options: Record<(typeof FORECAST_HIERARCHY_COLUMNS)[number], string[]> = {
+      'Статья бюджета': [],
+      Контрагент: [],
+      Договор: [],
+      Подразделение: [],
+    }
+
+    FORECAST_HIERARCHY_COLUMNS.forEach((column) => {
+      options[column] = [...new Set(forecastRows.map((row) => row[column]))].sort((a, b) => a.localeCompare(b, 'ru'))
     })
 
-    return [...aggregate.values()].sort((a, b) => {
-      for (const column of FORECAST_HIERARCHY_COLUMNS) {
-        const compare = a[column].localeCompare(b[column], 'ru')
-        if (compare !== 0) return compare
-      }
-      return 0
-    })
-  }, [rows])
-
-  const rowSpans = useMemo(() => buildRowSpans(forecastRows), [forecastRows])
+    return options
+  }, [forecastRows])
 
   function getDisplayedMonthlyValues(row: ForecastRow): number[] {
     return monthlyEdits[getForecastRowKey(row)] ?? row.monthlyValues
   }
 
-  function updateMonthlyValue(row: ForecastRow, monthIndex: number, rawValue: string): void {
-    const rowKey = getForecastRowKey(row)
-    const parsed = rawValue.trim() === '' ? 0 : toForecastNumber(rawValue)
+  function getDisplayedMonthlyFactValues(row: ForecastRow): number[] {
+    return monthlyFactEdits[getForecastRowKey(row)] ?? new Array<number>(12).fill(0)
+  }
 
-    setMonthlyEdits((prev) => {
-      const base = prev[rowKey] ?? row.monthlyValues
-      const nextValues = [...base]
-      nextValues[monthIndex] = parsed
-      return { ...prev, [rowKey]: nextValues }
-    })
+  function getForecastCellStatusClass(planValue: number, factValue: number): string {
+    if (factValue === 0) return 'forecast-month-cell--zero-fact'
+    if (Math.abs(planValue - factValue) < 0.005) return 'forecast-month-cell--match'
+    return 'forecast-month-cell--mismatch'
+  }
+
+  function setForecastFilter(column: (typeof FORECAST_HIERARCHY_COLUMNS)[number], value: string): void {
+    setForecastFilters((prev) => ({ ...prev, [column]: value }))
+  }
+
+
+  function openForecastMonthPopup(monthIndex: number): void {
+    const popupUrl = `${window.location.pathname}#forecast-month-window-${monthIndex}`
+    const popup = window.open(
+      popupUrl,
+      `forecast-month-window-${monthIndex}`,
+      'popup=yes,width=1100,height=820,resizable=yes,scrollbars=yes'
+    )
+
+    if (popup) {
+      popup.focus()
+    }
   }
 
   const totalByMonths = useMemo(() => {
     const totals = new Array<number>(12).fill(0)
-    forecastRows.forEach((row) => {
+    filteredForecastRows.forEach((row) => {
       getDisplayedMonthlyValues(row).forEach((value, index) => {
         totals[index] += value
       })
     })
     return totals
-  }, [forecastRows, monthlyEdits])
+  }, [filteredForecastRows, monthlyEdits])
 
   const grandTotal = useMemo(
     () =>
-      forecastRows.reduce(
+      filteredForecastRows.reduce(
         (sum, row) => sum + getDisplayedMonthlyValues(row).reduce((acc, value) => acc + value, 0),
         0
       ),
-    [forecastRows, monthlyEdits]
+    [filteredForecastRows, monthlyEdits]
   )
 
   const limitPivot = useMemo(() => {
     const departmentsSet = new Set<string>()
     const byBudget = new Map<string, Map<string, number>>()
 
-    forecastRows.forEach((row) => {
+    filteredForecastRows.forEach((row) => {
       const budget = row['Статья бюджета']
       const department = row.Подразделение
       const rowTotal = getDisplayedMonthlyValues(row).reduce((sum, value) => sum + value, 0)
@@ -263,17 +365,21 @@ function Forecasts() {
       totalsByDepartment,
       total,
     }
-  }, [forecastRows, monthlyEdits])
+  }, [filteredForecastRows, monthlyEdits])
 
   return (
     <section className="guide forecast-section">
       <div className="guide-section forecast-section-content">
         <h2>Прогнозы расходов лимита по месяцам</h2>
+        <p className="hint">Для редактирования нажмите на название месяца. Откроется отдельное окно с соседними месяцами.</p>
         {loading && <p className="hint">Загрузка данных...</p>}
         {error && <p className="hint hint--error">Ошибка: {error}</p>}
         {!loading && !error && forecastRows.length === 0 && <p className="hint">Нет данных для прогноза.</p>}
+        {!loading && !error && forecastRows.length > 0 && filteredForecastRows.length === 0 && (
+          <p className="hint">Нет данных, подходящих под выбранные фильтры.</p>
+        )}
 
-        {!loading && !error && forecastRows.length > 0 && (
+        {!loading && !error && forecastRows.length > 0 && filteredForecastRows.length > 0 && (
           <>
             <div className="guide-table-wrap forecast-table-wrap">
               <table className="guide-table table-compact forecast-table">
@@ -282,45 +388,79 @@ function Forecasts() {
                     {FORECAST_HIERARCHY_COLUMNS.map((column) => (
                       <th key={column}>{column}</th>
                     ))}
-                    {FORECAST_MONTH_LABELS.map((month) => (
-                      <th key={month} className="number-cell forecast-month-col">{month}</th>
-                    ))}
+                    {FORECAST_MONTH_LABELS.map((month, monthIndex) => {
+                      return (
+                        <th key={month} className="number-cell forecast-month-col forecast-month-header">
+                          <button
+                            type="button"
+                            className="forecast-month-header-button"
+                            onClick={() => openForecastMonthPopup(monthIndex)}
+                            title="Нажмите, чтобы открыть popup редактирования месяца"
+                          >
+                            {month}
+                          </button>
+                        </th>
+                      )
+                    })}
                     <th className="number-cell forecast-total-col">Итого за год</th>
+                  </tr>
+                  <tr className="filter-row">
+                    {FORECAST_HIERARCHY_COLUMNS.map((column) => (
+                      <th key={`forecast-filter-${column}`}>
+                        <select
+                          className="column-filter-input forecast-column-filter-select"
+                          value={forecastFilters[column]}
+                          onChange={(event) => setForecastFilter(column, event.target.value)}
+                        >
+                          <option value="">{FORECAST_FILTER_PLACEHOLDER}</option>
+                          {forecastFilterOptions[column].map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </th>
+                    ))}
+                    {FORECAST_MONTH_LABELS.map((month) => (
+                      <th key={`forecast-filter-${month}`} />
+                    ))}
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
-                  {forecastRows.map((row, rowIndex) => {
+                  {filteredForecastRows.map((row, rowIndex) => {
                     const rowKey = getForecastRowKey(row)
                     const displayedMonthlyValues = getDisplayedMonthlyValues(row)
+                    const displayedMonthlyFactValues = getDisplayedMonthlyFactValues(row)
                     const rowTotal = displayedMonthlyValues.reduce((sum, value) => sum + value, 0)
 
                     return (
-                    <tr key={rowKey}>
-                      {FORECAST_HIERARCHY_COLUMNS.map((column) => {
-                        const span = rowSpans[rowIndex]?.[column] ?? 0
-                        if (span === 0) return null
+                      <tr key={rowKey}>
+                        {FORECAST_HIERARCHY_COLUMNS.map((column) => {
+                          const span = filteredRowSpans[rowIndex]?.[column] ?? 0
+                          if (span === 0) return null
 
-                        return (
-                          <td key={`${column}-${rowIndex}`} rowSpan={span}>
-                            {row[column]}
+                          return (
+                            <td key={`${column}-${rowIndex}`} rowSpan={span}>
+                              {row[column]}
+                            </td>
+                          )
+                        })}
+
+                        {displayedMonthlyValues.map((value, monthIndex) => (
+                          <td
+                            key={`month-${rowIndex}-${monthIndex}`}
+                            className={`number-cell forecast-month-col forecast-month-cell--locked ${getForecastCellStatusClass(value, displayedMonthlyFactValues[monthIndex] ?? 0)}`}
+                            title={`План: ${FORECAST_NUMBER_FORMATTER.format(value)}; Факт: ${FORECAST_NUMBER_FORMATTER.format(displayedMonthlyFactValues[monthIndex] ?? 0)}`}
+                          >
+                            <span className="forecast-month-value">{FORECAST_NUMBER_FORMATTER.format(value)}</span>
                           </td>
-                        )
-                      })}
+                        ))}
 
-                      {displayedMonthlyValues.map((value, monthIndex) => (
-                        <td key={`month-${rowIndex}-${monthIndex}`} className="number-cell forecast-month-col">
-                          <input
-                            className="forecast-month-input"
-                            type="number"
-                            step="0.01"
-                            value={Number.isFinite(value) ? value : 0}
-                            onChange={(event) => updateMonthlyValue(row, monthIndex, event.target.value)}
-                          />
+                        <td className="number-cell forecast-total-col">
+                          {FORECAST_NUMBER_FORMATTER.format(rowTotal)}
                         </td>
-                      ))}
-
-                      <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(rowTotal)}</td>
-                    </tr>
+                      </tr>
                     )
                   })}
                 </tbody>
@@ -383,6 +523,246 @@ function Forecasts() {
   )
 }
 
+interface ForecastMonthPopupPageProps {
+  monthIndex: number
+  onBack: () => void
+}
+
+function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPageProps) {
+  const [rows, setRows] = useState<ForecastSourceRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
+  const [monthlyEdits, setMonthlyEdits] = useState<ForecastMonthlyEdits>({})
+  const [monthlyFactEdits, setMonthlyFactEdits] = useState<ForecastMonthlyFactEdits>({})
+
+  const editableMonthIndexes = useMemo(
+    () => [monthIndex - 1, monthIndex, monthIndex + 1].filter((index) => index >= 0 && index < 12),
+    [monthIndex]
+  )
+
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+
+    Promise.all([
+      fetch('/api/gn/bdr'),
+      fetch('/api/gn/forecast-monthly'),
+    ])
+      .then(async ([bdrResponse, forecastResponse]) => {
+        if (!bdrResponse.ok) throw new Error(`HTTP ${bdrResponse.status}`)
+        if (!forecastResponse.ok) throw new Error(`HTTP ${forecastResponse.status}`)
+
+        const [bdrRows, forecastPayload] = await Promise.all([
+          bdrResponse.json() as Promise<ForecastSourceRow[]>,
+          forecastResponse.json() as Promise<{ rows?: ForecastMonthlyApiRow[] }>,
+        ])
+
+        const nextMonthlyEdits: ForecastMonthlyEdits = {}
+        const nextMonthlyFactEdits: ForecastMonthlyFactEdits = {}
+        ;(forecastPayload.rows ?? []).forEach((row) => {
+          const key = String(toForecastNumber(row.rowId))
+          const values = Array.isArray(row.monthlyValues)
+            ? row.monthlyValues.map((value) => toForecastNumber(value))
+            : []
+          const factValues = Array.isArray(row.monthlyFactValues)
+            ? row.monthlyFactValues.map((value) => toForecastNumber(value))
+            : []
+
+          nextMonthlyEdits[key] = normalizeMonthlyValues(values)
+          nextMonthlyFactEdits[key] = normalizeMonthlyValues(factValues)
+        })
+
+        setRows(bdrRows)
+        setMonthlyEdits(nextMonthlyEdits)
+        setMonthlyFactEdits(nextMonthlyFactEdits)
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [monthIndex])
+
+  const forecastRows = useMemo(() => buildForecastRows(rows), [rows])
+  const rowSpans = useMemo(() => buildRowSpans(forecastRows), [forecastRows])
+
+  function getDisplayedMonthlyValues(row: ForecastRow): number[] {
+    return monthlyEdits[getForecastRowKey(row)] ?? row.monthlyValues
+  }
+
+  function getDisplayedMonthlyFactValues(row: ForecastRow): number[] {
+    return monthlyFactEdits[getForecastRowKey(row)] ?? new Array<number>(12).fill(0)
+  }
+
+  function updateMonthlyValue(row: ForecastRow, targetMonthIndex: number, rawValue: string): void {
+    const rowKey = getForecastRowKey(row)
+    const parsed = rawValue.trim() === '' ? 0 : toForecastNumber(rawValue)
+    setSaveError(null)
+    setSaveSuccess(null)
+
+    setMonthlyEdits((prev) => {
+      const base = prev[rowKey] ?? row.monthlyValues
+      const nextValues = [...base]
+      nextValues[targetMonthIndex] = parsed
+      return { ...prev, [rowKey]: nextValues }
+    })
+  }
+
+  function updateMonthlyFactValue(row: ForecastRow, targetMonthIndex: number, rawValue: string): void {
+    const rowKey = getForecastRowKey(row)
+    const parsed = rawValue.trim() === '' ? 0 : toForecastNumber(rawValue)
+    setSaveError(null)
+    setSaveSuccess(null)
+
+    setMonthlyFactEdits((prev) => {
+      const base = prev[rowKey] ?? new Array<number>(12).fill(0)
+      const nextValues = [...base]
+      nextValues[targetMonthIndex] = parsed
+      return { ...prev, [rowKey]: nextValues }
+    })
+  }
+
+  async function saveMonthlyForecastEdits(): Promise<void> {
+    setSaving(true)
+    setSaveError(null)
+    setSaveSuccess(null)
+
+    try {
+      const rowsToSave: ForecastMonthlyApiRow[] = forecastRows.map((row) => ({
+        rowId: row.rowId,
+        monthlyValues: normalizeMonthlyValues(getDisplayedMonthlyValues(row)),
+        monthlyFactValues: normalizeMonthlyValues(getDisplayedMonthlyFactValues(row)),
+      }))
+
+      const response = await fetch('/api/gn/forecast-monthly', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ rows: rowsToSave }),
+      })
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string }
+        throw new Error(payload.error || `HTTP ${response.status}`)
+      }
+
+      setSaveSuccess('Изменения сохранены')
+      localStorage.setItem(FORECAST_UPDATED_EVENT_KEY, String(Date.now()))
+      localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()))
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Не удалось сохранить прогноз')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="guide forecast-section">
+      <div className="guide-section forecast-section-content">
+        <div className="limit-details-header">
+          <h2>Редактирование месяца: {FORECAST_MONTH_LABELS[monthIndex]}</h2>
+          <button type="button" className="page-action-btn page-action-btn--secondary" onClick={onBack}>
+            Закрыть
+          </button>
+        </div>
+
+        <p className="hint">Показаны три месяца: предыдущий, выбранный и следующий.</p>
+        {loading && <p className="hint">Загрузка данных...</p>}
+        {error && <p className="hint hint--error">Ошибка: {error}</p>}
+
+        {!loading && !error && forecastRows.length > 0 && (
+          <div className="guide-table-wrap forecast-table-wrap">
+            <table className="guide-table table-compact forecast-table">
+              <thead>
+                <tr>
+                  {FORECAST_HIERARCHY_COLUMNS.map((column) => (
+                    <th key={column} rowSpan={2}>{column}</th>
+                  ))}
+                  {editableMonthIndexes.map((index) => (
+                    <th key={`month-group-${index}`} className="number-cell" colSpan={2}>
+                      {FORECAST_MONTH_LABELS[index]}
+                    </th>
+                  ))}
+                  <th className="number-cell forecast-total-col" rowSpan={2}>Итого за год</th>
+                </tr>
+                <tr>
+                  {editableMonthIndexes.map((index) => (
+                    <>
+                      <th key={`month-plan-${index}`} className="number-cell forecast-month-col">План</th>
+                      <th key={`month-fact-${index}`} className="number-cell forecast-month-col">Факт</th>
+                    </>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {forecastRows.map((row, rowIndex) => {
+                  const rowKey = getForecastRowKey(row)
+                  const displayedMonthlyValues = getDisplayedMonthlyValues(row)
+                  const displayedMonthlyFactValues = getDisplayedMonthlyFactValues(row)
+                  const rowTotal = displayedMonthlyValues.reduce((sum, value) => sum + value, 0)
+
+                  return (
+                    <tr key={rowKey}>
+                      {FORECAST_HIERARCHY_COLUMNS.map((column) => {
+                        const span = rowSpans[rowIndex]?.[column] ?? 0
+                        if (span === 0) return null
+
+                        return (
+                          <td key={`${column}-${rowIndex}`} rowSpan={span}>
+                            {row[column]}
+                          </td>
+                        )
+                      })}
+
+                      {editableMonthIndexes.map((index) => (
+                        <>
+                          <td key={`month-popup-${rowIndex}-${index}`} className="number-cell forecast-month-col forecast-month-cell--editable">
+                            <input
+                              className="forecast-month-input"
+                              type="number"
+                              step="0.01"
+                              value={Number.isFinite(displayedMonthlyValues[index]) ? displayedMonthlyValues[index] : 0}
+                              onChange={(event) => updateMonthlyValue(row, index, event.target.value)}
+                            />
+                          </td>
+                          <td key={`month-popup-fact-${rowIndex}-${index}`} className="number-cell forecast-month-col forecast-month-cell--editable">
+                            <input
+                              className="forecast-month-input"
+                              type="number"
+                              step="0.01"
+                              value={Number.isFinite(displayedMonthlyFactValues[index]) ? displayedMonthlyFactValues[index] : 0}
+                              onChange={(event) => updateMonthlyFactValue(row, index, event.target.value)}
+                            />
+                          </td>
+                        </>
+                      ))}
+
+                      <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(rowTotal)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+
+            <div className="budget-actions" style={{ marginTop: '12px' }}>
+              <button type="button" className="form-submit-btn" disabled={saving} onClick={() => void saveMonthlyForecastEdits()}>
+                Сохранить
+              </button>
+              <button type="button" className="page-action-btn page-action-btn--secondary" disabled={saving} onClick={onBack}>
+                Закрыть
+              </button>
+            </div>
+
+            {saveSuccess && <p className="hint">{saveSuccess}</p>}
+            {saveError && <p className="hint hint--error">Ошибка сохранения: {saveError}</p>}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export default function App() {
   const isAddRowPopup = window.location.hash === '#add-row-window'
   const limitPopupMatch = window.location.hash.match(/^#limit-window-(\d+)$/)
@@ -391,6 +771,9 @@ export default function App() {
   const contractPopupMatch = window.location.hash.match(/^#contract-window-(.+)$/)
   const contractPopupName = contractPopupMatch ? decodeURIComponent(contractPopupMatch[1]) : null
   const isContractPopup = contractPopupName != null && contractPopupName !== ''
+  const forecastMonthPopupMatch = window.location.hash.match(/^#forecast-month-window-(\d{1,2})$/)
+  const forecastMonthIndex = forecastMonthPopupMatch ? Number(forecastMonthPopupMatch[1]) : null
+  const isForecastMonthPopup = forecastMonthIndex != null && forecastMonthIndex >= 0 && forecastMonthIndex < 12
   const [page, setPage] = useState<Page>(() => pageFromHash(window.location.hash))
 
   useEffect(() => {
@@ -398,16 +781,18 @@ export default function App() {
       if (window.location.hash === '#add-row-window') return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
+      if (/^#forecast-month-window-\d{1,2}$/.test(window.location.hash)) return
       setPage(pageFromHash(window.location.hash))
     }
+
     window.addEventListener('hashchange', onHashChange)
 
-    if (!window.location.hash && !isAddRowPopup && !isLimitPopup && !isContractPopup) {
+    if (!window.location.hash && !isAddRowPopup && !isLimitPopup && !isContractPopup && !isForecastMonthPopup) {
       window.location.hash = '#budget'
     }
 
     return () => window.removeEventListener('hashchange', onHashChange)
-  }, [isAddRowPopup, isLimitPopup, isContractPopup])
+  }, [isAddRowPopup, isLimitPopup, isContractPopup, isForecastMonthPopup])
 
   function goTo(nextPage: Page): void {
     if (nextPage === 'contracts') {
@@ -485,10 +870,18 @@ export default function App() {
     )
   }
 
-  if (isContractPopup && contractPopupName != null) {
+  if (isContractPopup && contractPopupName) {
     return (
       <main>
         <ContractDetailsPage contractName={contractPopupName} onBack={() => window.close()} />
+      </main>
+    )
+  }
+
+  if (isForecastMonthPopup && forecastMonthIndex != null) {
+    return (
+      <main>
+        <ForecastMonthPopupPage monthIndex={forecastMonthIndex} onBack={() => window.close()} />
       </main>
     )
   }
@@ -497,38 +890,24 @@ export default function App() {
     <main>
       <nav className="app-nav">
         <div className="app-nav-center">
-          <a
-            href="#budget"
-            onClick={() => goTo('budget')}
-          >
+          <a href="#budget" onClick={(event) => { event.preventDefault(); goTo('budget') }}>
             Бюджет
           </a>
-          <a
-            href="#contracts"
-            onClick={() => goTo('contracts')}
-          >
-            Договора
-          </a>
-          <a
-            href="#forecasts"
-            onClick={() => goTo('forecasts')}
-          >
+          <a href="#forecasts" onClick={(event) => { event.preventDefault(); goTo('forecasts') }}>
             Прогнозы
           </a>
-          <a
-            href="#invest-program-table"
-            onClick={() => goTo('invest-program-table')}
-          >
-            Инвест.таблица
+          <a href="#contracts" onClick={(event) => { event.preventDefault(); goTo('contracts') }}>
+            Контракты
+          </a>
+          <a href="#invest-program-table" onClick={(event) => { event.preventDefault(); goTo('invest-program-table') }}>
+            Инвестпрограмма
           </a>
         </div>
-        <a
-          className="app-nav-guide"
-          href="#guide"
-          onClick={() => goTo('guide')}
-        >
-          Справочник
-        </a>
+        <div className="app-nav-guide">
+          <a href="#guide" onClick={(event) => { event.preventDefault(); goTo('guide') }}>
+            Справочник
+          </a>
+        </div>
       </nav>
 
       {page === 'guide' && <Guide />}
