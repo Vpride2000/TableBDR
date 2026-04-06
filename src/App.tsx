@@ -166,7 +166,11 @@ function buildForecastRows(rows: ForecastSourceRow[]): ForecastRow[] {
   })
 }
 
-function Forecasts() {
+interface ForecastsProps {
+  onOpenLimit: (rowId: number) => void
+}
+
+function Forecasts({ onOpenLimit }: ForecastsProps) {
   const [rows, setRows] = useState<ForecastSourceRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -313,60 +317,6 @@ function Forecasts() {
     [filteredForecastRows, monthlyEdits]
   )
 
-  const limitPivot = useMemo(() => {
-    const departmentsSet = new Set<string>()
-    const byBudget = new Map<string, Map<string, number>>()
-
-    filteredForecastRows.forEach((row) => {
-      const budget = row['Статья бюджета']
-      const department = row.Подразделение
-      const rowTotal = getDisplayedMonthlyValues(row).reduce((sum, value) => sum + value, 0)
-
-      departmentsSet.add(department)
-
-      const budgetRow = byBudget.get(budget) ?? new Map<string, number>()
-      budgetRow.set(department, (budgetRow.get(department) ?? 0) + rowTotal)
-      byBudget.set(budget, budgetRow)
-    })
-
-    const departments = [...departmentsSet].sort((a, b) => a.localeCompare(b, 'ru'))
-    const budgetItems = [...byBudget.keys()].sort((a, b) => a.localeCompare(b, 'ru'))
-
-    const rows = budgetItems.map((budgetItem) => {
-      const source = byBudget.get(budgetItem) ?? new Map<string, number>()
-      const byDepartment: Record<string, number> = {}
-
-      departments.forEach((department) => {
-        byDepartment[department] = source.get(department) ?? 0
-      })
-
-      const total = departments.reduce((sum, department) => sum + byDepartment[department], 0)
-
-      return {
-        budgetItem,
-        byDepartment,
-        total,
-      }
-    })
-
-    const totalsByDepartment: Record<string, number> = {}
-    departments.forEach((department) => {
-      totalsByDepartment[department] = rows.reduce(
-        (sum, row) => sum + (row.byDepartment[department] ?? 0),
-        0
-      )
-    })
-
-    const total = rows.reduce((sum, row) => sum + row.total, 0)
-
-    return {
-      departments,
-      rows,
-      totalsByDepartment,
-      total,
-    }
-  }, [filteredForecastRows, monthlyEdits])
-
   return (
     <section className="guide forecast-section">
       <div className="guide-section forecast-section-content">
@@ -458,7 +408,13 @@ function Forecasts() {
                         ))}
 
                         <td className="number-cell forecast-total-col">
-                          {FORECAST_NUMBER_FORMATTER.format(rowTotal)}
+                          <button
+                            type="button"
+                            className="limit-cell-button"
+                            onClick={() => onOpenLimit(row.rowId)}
+                          >
+                            {FORECAST_NUMBER_FORMATTER.format(rowTotal)}
+                          </button>
                         </td>
                       </tr>
                     )
@@ -473,45 +429,6 @@ function Forecasts() {
                       </td>
                     ))}
                     <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(grandTotal)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            <div className="guide-table-wrap forecast-pivot-wrap">
-              <h3 className="forecast-subtitle">Свод лимитов: подразделения × статьи бюджета</h3>
-              <table className="guide-table table-compact forecast-pivot-table">
-                <thead>
-                  <tr>
-                    <th>Статья бюджета</th>
-                    {limitPivot.departments.map((department) => (
-                      <th key={department}>{department}</th>
-                    ))}
-                    <th className="number-cell forecast-total-col">Итого</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {limitPivot.rows.map((row) => (
-                    <tr key={row.budgetItem}>
-                      <td>{row.budgetItem}</td>
-                      {limitPivot.departments.map((department) => (
-                        <td key={`${row.budgetItem}-${department}`} className="number-cell">
-                          {FORECAST_NUMBER_FORMATTER.format(row.byDepartment[department] ?? 0)}
-                        </td>
-                      ))}
-                      <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(row.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="budget-summary-total-row">
-                    <td>Итого</td>
-                    {limitPivot.departments.map((department) => (
-                      <td key={`pivot-total-${department}`} className="number-cell">
-                        {FORECAST_NUMBER_FORMATTER.format(limitPivot.totalsByDepartment[department] ?? 0)}
-                      </td>
-                    ))}
-                    <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(limitPivot.total)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -913,7 +830,7 @@ export default function App() {
       {page === 'guide' && <Guide />}
       {page === 'budget' && <BudgetTable onAddRow={openAddRowWindow} onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
       {page === 'contracts' && <ContractsPage />}
-      {page === 'forecasts' && <Forecasts />}
+      {page === 'forecasts' && <Forecasts onOpenLimit={openLimitWindow} />}
       {page === 'invest-program-table' && <InvestProgramTablePage />}
     </main>
   )

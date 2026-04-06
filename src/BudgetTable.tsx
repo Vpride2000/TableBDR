@@ -1,5 +1,9 @@
-﻿import { Fragment, useEffect, useMemo, useState } from 'react';
+﻿import { Suspense, useEffect, useMemo, useState, lazy } from 'react';
 import './styles.css';
+
+const DepartmentSummaryTable = lazy(() => import('./BudgetSummaryByDepartment'));
+const PaoItemSummaryTable = lazy(() => import('./BudgetSummaryByPaoItem'));
+const BudgetItemDepartmentSummaryTable = lazy(() => import('./BudgetSummaryByBudgetItemDepartment'));
 
 type Row = Record<string, unknown>;
 type SortDirection = 'asc' | 'desc';
@@ -79,6 +83,9 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lookupRows, setLookupRows] = useState<Record<string, Row[]>>({});
   const [filters, setFilters] = useState<Record<string, string>>({});
+  const [isDepartmentSummaryExpanded, setIsDepartmentSummaryExpanded] = useState(false);
+  const [isPaoSummaryExpanded, setIsPaoSummaryExpanded] = useState(false);
+  const [isBudgetItemDepartmentSummaryExpanded, setIsBudgetItemDepartmentSummaryExpanded] = useState(false);
 
   function setFilter(column: string, value: string): void {
     setFilters((prev) => ({ ...prev, [column]: value }));
@@ -238,6 +245,57 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
     [summaryByPaoItem]
   );
 
+  const summaryByBudgetItemDepartment = useMemo(() => {
+    const departmentsSet = new Set<string>();
+    const byBudgetItem = new Map<string, Map<string, number>>();
+
+    data.forEach((row) => {
+      const budgetItem = String(row['Статья бюджета'] ?? '').trim() || 'Без статьи бюджета';
+      const department = String(row['Подразделение'] ?? '').trim() || 'Без подразделения';
+      const limit = parseNumericValue(row['Лимит']);
+
+      departmentsSet.add(department);
+
+      const budgetItemRow = byBudgetItem.get(budgetItem) ?? new Map<string, number>();
+      budgetItemRow.set(department, (budgetItemRow.get(department) ?? 0) + limit);
+      byBudgetItem.set(budgetItem, budgetItemRow);
+    });
+
+    const departments = [...departmentsSet].sort((a, b) => a.localeCompare(b, 'ru'));
+    const budgetItems = [...byBudgetItem.keys()].sort((a, b) => a.localeCompare(b, 'ru'));
+
+    const rows = budgetItems.map((budgetItem) => {
+      const source = byBudgetItem.get(budgetItem) ?? new Map<string, number>();
+      const byDepartment: Record<string, number> = {};
+
+      departments.forEach((department) => {
+        byDepartment[department] = source.get(department) ?? 0;
+      });
+
+      const total = departments.reduce((sum, department) => sum + byDepartment[department], 0);
+
+      return {
+        budgetItem,
+        byDepartment,
+        total,
+      };
+    });
+
+    const totalsByDepartment: Record<string, number> = {};
+    departments.forEach((department) => {
+      totalsByDepartment[department] = rows.reduce((sum, row) => sum + (row.byDepartment[department] ?? 0), 0);
+    });
+
+    const total = rows.reduce((sum, row) => sum + row.total, 0);
+
+    return {
+      departments,
+      rows,
+      totalsByDepartment,
+      total,
+    };
+  }, [data]);
+
   function toggleSort(column: string): void {
     setSort((prev) => {
       if (!prev || prev.key !== column) {
@@ -376,64 +434,63 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
 
       {!loading && !error && summaryByDepartment.length > 0 && (
         <div className="budget-summary-row">
-          <div className="guide-table-wrap budget-summary-wrap">
-            <h2>Свод по лимитам по подразделениям</h2>
-            <table className="guide-table table-compact budget-summary-table">
-              <thead>
-                <tr>
-                  <th>Подразделение</th>
-                  <th>Сумма лимита</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summaryByDepartment.map((item) => (
-                  <Fragment key={item.department}>
-                    <tr className="budget-summary-department-row">
-                      <td>{item.department}</td>
-                      <td>{new Intl.NumberFormat('ru-RU').format(item.totalLimit)}</td>
-                    </tr>
-                    {item.paoItems.map((pao) => (
-                      <tr key={`${item.department}-${pao.paoItem}`} className="budget-summary-detail-row">
-                        <td>↳ {pao.paoItem}</td>
-                        <td>{new Intl.NumberFormat('ru-RU').format(pao.totalLimit)}</td>
-                      </tr>
-                    ))}
-                  </Fragment>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="budget-summary-total-row">
-                  <td>Итого</td>
-                  <td>{new Intl.NumberFormat('ru-RU').format(summaryTotalLimit)}</td>
-                </tr>
-              </tfoot>
-            </table>
+          <div className="guide-table-wrap budget-summary-wrap budget-summary-wrap--matrix">
+            <button
+              type="button"
+              className="budget-summary-toggle"
+              onClick={() => setIsDepartmentSummaryExpanded((prev) => !prev)}
+              aria-expanded={isDepartmentSummaryExpanded}
+            >
+              Свод по лимитам по подразделениям {isDepartmentSummaryExpanded ? '▼' : '▶'}
+            </button>
+            {isDepartmentSummaryExpanded && (
+              <Suspense fallback={<p className="hint">Загрузка свода...</p>}>
+                <DepartmentSummaryTable
+                  summaryByDepartment={summaryByDepartment}
+                  summaryTotalLimit={summaryTotalLimit}
+                />
+              </Suspense>
+            )}
           </div>
 
           <div className="guide-table-wrap budget-summary-wrap">
-            <h2>Свод по лимитам по статьям бюджета УС</h2>
-            <table className="guide-table table-compact budget-summary-table">
-              <thead>
-                <tr>
-                  <th>Статья бюджета УС</th>
-                  <th>Сумма лимита</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summaryByPaoItem.map((item) => (
-                  <tr key={item.paoItem} className="budget-summary-department-row">
-                    <td>{item.paoItem}</td>
-                    <td>{new Intl.NumberFormat('ru-RU').format(item.totalLimit)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="budget-summary-total-row">
-                  <td>Итого</td>
-                  <td>{new Intl.NumberFormat('ru-RU').format(summaryPaoTotalLimit)}</td>
-                </tr>
-              </tfoot>
-            </table>
+            <button
+              type="button"
+              className="budget-summary-toggle"
+              onClick={() => setIsPaoSummaryExpanded((prev) => !prev)}
+              aria-expanded={isPaoSummaryExpanded}
+            >
+              Свод по лимитам по статьям бюджета УС {isPaoSummaryExpanded ? '▼' : '▶'}
+            </button>
+            {isPaoSummaryExpanded && (
+              <Suspense fallback={<p className="hint">Загрузка свода...</p>}>
+                <PaoItemSummaryTable
+                  summaryByPaoItem={summaryByPaoItem}
+                  summaryPaoTotalLimit={summaryPaoTotalLimit}
+                />
+              </Suspense>
+            )}
+          </div>
+
+          <div className="guide-table-wrap budget-summary-wrap">
+            <button
+              type="button"
+              className="budget-summary-toggle"
+              onClick={() => setIsBudgetItemDepartmentSummaryExpanded((prev) => !prev)}
+              aria-expanded={isBudgetItemDepartmentSummaryExpanded}
+            >
+              Свод лимитов: подразделения × статьи бюджета {isBudgetItemDepartmentSummaryExpanded ? '▼' : '▶'}
+            </button>
+            {isBudgetItemDepartmentSummaryExpanded && (
+              <Suspense fallback={<p className="hint">Загрузка свода...</p>}>
+                <BudgetItemDepartmentSummaryTable
+                  departments={summaryByBudgetItemDepartment.departments}
+                  rows={summaryByBudgetItemDepartment.rows}
+                  totalsByDepartment={summaryByBudgetItemDepartment.totalsByDepartment}
+                  total={summaryByBudgetItemDepartment.total}
+                />
+              </Suspense>
+            )}
           </div>
         </div>
       )}
