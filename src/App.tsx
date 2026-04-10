@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import * as XLSX from 'xlsx'
 import BudgetTable from './BudgetTable'
 import Guide from './Guide'
 import AddBudgetRowPage from './AddBudgetRowPage'
@@ -26,6 +27,7 @@ interface ForecastRow {
   Контрагент: string
   Договор: string
   Подразделение: string
+  'Предмет договора': string
   monthlyValues: number[]
   totalLimit: number
 }
@@ -39,13 +41,13 @@ interface ForecastMonthlyApiRow {
 type ForecastMonthlyEdits = Record<string, number[]>
 type ForecastMonthlyFactEdits = Record<string, number[]>
 
-const FORECAST_HIERARCHY_COLUMNS: Array<keyof Pick<ForecastRow, 'Статья бюджета' | 'Контрагент' | 'Договор' | 'Подразделение'>> = [
+const FORECAST_HIERARCHY_COLUMNS: Array<keyof Pick<ForecastRow, 'Статья бюджета' | 'Контрагент' | 'Договор' | 'Подразделение' | 'Предмет договора'>> = [
   'Статья бюджета',
   'Контрагент',
   'Договор',
+  'Предмет договора',
   'Подразделение',
 ]
-const FORECAST_FILTER_PLACEHOLDER = 'Все'
 
 const FORECAST_MONTH_LABELS = [
   'Янв',
@@ -152,6 +154,7 @@ function buildForecastRows(rows: ForecastSourceRow[]): ForecastRow[] {
       Контрагент: toForecastKeyPart(row['Контрагент']),
       Договор: toForecastKeyPart(row['Договор']),
       Подразделение: toForecastKeyPart(row['Подразделение']),
+      'Предмет договора': toForecastKeyPart(row['Предмет договора']),
       monthlyValues: distributeByMonths(limit),
       totalLimit: limit,
     }
@@ -168,9 +171,10 @@ function buildForecastRows(rows: ForecastSourceRow[]): ForecastRow[] {
 
 interface ForecastsProps {
   onOpenLimit: (rowId: number) => void
+  onOpenContract: (contractName: string) => void
 }
 
-function Forecasts({ onOpenLimit }: ForecastsProps) {
+function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
   const [rows, setRows] = useState<ForecastSourceRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -180,6 +184,7 @@ function Forecasts({ onOpenLimit }: ForecastsProps) {
     'Статья бюджета': '',
     Контрагент: '',
     Договор: '',
+    'Предмет договора': '',
     Подразделение: '',
   })
   function loadForecastData(): Promise<void> {
@@ -242,29 +247,15 @@ function Forecasts({ onOpenLimit }: ForecastsProps) {
   const filteredForecastRows = useMemo(() => {
     return forecastRows.filter((row) =>
       FORECAST_HIERARCHY_COLUMNS.every((column) => {
-        const filterValue = forecastFilters[column].trim()
+        const filterValue = forecastFilters[column].trim().toLowerCase()
         if (!filterValue) return true
-        return row[column] === filterValue
+        return row[column].toLowerCase().includes(filterValue)
       })
     )
   }, [forecastRows, forecastFilters])
 
   const filteredRowSpans = useMemo(() => buildRowSpans(filteredForecastRows), [filteredForecastRows])
 
-  const forecastFilterOptions = useMemo(() => {
-    const options: Record<(typeof FORECAST_HIERARCHY_COLUMNS)[number], string[]> = {
-      'Статья бюджета': [],
-      Контрагент: [],
-      Договор: [],
-      Подразделение: [],
-    }
-
-    FORECAST_HIERARCHY_COLUMNS.forEach((column) => {
-      options[column] = [...new Set(forecastRows.map((row) => row[column]))].sort((a, b) => a.localeCompare(b, 'ru'))
-    })
-
-    return options
-  }, [forecastRows])
 
   function getDisplayedMonthlyValues(row: ForecastRow): number[] {
     return monthlyEdits[getForecastRowKey(row)] ?? row.monthlyValues
@@ -354,21 +345,27 @@ function Forecasts({ onOpenLimit }: ForecastsProps) {
                     })}
                     <th className="number-cell forecast-total-col">Итого за год</th>
                   </tr>
+                  <tr className="budget-summary-total-row">
+                    {FORECAST_HIERARCHY_COLUMNS.map((column) => (
+                      <th key={`total-header-${column}`} />
+                    ))}
+                    {totalByMonths.map((value, index) => (
+                      <th key={`total-header-month-${index}`} className="number-cell forecast-month-col">
+                        {FORECAST_NUMBER_FORMATTER.format(value)}
+                      </th>
+                    ))}
+                    <th className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(grandTotal)}</th>
+                  </tr>
                   <tr className="filter-row">
                     {FORECAST_HIERARCHY_COLUMNS.map((column) => (
                       <th key={`forecast-filter-${column}`}>
-                        <select
-                          className="column-filter-input forecast-column-filter-select"
+                        <input
+                          className="column-filter-input"
+                          type="text"
                           value={forecastFilters[column]}
                           onChange={(event) => setForecastFilter(column, event.target.value)}
-                        >
-                          <option value="">{FORECAST_FILTER_PLACEHOLDER}</option>
-                          {forecastFilterOptions[column].map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
+                          placeholder="Фильтр..."
+                        />
                       </th>
                     ))}
                     {FORECAST_MONTH_LABELS.map((month) => (
@@ -390,9 +387,22 @@ function Forecasts({ onOpenLimit }: ForecastsProps) {
                           const span = filteredRowSpans[rowIndex]?.[column] ?? 0
                           if (span === 0) return null
 
+                          const cellContent =
+                            column === 'Договор' && row[column].trim() !== '' ? (
+                              <button
+                                type="button"
+                                className="contract-cell-button"
+                                onClick={() => onOpenContract(row[column])}
+                              >
+                                {row[column]}
+                              </button>
+                            ) : (
+                              row[column]
+                            )
+
                           return (
                             <td key={`${column}-${rowIndex}`} rowSpan={span}>
-                              {row[column]}
+                              {cellContent}
                             </td>
                           )
                         })}
@@ -420,17 +430,6 @@ function Forecasts({ onOpenLimit }: ForecastsProps) {
                     )
                   })}
                 </tbody>
-                <tfoot>
-                  <tr className="budget-summary-total-row">
-                    <td colSpan={FORECAST_HIERARCHY_COLUMNS.length}>Итого</td>
-                    {totalByMonths.map((value, index) => (
-                      <td key={`total-month-${index}`} className="number-cell forecast-month-col">
-                        {FORECAST_NUMBER_FORMATTER.format(value)}
-                      </td>
-                    ))}
-                    <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(grandTotal)}</td>
-                  </tr>
-                </tfoot>
               </table>
             </div>
           </>
@@ -454,6 +453,8 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [monthlyEdits, setMonthlyEdits] = useState<ForecastMonthlyEdits>({})
   const [monthlyFactEdits, setMonthlyFactEdits] = useState<ForecastMonthlyFactEdits>({})
+  const [editingRowKeys, setEditingRowKeys] = useState<Set<string>>(new Set())
+  const importFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const editableMonthIndexes = useMemo(
     () => [monthIndex - 1, monthIndex, monthIndex + 1].filter((index) => index >= 0 && index < 12),
@@ -574,6 +575,216 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
     }
   }
 
+  function exportMonthTableToXlsx(): void {
+    const monthColumns = editableMonthIndexes.flatMap((index) => {
+      const monthLabel = FORECAST_MONTH_LABELS[index]
+      return [`${monthLabel} План`, `${monthLabel} Факт`]
+    })
+
+    const header = [...FORECAST_HIERARCHY_COLUMNS, ...monthColumns, 'Итого за год']
+
+    const exportRows = forecastRows.map((row) => {
+      const displayedMonthlyValues = getDisplayedMonthlyValues(row)
+      const displayedMonthlyFactValues = getDisplayedMonthlyFactValues(row)
+      const rowTotal = displayedMonthlyValues.reduce((sum, value) => sum + value, 0)
+
+      const rowData: Record<string, string | number> = {
+        'Статья бюджета': row['Статья бюджета'],
+        Контрагент: row.Контрагент,
+        Договор: row.Договор,
+        Подразделение: row.Подразделение,
+      }
+
+      editableMonthIndexes.forEach((index) => {
+        const monthLabel = FORECAST_MONTH_LABELS[index]
+        rowData[`${monthLabel} План`] = Number((displayedMonthlyValues[index] ?? 0).toFixed(2))
+        rowData[`${monthLabel} Факт`] = Number((displayedMonthlyFactValues[index] ?? 0).toFixed(2))
+      })
+
+      rowData['Итого за год'] = Number(rowTotal.toFixed(2))
+      return rowData
+    })
+
+    const totalsRow: Record<string, string | number> = {
+      'Статья бюджета': 'Итого',
+      Контрагент: '',
+      Договор: '',
+      Подразделение: '',
+    }
+
+    editableMonthIndexes.forEach((index) => {
+      const monthLabel = FORECAST_MONTH_LABELS[index]
+      const monthPlanTotal = forecastRows.reduce(
+        (sum, row) => sum + (getDisplayedMonthlyValues(row)[index] ?? 0),
+        0
+      )
+      const monthFactTotal = forecastRows.reduce(
+        (sum, row) => sum + (getDisplayedMonthlyFactValues(row)[index] ?? 0),
+        0
+      )
+
+      totalsRow[`${monthLabel} План`] = Number(monthPlanTotal.toFixed(2))
+      totalsRow[`${monthLabel} Факт`] = Number(monthFactTotal.toFixed(2))
+    })
+
+    totalsRow['Итого за год'] = Number(
+      forecastRows
+        .reduce(
+          (sum, row) => sum + getDisplayedMonthlyValues(row).reduce((innerSum, value) => innerSum + value, 0),
+          0
+        )
+        .toFixed(2)
+    )
+
+    exportRows.push(totalsRow)
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows, { header })
+
+    const columnWidths = header.map((columnName) => {
+      const maxValueLength = exportRows.reduce((maxLength, row) => {
+        const cellValue = row[columnName]
+        const nextLength = String(cellValue ?? '').length
+        return Math.max(maxLength, nextLength)
+      }, columnName.length)
+
+      return { wch: Math.min(Math.max(maxValueLength + 2, 12), 40) }
+    })
+    worksheet['!cols'] = columnWidths
+
+    const numericColumnIndexes = header
+      .map((columnName, index) => ({ columnName, index }))
+      .filter(({ columnName }) => columnName.endsWith('План') || columnName.endsWith('Факт') || columnName === 'Итого за год')
+      .map(({ index }) => index)
+
+    for (let rowIndex = 2; rowIndex <= exportRows.length + 1; rowIndex += 1) {
+      numericColumnIndexes.forEach((columnIndex) => {
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex - 1, c: columnIndex })
+        const cell = worksheet[cellAddress]
+        if (cell && typeof cell.v === 'number') {
+          cell.z = '#,##0.00'
+        }
+      })
+    }
+
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Прогноз')
+
+    const dateSuffix = new Date().toISOString().slice(0, 10)
+    XLSX.writeFile(workbook, `Редактирование-месяца-${FORECAST_MONTH_LABELS[monthIndex]}-${dateSuffix}.xlsx`)
+  }
+
+  function openImportFileDialog(): void {
+    importFileInputRef.current?.click()
+  }
+
+  async function importMonthTableFromXlsx(event: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+
+    if (!file) return
+
+    try {
+      setSaveError(null)
+      setSaveSuccess(null)
+
+      const monthColumns = editableMonthIndexes.flatMap((index) => {
+        const monthLabel = FORECAST_MONTH_LABELS[index]
+        return [`${monthLabel} План`, `${monthLabel} Факт`]
+      })
+      const requiredColumns = [...FORECAST_HIERARCHY_COLUMNS, ...monthColumns, 'Итого за год']
+
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+      const firstSheetName = workbook.SheetNames[0]
+      if (!firstSheetName) {
+        throw new Error('Файл XLSX пустой')
+      }
+
+      const worksheet = workbook.Sheets[firstSheetName]
+      const importedRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '' })
+
+      if (importedRows.length === 0) {
+        throw new Error('В файле нет строк для импорта')
+      }
+
+      const firstRow = importedRows[0]
+      const missingColumns = requiredColumns.filter((column) => !(column in firstRow))
+      if (missingColumns.length > 0) {
+        throw new Error(`В файле отсутствуют обязательные колонки: ${missingColumns.join(', ')}`)
+      }
+
+      const importedByHierarchy = new Map<string, Record<string, unknown>>()
+      importedRows.forEach((row) => {
+        const budgetItem = toForecastKeyPart(row['Статья бюджета'])
+        if (budgetItem === 'Итого') return
+
+        const hierarchyKey = FORECAST_HIERARCHY_COLUMNS
+          .map((column) => toForecastKeyPart(row[column]))
+          .join('||')
+
+        importedByHierarchy.set(hierarchyKey, row)
+      })
+
+      let updatedRowsCount = 0
+
+      setMonthlyEdits((prev) => {
+        const next = { ...prev }
+
+        forecastRows.forEach((row) => {
+          const hierarchyKey = FORECAST_HIERARCHY_COLUMNS
+            .map((column) => toForecastKeyPart(row[column]))
+            .join('||')
+          const importedRow = importedByHierarchy.get(hierarchyKey)
+          if (!importedRow) return
+
+          const rowKey = getForecastRowKey(row)
+          const baseValues = [...(next[rowKey] ?? row.monthlyValues)]
+
+          editableMonthIndexes.forEach((index) => {
+            const monthLabel = FORECAST_MONTH_LABELS[index]
+            baseValues[index] = toForecastNumber(importedRow[`${monthLabel} План`])
+          })
+
+          next[rowKey] = baseValues
+          updatedRowsCount += 1
+        })
+
+        return next
+      })
+
+      setMonthlyFactEdits((prev) => {
+        const next = { ...prev }
+
+        forecastRows.forEach((row) => {
+          const hierarchyKey = FORECAST_HIERARCHY_COLUMNS
+            .map((column) => toForecastKeyPart(row[column]))
+            .join('||')
+          const importedRow = importedByHierarchy.get(hierarchyKey)
+          if (!importedRow) return
+
+          const rowKey = getForecastRowKey(row)
+          const baseValues = [...(next[rowKey] ?? new Array<number>(12).fill(0))]
+
+          editableMonthIndexes.forEach((index) => {
+            const monthLabel = FORECAST_MONTH_LABELS[index]
+            baseValues[index] = toForecastNumber(importedRow[`${monthLabel} Факт`])
+          })
+
+          next[rowKey] = baseValues
+        })
+
+        return next
+      })
+
+      if (updatedRowsCount === 0) {
+        throw new Error('Совпадений строк для импорта не найдено')
+      }
+
+      setSaveSuccess(`Данные загружены из XLSX: ${updatedRowsCount} строк`) 
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Не удалось загрузить XLSX')
+    }
+  }
+
   return (
     <section className="guide forecast-section">
       <div className="guide-section forecast-section-content">
@@ -590,6 +801,34 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
 
         {!loading && !error && forecastRows.length > 0 && (
           <div className="guide-table-wrap forecast-table-wrap">
+            <div className="budget-actions" style={{ marginBottom: '12px' }}>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept=".xlsx"
+                style={{ display: 'none' }}
+                onChange={(event) => {
+                  void importMonthTableFromXlsx(event)
+                }}
+              />
+              <button
+                type="button"
+                className="page-action-btn page-action-btn--secondary"
+                onClick={openImportFileDialog}
+                disabled={saving}
+              >
+                загрузить из xlsx
+              </button>
+              <button
+                type="button"
+                className="page-action-btn"
+                onClick={exportMonthTableToXlsx}
+                disabled={saving}
+              >
+                выгрузить в xlsx
+              </button>
+            </div>
+
             <table className="guide-table table-compact forecast-table">
               <thead>
                 <tr>
@@ -602,6 +841,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
                     </th>
                   ))}
                   <th className="number-cell forecast-total-col" rowSpan={2}>Итого за год</th>
+                  <th rowSpan={2}>Действия</th>
                 </tr>
                 <tr>
                   {editableMonthIndexes.map((index) => (
@@ -615,6 +855,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
               <tbody>
                 {forecastRows.map((row, rowIndex) => {
                   const rowKey = getForecastRowKey(row)
+                  const isEditing = editingRowKeys.has(rowKey)
                   const displayedMonthlyValues = getDisplayedMonthlyValues(row)
                   const displayedMonthlyFactValues = getDisplayedMonthlyFactValues(row)
                   const rowTotal = displayedMonthlyValues.reduce((sum, value) => sum + value, 0)
@@ -635,27 +876,55 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
                       {editableMonthIndexes.map((index) => (
                         <>
                           <td key={`month-popup-${rowIndex}-${index}`} className="number-cell forecast-month-col forecast-month-cell--editable">
-                            <input
-                              className="forecast-month-input"
-                              type="number"
-                              step="0.01"
-                              value={Number.isFinite(displayedMonthlyValues[index]) ? displayedMonthlyValues[index] : 0}
-                              onChange={(event) => updateMonthlyValue(row, index, event.target.value)}
-                            />
+                            {isEditing ? (
+                              <input
+                                className="forecast-month-input"
+                                type="number"
+                                step="0.01"
+                                value={Number.isFinite(displayedMonthlyValues[index]) ? displayedMonthlyValues[index] : 0}
+                                onChange={(event) => updateMonthlyValue(row, index, event.target.value)}
+                              />
+                            ) : (
+                              FORECAST_NUMBER_FORMATTER.format(displayedMonthlyValues[index] ?? 0)
+                            )}
                           </td>
                           <td key={`month-popup-fact-${rowIndex}-${index}`} className="number-cell forecast-month-col forecast-month-cell--editable">
-                            <input
-                              className="forecast-month-input"
-                              type="number"
-                              step="0.01"
-                              value={Number.isFinite(displayedMonthlyFactValues[index]) ? displayedMonthlyFactValues[index] : 0}
-                              onChange={(event) => updateMonthlyFactValue(row, index, event.target.value)}
-                            />
+                            {isEditing ? (
+                              <input
+                                className="forecast-month-input"
+                                type="number"
+                                step="0.01"
+                                value={Number.isFinite(displayedMonthlyFactValues[index]) ? displayedMonthlyFactValues[index] : 0}
+                                onChange={(event) => updateMonthlyFactValue(row, index, event.target.value)}
+                              />
+                            ) : (
+                              FORECAST_NUMBER_FORMATTER.format(displayedMonthlyFactValues[index] ?? 0)
+                            )}
                           </td>
                         </>
                       ))}
 
                       <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(rowTotal)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="invest-program-row-action-button"
+                          disabled={saving}
+                          onClick={() =>
+                            setEditingRowKeys((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(rowKey)) {
+                                next.delete(rowKey)
+                              } else {
+                                next.add(rowKey)
+                              }
+                              return next
+                            })
+                          }
+                        >
+                          {isEditing ? 'ОТМ' : 'ИЗМ'}
+                        </button>
+                      </td>
                     </tr>
                   )
                 })}
@@ -830,7 +1099,7 @@ export default function App() {
       {page === 'guide' && <Guide />}
       {page === 'budget' && <BudgetTable onAddRow={openAddRowWindow} onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
       {page === 'contracts' && <ContractsPage />}
-      {page === 'forecasts' && <Forecasts onOpenLimit={openLimitWindow} />}
+      {page === 'forecasts' && <Forecasts onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
       {page === 'invest-program-table' && <InvestProgramTablePage />}
     </main>
   )
