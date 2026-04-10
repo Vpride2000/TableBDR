@@ -45,8 +45,8 @@ const FORECAST_HIERARCHY_COLUMNS: Array<keyof Pick<ForecastRow, 'Статья б
   'Статья бюджета',
   'Контрагент',
   'Договор',
-  'Предмет договора',
   'Подразделение',
+  'Предмет договора',
 ]
 
 const FORECAST_MONTH_LABELS = [
@@ -329,6 +329,7 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                     {FORECAST_HIERARCHY_COLUMNS.map((column) => (
                       <th key={column}>{column}</th>
                     ))}
+                    <th className="number-cell forecast-total-col">Итого за год</th>
                     {FORECAST_MONTH_LABELS.map((month, monthIndex) => {
                       return (
                         <th key={month} className="number-cell forecast-month-col forecast-month-header">
@@ -343,18 +344,17 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                         </th>
                       )
                     })}
-                    <th className="number-cell forecast-total-col">Итого за год</th>
                   </tr>
                   <tr className="budget-summary-total-row">
                     {FORECAST_HIERARCHY_COLUMNS.map((column) => (
                       <th key={`total-header-${column}`} />
                     ))}
+                    <th className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(grandTotal)}</th>
                     {totalByMonths.map((value, index) => (
                       <th key={`total-header-month-${index}`} className="number-cell forecast-month-col">
                         {FORECAST_NUMBER_FORMATTER.format(value)}
                       </th>
                     ))}
-                    <th className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(grandTotal)}</th>
                   </tr>
                   <tr className="filter-row">
                     {FORECAST_HIERARCHY_COLUMNS.map((column) => (
@@ -368,10 +368,10 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                         />
                       </th>
                     ))}
+                    <th />
                     {FORECAST_MONTH_LABELS.map((month) => (
                       <th key={`forecast-filter-${month}`} />
                     ))}
-                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -407,16 +407,6 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                           )
                         })}
 
-                        {displayedMonthlyValues.map((value, monthIndex) => (
-                          <td
-                            key={`month-${rowIndex}-${monthIndex}`}
-                            className={`number-cell forecast-month-col forecast-month-cell--locked ${getForecastCellStatusClass(value, displayedMonthlyFactValues[monthIndex] ?? 0)}`}
-                            title={`План: ${FORECAST_NUMBER_FORMATTER.format(value)}; Факт: ${FORECAST_NUMBER_FORMATTER.format(displayedMonthlyFactValues[monthIndex] ?? 0)}`}
-                          >
-                            <span className="forecast-month-value">{FORECAST_NUMBER_FORMATTER.format(value)}</span>
-                          </td>
-                        ))}
-
                         <td className="number-cell forecast-total-col">
                           <button
                             type="button"
@@ -426,6 +416,16 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                             {FORECAST_NUMBER_FORMATTER.format(rowTotal)}
                           </button>
                         </td>
+
+                        {displayedMonthlyValues.map((value, monthIndex) => (
+                          <td
+                            key={`month-${rowIndex}-${monthIndex}`}
+                            className={`number-cell forecast-month-col forecast-month-cell--locked ${getForecastCellStatusClass(value, displayedMonthlyFactValues[monthIndex] ?? 0)}`}
+                            title={`План: ${FORECAST_NUMBER_FORMATTER.format(value)}; Факт: ${FORECAST_NUMBER_FORMATTER.format(displayedMonthlyFactValues[monthIndex] ?? 0)}`}
+                          >
+                            <span className="forecast-month-value">{FORECAST_NUMBER_FORMATTER.format(value)}</span>
+                          </td>
+                        ))}
                       </tr>
                     )
                   })}
@@ -835,12 +835,12 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
                   {FORECAST_HIERARCHY_COLUMNS.map((column) => (
                     <th key={column} rowSpan={2}>{column}</th>
                   ))}
+                  <th className="number-cell forecast-total-col" rowSpan={2}>Итого за год</th>
                   {editableMonthIndexes.map((index) => (
                     <th key={`month-group-${index}`} className="number-cell" colSpan={2}>
                       {FORECAST_MONTH_LABELS[index]}
                     </th>
                   ))}
-                  <th className="number-cell forecast-total-col" rowSpan={2}>Итого за год</th>
                   <th rowSpan={2}>Действия</th>
                 </tr>
                 <tr>
@@ -873,6 +873,8 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
                         )
                       })}
 
+                      <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(rowTotal)}</td>
+
                       {editableMonthIndexes.map((index) => (
                         <>
                           <td key={`month-popup-${rowIndex}-${index}`} className="number-cell forecast-month-col forecast-month-cell--editable">
@@ -903,8 +905,6 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
                           </td>
                         </>
                       ))}
-
-                      <td className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(rowTotal)}</td>
                       <td>
                         <button
                           type="button"
