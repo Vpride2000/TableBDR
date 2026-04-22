@@ -137,7 +137,7 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
     void loadSelectOptions();
   }, []);
 
-  const columns = data.length > 0 ? Object.keys(data[0]) : [];
+  const columns = useMemo(() => data.length > 0 ? Object.keys(data[0]) : [], [data]);
 
   const orderedColumns = useMemo(() => {
     const next = [...columns];

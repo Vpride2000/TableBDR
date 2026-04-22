@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRef, useState, useMemo, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import BudgetTable from './BudgetTable'
 import Guide from './Guide'
@@ -7,167 +7,10 @@ import LimitDetailsPage from './LimitDetailsPage'
 import ContractDetailsPage from './ContractDetailsPage'
 import ContractsPage from './ContractsPage'
 import InvestProgramTablePage from './InvestProgramTablePage'
+import { useForecast } from './hooks/useForecast'
+import { Page, FORECAST_HIERARCHY_COLUMNS, FORECAST_MONTH_LABELS, FORECAST_NUMBER_FORMATTER, FORECAST_UPDATED_EVENT_KEY, BDR_UPDATED_EVENT_KEY, ForecastRow, ForecastMonthlyApiRow, ForecastMonthlyEdits, ForecastMonthlyFactEdits } from './types/forecast'
+import { pageFromHash, toForecastNumber, buildForecastRows, normalizeMonthlyValues, getForecastRowKey, toForecastKeyPart, buildRowSpans } from './utils/forecastUtils'
 import './styles.css'
-
-type Page = 'budget' | 'guide' | 'forecasts' | 'contracts' | 'invest-program-table'
-
-function pageFromHash(hash: string): Page {
-  if (hash === '#invest-program-table') return 'invest-program-table'
-  if (hash === '#contracts') return 'contracts'
-  if (hash === '#forecasts') return 'forecasts'
-  if (hash === '#guide') return 'guide'
-  return 'budget'
-}
-
-type ForecastSourceRow = Record<string, unknown>
-
-interface ForecastRow {
-  rowId: number
-  'Статья бюджета': string
-  Контрагент: string
-  Договор: string
-  Подразделение: string
-  'Предмет договора': string
-  monthlyValues: number[]
-  totalLimit: number
-}
-
-interface ForecastMonthlyApiRow {
-  rowId: number
-  monthlyValues: number[]
-  monthlyFactValues?: number[]
-}
-
-type ForecastMonthlyEdits = Record<string, number[]>
-type ForecastMonthlyFactEdits = Record<string, number[]>
-
-const FORECAST_HIERARCHY_COLUMNS: Array<keyof Pick<ForecastRow, 'Статья бюджета' | 'Контрагент' | 'Договор' | 'Подразделение' | 'Предмет договора'>> = [
-  'Статья бюджета',
-  'Контрагент',
-  'Договор',
-  'Подразделение',
-  'Предмет договора',
-]
-
-const FORECAST_MONTH_LABELS = [
-  'Янв',
-  'Фев',
-  'Мар',
-  'Апр',
-  'Май',
-  'Июн',
-  'Июл',
-  'Авг',
-  'Сен',
-  'Окт',
-  'Ноя',
-  'Дек',
-]
-
-const FORECAST_NUMBER_FORMATTER = new Intl.NumberFormat('ru-RU', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
-
-const FORECAST_UPDATED_EVENT_KEY = 'forecast:last-update'
-const BDR_UPDATED_EVENT_KEY = 'bdr:last-update'
-
-function toForecastKeyPart(value: unknown): string {
-  const normalized = String(value ?? '').trim()
-  return normalized === '' ? '—' : normalized
-}
-
-function toForecastNumber(value: unknown): number {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
-  if (typeof value === 'string') {
-    const normalized = value.replace(/\s+/g, '').replace(',', '.')
-    const parsed = Number(normalized)
-    return Number.isFinite(parsed) ? parsed : 0
-  }
-  return 0
-}
-
-function distributeByMonths(total: number): number[] {
-  const yearlyCents = Math.round(total * 100)
-  const base = Math.trunc(yearlyCents / 12)
-  const remainder = yearlyCents - base * 12
-  const sign = remainder >= 0 ? 1 : -1
-  const addCount = Math.abs(remainder)
-
-  return Array.from({ length: 12 }, (_, index) => {
-    const extra = index < addCount ? sign : 0
-    return (base + extra) / 100
-  })
-}
-
-function buildRowSpans(rows: ForecastRow[]): Array<Record<string, number>> {
-  const spans = rows.map(() =>
-    Object.fromEntries(FORECAST_HIERARCHY_COLUMNS.map((column) => [column, 0])) as Record<string, number>
-  )
-
-  FORECAST_HIERARCHY_COLUMNS.forEach((column, depthIndex) => {
-    let start = 0
-
-    while (start < rows.length) {
-      let end = start + 1
-
-      while (end < rows.length) {
-        const samePrefix = FORECAST_HIERARCHY_COLUMNS.slice(0, depthIndex + 1).every(
-          (key) => rows[end][key] === rows[start][key]
-        )
-
-        if (!samePrefix) break
-        end += 1
-      }
-
-      spans[start][column] = end - start
-      start = end
-    }
-  })
-
-  return spans
-}
-
-function getForecastRowKey(row: ForecastRow): string {
-  return String(row.rowId)
-}
-
-function normalizeMonthlyValues(values: number[]): number[] {
-  const normalized = new Array<number>(12).fill(0)
-
-  for (let index = 0; index < 12; index += 1) {
-    const value = values[index]
-    normalized[index] = Number.isFinite(value) ? value : 0
-  }
-
-  return normalized
-}
-
-function buildForecastRows(rows: ForecastSourceRow[]): ForecastRow[] {
-  const mapped = rows.map((row) => {
-    const rowId = toForecastNumber(row['GN_bdr_ID'])
-    const limit = toForecastNumber(row['Лимит'])
-
-    return {
-      rowId,
-      'Статья бюджета': toForecastKeyPart(row['Статья бюджета']),
-      Контрагент: toForecastKeyPart(row['Контрагент']),
-      Договор: toForecastKeyPart(row['Договор']),
-      Подразделение: toForecastKeyPart(row['Подразделение']),
-      'Предмет договора': toForecastKeyPart(row['Предмет договора']),
-      monthlyValues: distributeByMonths(limit),
-      totalLimit: limit,
-    }
-  })
-
-  return mapped.sort((a, b) => {
-    for (const column of FORECAST_HIERARCHY_COLUMNS) {
-      const compare = a[column].localeCompare(b[column], 'ru')
-      if (compare !== 0) return compare
-    }
-    return a.rowId - b.rowId
-  })
-}
 
 interface ForecastsProps {
   onOpenLimit: (rowId: number) => void
@@ -175,138 +18,21 @@ interface ForecastsProps {
 }
 
 function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
-  const [rows, setRows] = useState<ForecastSourceRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [monthlyEdits, setMonthlyEdits] = useState<ForecastMonthlyEdits>({})
-  const [monthlyFactEdits, setMonthlyFactEdits] = useState<ForecastMonthlyFactEdits>({})
-  const [forecastFilters, setForecastFilters] = useState<Record<(typeof FORECAST_HIERARCHY_COLUMNS)[number], string>>({
-    'Статья бюджета': '',
-    Контрагент: '',
-    Договор: '',
-    'Предмет договора': '',
-    Подразделение: '',
-  })
-  function loadForecastData(): Promise<void> {
-    setLoading(true)
-    setError(null)
-
-    return Promise.all([
-      fetch('/api/gn/bdr'),
-      fetch('/api/gn/forecast-monthly'),
-    ])
-      .then(async ([bdrResponse, forecastResponse]) => {
-        if (!bdrResponse.ok) throw new Error(`HTTP ${bdrResponse.status}`)
-        if (!forecastResponse.ok) throw new Error(`HTTP ${forecastResponse.status}`)
-
-        const [bdrRows, forecastPayload] = await Promise.all([
-          bdrResponse.json() as Promise<ForecastSourceRow[]>,
-          forecastResponse.json() as Promise<{ rows?: ForecastMonthlyApiRow[] }>,
-        ])
-
-        const nextMonthlyEdits: ForecastMonthlyEdits = {}
-        const nextMonthlyFactEdits: ForecastMonthlyFactEdits = {}
-        ;(forecastPayload.rows ?? []).forEach((row) => {
-          const key = String(toForecastNumber(row.rowId))
-
-          const values = Array.isArray(row.monthlyValues)
-            ? row.monthlyValues.map((value) => toForecastNumber(value))
-            : []
-          const factValues = Array.isArray(row.monthlyFactValues)
-            ? row.monthlyFactValues.map((value) => toForecastNumber(value))
-            : []
-
-          nextMonthlyEdits[key] = normalizeMonthlyValues(values)
-          nextMonthlyFactEdits[key] = normalizeMonthlyValues(factValues)
-        })
-
-        setRows(bdrRows)
-        setMonthlyEdits(nextMonthlyEdits)
-        setMonthlyFactEdits(nextMonthlyFactEdits)
-      })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    void loadForecastData()
-  }, [])
-
-  useEffect(() => {
-    function onStorage(event: StorageEvent): void {
-      if (event.key !== FORECAST_UPDATED_EVENT_KEY) return
-      void loadForecastData()
-    }
-
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [])
-
-  const forecastRows = useMemo(() => buildForecastRows(rows), [rows])
-
-  const filteredForecastRows = useMemo(() => {
-    return forecastRows.filter((row) =>
-      FORECAST_HIERARCHY_COLUMNS.every((column) => {
-        const filterValue = forecastFilters[column].trim().toLowerCase()
-        if (!filterValue) return true
-        return row[column].toLowerCase().includes(filterValue)
-      })
-    )
-  }, [forecastRows, forecastFilters])
-
-  const filteredRowSpans = useMemo(() => buildRowSpans(filteredForecastRows), [filteredForecastRows])
-
-
-  function getDisplayedMonthlyValues(row: ForecastRow): number[] {
-    return monthlyEdits[getForecastRowKey(row)] ?? row.monthlyValues
-  }
-
-  function getDisplayedMonthlyFactValues(row: ForecastRow): number[] {
-    return monthlyFactEdits[getForecastRowKey(row)] ?? new Array<number>(12).fill(0)
-  }
-
-  function getForecastCellStatusClass(planValue: number, factValue: number): string {
-    if (factValue === 0) return 'forecast-month-cell--zero-fact'
-    if (Math.abs(planValue - factValue) < 0.005) return 'forecast-month-cell--match'
-    return 'forecast-month-cell--mismatch'
-  }
-
-  function setForecastFilter(column: (typeof FORECAST_HIERARCHY_COLUMNS)[number], value: string): void {
-    setForecastFilters((prev) => ({ ...prev, [column]: value }))
-  }
-
-
-  function openForecastMonthPopup(monthIndex: number): void {
-    const popupUrl = `${window.location.pathname}#forecast-month-window-${monthIndex}`
-    const popup = window.open(
-      popupUrl,
-      `forecast-month-window-${monthIndex}`,
-      'popup=yes,width=1100,height=820,resizable=yes,scrollbars=yes'
-    )
-
-    if (popup) {
-      popup.focus()
-    }
-  }
-
-  const totalByMonths = useMemo(() => {
-    const totals = new Array<number>(12).fill(0)
-    filteredForecastRows.forEach((row) => {
-      getDisplayedMonthlyValues(row).forEach((value, index) => {
-        totals[index] += value
-      })
-    })
-    return totals
-  }, [filteredForecastRows, monthlyEdits])
-
-  const grandTotal = useMemo(
-    () =>
-      filteredForecastRows.reduce(
-        (sum, row) => sum + getDisplayedMonthlyValues(row).reduce((acc, value) => acc + value, 0),
-        0
-      ),
-    [filteredForecastRows, monthlyEdits]
-  )
+  const {
+    loading,
+    error,
+    forecastRows,
+    filteredForecastRows,
+    filteredRowSpans,
+    getDisplayedMonthlyValues,
+    getDisplayedMonthlyFactValues,
+    getForecastCellStatusClass,
+    setForecastFilter,
+    openForecastMonthPopup,
+    totalByMonths,
+    grandTotal,
+    forecastFilters,
+  } = useForecast()
 
   return (
     <section className="guide forecast-section">
@@ -379,7 +105,7 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                     const rowKey = getForecastRowKey(row)
                     const displayedMonthlyValues = getDisplayedMonthlyValues(row)
                     const displayedMonthlyFactValues = getDisplayedMonthlyFactValues(row)
-                    const rowTotal = displayedMonthlyValues.reduce((sum, value) => sum + value, 0)
+                    const rowTotal = displayedMonthlyValues.reduce((sum: number, value: number) => sum + value, 0)
 
                     return (
                       <tr key={rowKey}>
@@ -445,7 +171,7 @@ interface ForecastMonthPopupPageProps {
 }
 
 function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPageProps) {
-  const [rows, setRows] = useState<ForecastSourceRow[]>([])
+  const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -474,7 +200,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
         if (!forecastResponse.ok) throw new Error(`HTTP ${forecastResponse.status}`)
 
         const [bdrRows, forecastPayload] = await Promise.all([
-          bdrResponse.json() as Promise<ForecastSourceRow[]>,
+          bdrResponse.json() as Promise<Record<string, unknown>[]>,
           forecastResponse.json() as Promise<{ rows?: ForecastMonthlyApiRow[] }>,
         ])
 
@@ -504,21 +230,13 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
   const forecastRows = useMemo(() => buildForecastRows(rows), [rows])
   const rowSpans = useMemo(() => buildRowSpans(forecastRows), [forecastRows])
 
-  function getDisplayedMonthlyValues(row: ForecastRow): number[] {
-    return monthlyEdits[getForecastRowKey(row)] ?? row.monthlyValues
-  }
-
-  function getDisplayedMonthlyFactValues(row: ForecastRow): number[] {
-    return monthlyFactEdits[getForecastRowKey(row)] ?? new Array<number>(12).fill(0)
-  }
-
   function updateMonthlyValue(row: ForecastRow, targetMonthIndex: number, rawValue: string): void {
     const rowKey = getForecastRowKey(row)
     const parsed = rawValue.trim() === '' ? 0 : toForecastNumber(rawValue)
     setSaveError(null)
     setSaveSuccess(null)
 
-    setMonthlyEdits((prev) => {
+    setMonthlyEdits((prev: Record<string, number[]>) => {
       const base = prev[rowKey] ?? row.monthlyValues
       const nextValues = [...base]
       nextValues[targetMonthIndex] = parsed
@@ -532,7 +250,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
     setSaveError(null)
     setSaveSuccess(null)
 
-    setMonthlyFactEdits((prev) => {
+    setMonthlyFactEdits((prev: Record<string, number[]>) => {
       const base = prev[rowKey] ?? new Array<number>(12).fill(0)
       const nextValues = [...base]
       nextValues[targetMonthIndex] = parsed
@@ -546,6 +264,14 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
     setSaveSuccess(null)
 
     try {
+      const getDisplayedMonthlyValues = (row: ForecastRow): number[] => {
+        return monthlyEdits[getForecastRowKey(row)] ?? row.monthlyValues
+      }
+
+      const getDisplayedMonthlyFactValues = (row: ForecastRow): number[] => {
+        return monthlyFactEdits[getForecastRowKey(row)] ?? new Array<number>(12).fill(0)
+      }
+
       const rowsToSave: ForecastMonthlyApiRow[] = forecastRows.map((row) => ({
         rowId: row.rowId,
         monthlyValues: normalizeMonthlyValues(getDisplayedMonthlyValues(row)),
@@ -576,6 +302,14 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
   }
 
   function exportMonthTableToXlsx(): void {
+    const getDisplayedMonthlyValues = (row: ForecastRow): number[] => {
+      return monthlyEdits[getForecastRowKey(row)] ?? row.monthlyValues
+    }
+
+    const getDisplayedMonthlyFactValues = (row: ForecastRow): number[] => {
+      return monthlyFactEdits[getForecastRowKey(row)] ?? new Array<number>(12).fill(0)
+    }
+
     const monthColumns = editableMonthIndexes.flatMap((index) => {
       const monthLabel = FORECAST_MONTH_LABELS[index]
       return [`${monthLabel} План`, `${monthLabel} Факт`]
@@ -586,7 +320,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
     const exportRows = forecastRows.map((row) => {
       const displayedMonthlyValues = getDisplayedMonthlyValues(row)
       const displayedMonthlyFactValues = getDisplayedMonthlyFactValues(row)
-      const rowTotal = displayedMonthlyValues.reduce((sum, value) => sum + value, 0)
+      const rowTotal = displayedMonthlyValues.reduce((sum: number, value: number) => sum + value, 0)
 
       const rowData: Record<string, string | number> = {
         'Статья бюджета': row['Статья бюджета'],
@@ -726,7 +460,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
 
       let updatedRowsCount = 0
 
-      setMonthlyEdits((prev) => {
+      setMonthlyEdits((prev: Record<string, number[]>) => {
         const next = { ...prev }
 
         forecastRows.forEach((row) => {
@@ -751,7 +485,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
         return next
       })
 
-      setMonthlyFactEdits((prev) => {
+      setMonthlyFactEdits((prev: Record<string, number[]>) => {
         const next = { ...prev }
 
         forecastRows.forEach((row) => {
@@ -856,9 +590,9 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
                 {forecastRows.map((row, rowIndex) => {
                   const rowKey = getForecastRowKey(row)
                   const isEditing = editingRowKeys.has(rowKey)
-                  const displayedMonthlyValues = getDisplayedMonthlyValues(row)
-                  const displayedMonthlyFactValues = getDisplayedMonthlyFactValues(row)
-                  const rowTotal = displayedMonthlyValues.reduce((sum, value) => sum + value, 0)
+                  const displayedMonthlyValues = monthlyEdits[rowKey] ?? row.monthlyValues
+                  const displayedMonthlyFactValues = monthlyFactEdits[rowKey] ?? new Array<number>(12).fill(0)
+                  const rowTotal = displayedMonthlyValues.reduce((sum: number, value: number) => sum + value, 0)
 
                   return (
                     <tr key={rowKey}>
