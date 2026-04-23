@@ -1,6 +1,10 @@
 ﻿import { Suspense, useEffect, useMemo, useState, lazy } from 'react';
 import './styles.css';
+import { formatHttpError, formatErrorMessage } from './utils/forecastUtils';
 
+// Компонент страницы бюджета.
+// Загружает список BDR-строк, поддерживает сортировку, фильтрацию,
+// редактирование строк и отображение сводных матриц.
 const DepartmentSummaryTable = lazy(() => import('./BudgetSummaryByDepartment'));
 const PaoItemSummaryTable = lazy(() => import('./BudgetSummaryByPaoItem'));
 const BudgetItemDepartmentSummaryTable = lazy(() => import('./BudgetSummaryByBudgetItemDepartment'));
@@ -34,6 +38,8 @@ interface SortState {
   direction: SortDirection;
 }
 
+// Приводит значение в формат, удобный для сортировки.
+// Числа и даты сортируются как числа, остальные строки — как нижний регистр.
 function parseComparable(value: unknown): number | string {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
@@ -49,6 +55,8 @@ function parseComparable(value: unknown): number | string {
   return String(value).toLowerCase();
 }
 
+// Преобразует значение из строки или числа в нормальное количество.
+// Пустые строки и нечисловые значения считаются нулем.
 function parseNumericValue(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') {
@@ -59,6 +67,7 @@ function parseNumericValue(value: unknown): number {
   return 0;
 }
 
+// Форматирует числовое значение в денежный вид для таблицы бюджета.
 function formatFinancialValue(value: unknown): string {
   return FINANCIAL_NUMBER_FORMATTER.format(parseNumericValue(value));
 }
@@ -97,11 +106,11 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
 
     return fetch('/api/gn/bdr')
       .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(formatHttpError(res.status));
         return res.json() as Promise<Row[]>;
       })
       .then((rows) => setData(rows))
-      .catch((err: Error) => setError(err.message))
+      .catch((err: Error) => setError(formatErrorMessage(err)))
       .finally(() => setLoading(false));
   }
 

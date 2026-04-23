@@ -1,5 +1,7 @@
 import { Fragment } from 'react';
 
+// Компонент таблицы сводки по подразделениям.
+// Отображает суммы лимитов по подразделениям и вложенные суммы по статьям бюджета УС.
 type DepartmentSummary = {
   department: string;
   totalLimit: number;

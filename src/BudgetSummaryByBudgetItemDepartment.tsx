@@ -1,3 +1,5 @@
+// Компонент матрицы сводки по статьям бюджета и подразделениям.
+// Отображает перекрестную таблицу лимитов в разрезе статьи Бюджета и подразделения.
 type BudgetItemDepartmentSummaryRow = {
   budgetItem: string;
   byDepartment: Record<string, number>;

@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import './styles.css';
+import { formatHttpError } from './utils/forecastUtils';
 
+// Страница добавления новой строки бюджета.
+// Отвечает за форму создания новой BDR-записи и загрузку справочников
+// для выпадающих полей.
 const BDR_UPDATED_EVENT_KEY = 'bdr:last-update';
 
 interface AddBudgetRowPageProps {
@@ -278,7 +282,7 @@ export default function AddBudgetRowPage({ onBack, showFormOnLoad = false }: Add
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error || `HTTP ${response.status}`);
+        throw new Error(payload.error || formatHttpError(response.status));
       }
 
       setNewRow(EMPTY_NEW_ROW);

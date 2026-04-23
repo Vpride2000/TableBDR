@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import './styles.css';
+import { formatHttpError } from './utils/forecastUtils';
 
+// Страница просмотра деталей по конкретному договору.
+// Загружает все строки BDR и фильтрует их по названию договора.
 type Row = Record<string, unknown>;
 
 interface ContractDetailsPageProps {
@@ -22,7 +25,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
         const response = await fetch('/api/gn/bdr');
         if (!response.ok) {
           const payload = (await response.json().catch(() => ({}))) as { error?: string };
-          throw new Error(payload.error || `HTTP ${response.status}`);
+          throw new Error(payload.error || formatHttpError(response.status));
         }
 
         const allRows = (await response.json()) as Row[];

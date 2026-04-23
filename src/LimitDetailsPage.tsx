@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import './styles.css';
+import { formatHttpError } from './utils/forecastUtils';
 
+// Страница подробного расчета лимита для выбранной строки BDR.
+// Загружает текущие данные по строке, отображает расчетные строки
+// и позволяет пользователю сохранять изменения в лимите.
 const BDR_UPDATED_EVENT_KEY = 'bdr:last-update';
 const FORECAST_UPDATED_EVENT_KEY = 'forecast:last-update';
 
@@ -68,7 +72,7 @@ function distributeByMonths(total: number): number[] {
 async function loadCurrentFactValues(rowId: number): Promise<number[]> {
   const response = await fetch('/api/gn/forecast-monthly');
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(formatHttpError(response.status));
   }
 
   const payload = (await response.json()) as {
@@ -127,12 +131,12 @@ export default function LimitDetailsPage({ rowId, onBack }: LimitDetailsPageProp
 
         if (!rowResponse.ok) {
           const payload = (await rowResponse.json().catch(() => ({}))) as { error?: string };
-          throw new Error(payload.error || `HTTP ${rowResponse.status}`);
+          throw new Error(payload.error || formatHttpError(rowResponse.status));
         }
 
         if (!calculationResponse.ok) {
           const payload = (await calculationResponse.json().catch(() => ({}))) as { error?: string };
-          throw new Error(payload.error || `HTTP ${calculationResponse.status}`);
+          throw new Error(payload.error || formatHttpError(calculationResponse.status));
         }
 
         const loadedRow = (await rowResponse.json()) as Row;
@@ -226,13 +230,13 @@ export default function LimitDetailsPage({ rowId, onBack }: LimitDetailsPageProp
 
       if (!calcResponse.ok) {
         const payload = (await calcResponse.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error || `HTTP ${calcResponse.status}`);
+        throw new Error(payload.error || formatHttpError(calcResponse.status));
       }
 
       const updatedRowResponse = await fetch(`/api/gn/bdr/${rowId}`);
       if (!updatedRowResponse.ok) {
         const payload = (await updatedRowResponse.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error || `HTTP ${updatedRowResponse.status}`);
+        throw new Error(payload.error || formatHttpError(updatedRowResponse.status));
       }
 
       const updatedRow = (await updatedRowResponse.json()) as Row;
@@ -271,7 +275,7 @@ export default function LimitDetailsPage({ rowId, onBack }: LimitDetailsPageProp
 
         if (!forecastResponse.ok) {
           const payload = (await forecastResponse.json().catch(() => ({}))) as { error?: string };
-          throw new Error(payload.error || `HTTP ${forecastResponse.status}`);
+          throw new Error(payload.error || formatHttpError(forecastResponse.status));
         }
 
         localStorage.setItem(FORECAST_UPDATED_EVENT_KEY, String(Date.now()));

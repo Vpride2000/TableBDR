@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 import './styles.css'
+import { formatHttpError, formatErrorMessage } from './utils/forecastUtils'
 
+// Страница инвестпрограммы.
+// Генерирует демонстрационную таблицу с инвестиционными позициями,
+// подгружает справочники для выпадающих списков и поддерживает редактирование.
 const DETAIL_COLUMNS = ['код ПЭО', 'Код МТР', 'ПЗП', 'отчет агента', 'АП', 'Спецификация', 'Ввод в эксплуатацию', 'Учёт ИТ'] as const
 const SED_COLUMNS = ['СЭД СПЕЦ', 'СЭД отчет агента', 'Состояние'] as const
 const COST_COLUMNS = ['реальная цена без НДС за шт', 'реальная сумма без НДС + агентские цена без НДС', 'Сумма без НДС'] as const
@@ -66,16 +70,65 @@ function mapLookupOptions(
 }
 
 export default function InvestProgramTablePage() {
-  const [rows, setRows] = useState<InvestRow[]>(() => buildInitialRows(5))
+  const [rows, setRows] = useState<InvestRow[]>([])
   const [okdpOptions, setOkdpOptions] = useState<LookupOption[]>([])
   const [ogruzOptions, setOgruzOptions] = useState<LookupOption[]>([])
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([])
   const [departmentOptions, setDepartmentOptions] = useState<LookupOption[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [loadingLookups, setLoadingLookups] = useState(true)
   const [lookupError, setLookupError] = useState<string | null>(null)
   const [activePopupRowIndex, setActivePopupRowIndex] = useState<number | null>(null)
   const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null)
   const [editingRowDraft, setEditingRowDraft] = useState<InvestRow | null>(null)
+
+  useEffect(() => {
+    async function loadInvestProgram(): Promise<void> {
+      setLoading(true)
+      setError(null)
+
+      try {
+        const response = await fetch('/api/gn/invest-program')
+        if (!response.ok) throw new Error(formatHttpError(response.status))
+        const data = (await response.json()) as Record<string, unknown>[]
+
+        const mappedRows: InvestRow[] = data.map((row) => ({
+          'ПФ/НПФ': String(row.GN_invest_pf_npf ?? ''),
+          'Наименование': String(row.GN_invest_name ?? ''),
+          'Кол-во': String(row.GN_invest_quantity ?? ''),
+          'ОКДП ТКО для ИС ПРИТ': String(row.GN_invest_okdp ?? ''),
+          'поставщик': String(row.GN_invest_supplier ?? ''),
+          'Огрузочный реквизит': String(row.GN_invest_ogruz ?? ''),
+          'Статус': String(row.GN_invest_status ?? ''),
+          'оплата': String(row.GN_invest_payment ?? ''),
+          'в бюджете': String(row.GN_invest_in_budget ?? ''),
+          'код ПЭО': String(row.GN_invest_peo_code ?? ''),
+          'Код МТР': String(row.GN_invest_mtr_code ?? ''),
+          'ПЗП': String(row.GN_invest_pzp ?? ''),
+          'отчет агента': String(row.GN_invest_agent_report ?? ''),
+          'АП': String(row.GN_invest_ap ?? ''),
+          'Спецификация': String(row.GN_invest_spec ?? ''),
+          'Ввод в эксплуатацию': String(row.GN_invest_commissioning ?? ''),
+          'Учёт ИТ': String(row.GN_invest_it_accounting ?? ''),
+          'СЭД СПЕЦ': String(row.GN_invest_sed_spec ?? ''),
+          'СЭД отчет агента': String(row.GN_invest_sed_agent_report ?? ''),
+          'Состояние': String(row.GN_invest_state ?? ''),
+          'реальная цена без НДС за шт': String(row.GN_invest_real_price_no_vat_per_unit ?? ''),
+          'реальная сумма без НДС + агентские цена без НДС': String(row.GN_invest_real_sum_no_vat_plus_agent_no_vat ?? ''),
+          'Сумма без НДС': String(row.GN_invest_sum_no_vat ?? ''),
+        }))
+
+        setRows(mappedRows)
+      } catch (err) {
+        setError(formatErrorMessage(err))
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void loadInvestProgram()
+  }, [])
 
   useEffect(() => {
     async function loadLookups(): Promise<void> {
@@ -90,10 +143,10 @@ export default function InvestProgramTablePage() {
           fetch('/api/gn/departments'),
         ])
 
-        if (!okdpRes.ok) throw new Error(`HTTP ${okdpRes.status}`)
-        if (!ogruzRes.ok) throw new Error(`HTTP ${ogruzRes.status}`)
-        if (!contractorRes.ok) throw new Error(`HTTP ${contractorRes.status}`)
-        if (!departmentRes.ok) throw new Error(`HTTP ${departmentRes.status}`)
+        if (!okdpRes.ok) throw new Error(formatHttpError(okdpRes.status))
+        if (!ogruzRes.ok) throw new Error(formatHttpError(ogruzRes.status))
+        if (!contractorRes.ok) throw new Error(formatHttpError(contractorRes.status))
+        if (!departmentRes.ok) throw new Error(formatHttpError(departmentRes.status))
 
         const okdpRows = (await okdpRes.json()) as Array<Record<string, unknown>>
         const ogruzRows = (await ogruzRes.json()) as Array<Record<string, unknown>>
@@ -189,20 +242,23 @@ export default function InvestProgramTablePage() {
     <section className="guide invest-program-section">
       <div className="guide-section invest-program-content">
         <h2>Инвест.программа: таблица</h2>
+        {loading && <p className="hint">Загрузка данных...</p>}
+        {error && <p className="hint hint--error">Ошибка: {error}</p>}
         {loadingLookups && <p className="hint">Загрузка справочников...</p>}
         {lookupError && <p className="hint hint--error">Ошибка: {lookupError}</p>}
 
-        <div className="guide-table-wrap invest-program-table-wrap">
-          <table className="guide-table table-compact invest-program-table-min">
-            <thead>
-              <tr>
-                <th>№</th>
-                {INVEST_TABLE_COLUMNS.map((column) => (
-                  <th key={column}>{column}</th>
-                ))}
-                <th>Действия</th>
-              </tr>
-            </thead>
+        {!loading && !error && (
+          <div className="guide-table-wrap invest-program-table-wrap">
+            <table className="guide-table table-compact invest-program-table-min">
+              <thead>
+                <tr>
+                  <th>№</th>
+                  {INVEST_TABLE_COLUMNS.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                  <th>Действия</th>
+                </tr>
+              </thead>
             <tbody>
               {rows.map((row, rowIndex) => (
                 <tr key={`row-${rowIndex}`}>
@@ -390,6 +446,7 @@ export default function InvestProgramTablePage() {
             </tbody>
           </table>
         </div>
+        )}
 
         {popupRow && activePopupRowIndex != null && (
           <div className="invest-popup-backdrop" onClick={() => setActivePopupRowIndex(null)}>

@@ -12,11 +12,20 @@ import { Page, FORECAST_HIERARCHY_COLUMNS, FORECAST_MONTH_LABELS, FORECAST_NUMBE
 import { pageFromHash, toForecastNumber, buildForecastRows, normalizeMonthlyValues, getForecastRowKey, toForecastKeyPart, buildRowSpans } from './utils/forecastUtils'
 import './styles.css'
 
+/*
+  Основная точка входа клиентской части приложения.
+  Отвечает за маршрутизацию между страницами по хэшу,
+  отображение попапов и навигацию между разделами.
+*/
+
 interface ForecastsProps {
   onOpenLimit: (rowId: number) => void
   onOpenContract: (contractName: string) => void
 }
 
+// Основной компонент страницы прогнозов.
+// Отвечает за отрисовку таблицы прогноза, фильтры по иерархии и
+// действия по открытию окна редактирования лимита или просмотра договора.
 function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
   const {
     loading,
@@ -170,6 +179,8 @@ interface ForecastMonthPopupPageProps {
   onBack: () => void
 }
 
+// Попап для редактирования выбранного месяца.
+// Отображает три месяца (предыдущий, текущий, следующий), позволяет вводить план и факт.
 function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPageProps) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(true)
@@ -258,6 +269,8 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
     })
   }
 
+  // Сохраняет текущие изменения прогноза на сервер.
+  // Собирает все строки прогноза, нормализует значения и отправляет PUT-запрос.
   async function saveMonthlyForecastEdits(): Promise<void> {
     setSaving(true)
     setSaveError(null)
@@ -301,6 +314,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
     }
   }
 
+  // Формирует XLSX-файл для текущего выбранного месяца и загружает его.
   function exportMonthTableToXlsx(): void {
     const getDisplayedMonthlyValues = (row: ForecastRow): number[] => {
       return monthlyEdits[getForecastRowKey(row)] ?? row.monthlyValues
@@ -407,10 +421,13 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
     XLSX.writeFile(workbook, `Редактирование-месяца-${FORECAST_MONTH_LABELS[monthIndex]}-${dateSuffix}.xlsx`)
   }
 
+  // Открывает скрытый input для загрузки XLSX-файла.
   function openImportFileDialog(): void {
     importFileInputRef.current?.click()
   }
 
+  // Импортирует данные из XLSX-файла, сопоставляет строки с текущим прогнозом
+  // и обновляет локальные редактируемые значения.
   async function importMonthTableFromXlsx(event: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -714,6 +731,7 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [isAddRowPopup, isLimitPopup, isContractPopup, isForecastMonthPopup])
 
+  // Переключает активную страницу приложения, обновляя хэш URL.
   function goTo(nextPage: Page): void {
     if (nextPage === 'contracts') {
       window.location.hash = '#contracts'
@@ -734,6 +752,7 @@ export default function App() {
     window.location.hash = '#budget'
   }
 
+  // Открывает отдельное окно для создания новой строки бюджета.
   function openAddRowWindow(): void {
     const popupUrl = `${window.location.pathname}#add-row-window`
     const popup = window.open(
@@ -747,6 +766,7 @@ export default function App() {
     }
   }
 
+  // Открывает окно детальной страницы расчета лимита для выбранной строки.
   function openLimitWindow(rowId: number): void {
     const popupUrl = `${window.location.pathname}#limit-window-${rowId}`
     const popup = window.open(
@@ -760,6 +780,7 @@ export default function App() {
     }
   }
 
+  // Открывает окно просмотра деталей по договору, передавая его имя через хэш.
   function openContractWindow(contractName: string): void {
     const encodedName = encodeURIComponent(contractName)
     const popupUrl = `${window.location.pathname}#contract-window-${encodedName}`

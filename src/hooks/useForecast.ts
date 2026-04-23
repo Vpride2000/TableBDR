@@ -6,9 +6,11 @@ import {
   ForecastMonthlyApiRow,
   FORECAST_HIERARCHY_COLUMNS,
   FORECAST_UPDATED_EVENT_KEY,
-} from '../types/forecast.js'
-import { toForecastNumber, normalizeMonthlyValues, getForecastRowKey, buildForecastRows, distributeByMonths, toForecastKeyPart, buildRowSpans } from '../utils/forecastUtils.js'
+} from '../types/forecast'
+import { toForecastNumber, normalizeMonthlyValues, getForecastRowKey, buildForecastRows, distributeByMonths, toForecastKeyPart, buildRowSpans, formatHttpError, formatErrorMessage } from '../utils/forecastUtils'
 
+// Хук, который инкапсулирует загрузку прогнозных данных, фильтрацию и вычисление
+// итоговых значений для страницы прогнозов.
 export function useForecast() {
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [monthlyEdits, setMonthlyEdits] = useState<ForecastMonthlyEdits>({})
@@ -31,8 +33,8 @@ export function useForecast() {
         fetch('/api/gn/forecast-monthly'),
       ])
 
-      if (!bdrResponse.ok) throw new Error(`HTTP ${bdrResponse.status}`)
-      if (!forecastResponse.ok) throw new Error(`HTTP ${forecastResponse.status}`)
+      if (!bdrResponse.ok) throw new Error(formatHttpError(bdrResponse.status))
+      if (!forecastResponse.ok) throw new Error(formatHttpError(forecastResponse.status))
 
       const [bdrRows, forecastPayload] = await Promise.all([
         bdrResponse.json() as Promise<Record<string, unknown>[]>,
@@ -59,7 +61,7 @@ export function useForecast() {
       setMonthlyEdits(nextMonthlyEdits)
       setMonthlyFactEdits(nextMonthlyFactEdits)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load forecast data')
+      setError(formatErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -85,9 +87,9 @@ export function useForecast() {
   const filteredForecastRows = useMemo(() => {
     return forecastRows.filter((row) =>
       FORECAST_HIERARCHY_COLUMNS.every((column) => {
-        const filterValue = forecastFilters[column].trim().toLowerCase()
+        const filterValue = String(forecastFilters[column] ?? '').trim().toLowerCase()
         if (!filterValue) return true
-        return row[column].toLowerCase().includes(filterValue)
+        return String(row[column] ?? '').toLowerCase().includes(filterValue)
       })
     )
   }, [forecastRows, forecastFilters])

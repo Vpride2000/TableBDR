@@ -1,11 +1,24 @@
-import { ForecastRow, FORECAST_HIERARCHY_COLUMNS } from '../types/forecast.js'
+import { ForecastRow, FORECAST_HIERARCHY_COLUMNS } from '../types/forecast'
 
-export function pageFromHash(hash: string): import('../types/forecast.js').Page {
+// Утилиты для обработки прогнозных данных и построения таблиц.
+export function pageFromHash(hash: string): import('../types/forecast').Page {
   if (hash === '#invest-program-table') return 'invest-program-table'
   if (hash === '#contracts') return 'contracts'
   if (hash === '#forecasts') return 'forecasts'
   if (hash === '#guide') return 'guide'
   return 'budget'
+}
+
+export function formatHttpError(status: number): string {
+  if (status === 504) return 'не доступен бэкэнд'
+  return `HTTP ${status}`
+}
+
+export function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return 'Неизвестная ошибка'
 }
 
 export function toForecastKeyPart(value: unknown): string {

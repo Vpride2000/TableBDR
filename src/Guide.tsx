@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import './styles.css';
-
-type Row = Record<string, unknown>;
+import { formatHttpError } from './utils/forecastUtils';
+// Страница справочника GN.
+// Отображает разделы справочных таблиц с возможностью разворачивать
+// и редактировать отдельные записи.type Row = Record<string, unknown>;
 type SelectOption = { value: string; label: string };
 
 interface TableSection {
@@ -88,7 +90,7 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error || `HTTP ${response.status}`);
+        throw new Error(payload.error || formatHttpError(response.status));
       }
 
       const updatedRow = (await response.json()) as Row;
@@ -189,7 +191,7 @@ export default function Guide() {
 
     void fetch(endpoint)
       .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(formatHttpError(res.status));
         return res.json() as Promise<Row[]>;
       })
       .then((data) => {

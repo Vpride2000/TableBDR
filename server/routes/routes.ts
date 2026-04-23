@@ -2,13 +2,18 @@ import { Express, Request, Response } from 'express';
 import { createDbClient, ensureLimitCalculationTable, ensureForecastMonthlyTable, toFiniteNumber, buildFallbackCalculationLine } from '../db/db.js';
 import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS, ForecastMonthlyApiRowInput, ForecastMonthlyDbRow, LimitCalculationLineInput, LimitCalculationLineRow, LimitCalculationResponseLine } from '../config/config.js';
 
+// Маршруты backend-сервера.
+// Этот модуль регистрирует HTTP endpoints для получения и сохранения данных
+// по прогнозам, всем сущностям GN и расчету лимитов.
 export function setupRoutes(app: Express): void {
   // Health check
+  // Простой endpoint для проверки, что сервер доступен.
   app.get('/api/health', (req: Request, res: Response): void => {
     res.json({ status: 'ok' });
   });
 
   // Forecast monthly routes
+  // Работа с таблицей ежемесячного прогноза: чтение и сохранение данных.
   app.get('/api/gn/forecast-monthly', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
@@ -67,6 +72,7 @@ export function setupRoutes(app: Express): void {
 
   app.put('/api/gn/forecast-monthly', async (req: Request, res: Response): Promise<void> => {
     const payload = req.body as { rows?: ForecastMonthlyApiRowInput[] };
+    // Получаем и валидируем массив строк прогноза из тела запроса.
 
     if (!Array.isArray(payload.rows)) {
       res.status(400).json({ error: 'Rows are required' });
@@ -197,6 +203,7 @@ export function setupRoutes(app: Express): void {
           WHERE b."GN_bdr_ID" = forecast."GN_bdr_ID_FK"
         )
       `);
+      // Удаляем устаревшие строки прогноза, связанные с несуществующими BDR.
       const deletedStaleRows = deleteResult.rowCount ?? 0;
 
       await client.query('COMMIT');
@@ -326,6 +333,50 @@ export function setupRoutes(app: Express): void {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to fetch GN_invest_ogruz_rekvizit' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/invest-program', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(`
+        SELECT
+          ip."GN_invest_program_id",
+          ip."GN_invest_pf_npf",
+          ip."GN_invest_name",
+          ip."GN_invest_quantity",
+          okdp."GN_invest_okdp_tko_is_prit" AS "GN_invest_okdp",
+          sup."GN_contarctor" AS "GN_invest_supplier",
+          ogr."GN_invest_ogruz_rekvizit" AS "GN_invest_ogruz",
+          ip."GN_invest_status",
+          ip."GN_invest_payment",
+          ip."GN_invest_in_budget",
+          ip."GN_invest_peo_code",
+          ip."GN_invest_mtr_code",
+          ip."GN_invest_pzp",
+          ip."GN_invest_agent_report",
+          ip."GN_invest_ap",
+          ip."GN_invest_spec",
+          ip."GN_invest_commissioning",
+          ip."GN_invest_it_accounting",
+          ip."GN_invest_sed_spec",
+          ip."GN_invest_sed_agent_report",
+          ip."GN_invest_state",
+          ip."GN_invest_real_price_no_vat_per_unit",
+          ip."GN_invest_real_sum_no_vat_plus_agent_no_vat",
+          ip."GN_invest_sum_no_vat"
+        FROM "GN_invest_program" ip
+        LEFT JOIN "GN_invest_okdp_tko_is_prit" okdp ON ip."GN_invest_okdp_fk" = okdp."GN_invest_okdp_tko_is_prit_id"
+        LEFT JOIN "GN_contractor" sup ON ip."GN_invest_supplier_fk" = sup."GN_c_id"
+        LEFT JOIN "GN_invest_ogruz_rekvizit" ogr ON ip."GN_invest_ogruz_fk" = ogr."GN_invest_ogruz_rekvizit_id"
+        ORDER BY ip."GN_invest_program_id" ASC
+      `);
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_invest_program' });
     } finally {
       await client.end();
     }

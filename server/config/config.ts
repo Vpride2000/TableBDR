@@ -1,9 +1,14 @@
+// Конфигурация для сущностей GN: имя таблицы, PK-столбец и редактируемые поля.
+// Общие типы и конфигурация для серверной части.
+// Этот файл описывает структуру GN-сущностей, справочных таблиц, API-персистентных строк
+// и значения, которые автоматически создаются при инициализации сервера.
 export interface GnTableConfig {
   tableName: string;
   idColumn: string;
   editableColumns: string[];
 }
 
+// Описание справочных таблиц, которые заполняются начальными значениями.
 export interface ReferenceTableDefinition {
   entity: string;
   tableName: string;
@@ -20,6 +25,32 @@ export interface ContractRowSeed {
   asezLoadDate: string;
   state: string;
   statusUpdatedAt: string;
+}
+
+export interface InvestProgramRowSeed {
+  pfNpf: string;
+  name: string;
+  quantity: number;
+  okdpFk: number;
+  supplierFk: number;
+  ogruzFk: number;
+  status: string;
+  payment: string;
+  inBudget: string;
+  peoCode: string;
+  mtrCode: string;
+  pzp: string;
+  agentReport: string;
+  ap: string;
+  spec: string;
+  commissioning: string;
+  itAccounting: string;
+  sedSpec: string;
+  sedAgentReport: string;
+  state: string;
+  realPriceNoVatPerUnit: number;
+  realSumNoVatPlusAgentNoVat: number;
+  sumNoVat: number;
 }
 
 export interface LimitCalculationLineInput {
@@ -42,6 +73,7 @@ export interface LimitCalculationResponseLine {
   note: string;
 }
 
+// Типы входящих данных для PUT /api/gn/forecast-monthly.
 export interface ForecastMonthlyApiRowInput {
   rowId?: unknown;
   monthlyValues?: unknown;
@@ -55,6 +87,7 @@ export interface ForecastMonthlyDbRow {
   month_fact_value: number | string;
 }
 
+// Конфигурация справочных таблиц, которые создаются и заполняются при старте сервера.
 export const INVEST_REFERENCE_TABLES: ReferenceTableDefinition[] = [
   {
     entity: 'invest-okdp-tko-is-prit',
@@ -83,6 +116,134 @@ export const INVEST_REFERENCE_TABLES: ReferenceTableDefinition[] = [
       'Реквизит Г',
       'Реквизит Д',
     ],
+  },
+];
+
+export const INVEST_PROGRAM_SEEDS: InvestProgramRowSeed[] = [
+  {
+    pfNpf: 'ПФ',
+    name: 'Маршрутизатор Cisco ISR 4331',
+    quantity: 1,
+    okdpFk: 1,
+    supplierFk: 1,
+    ogruzFk: 1,
+    status: 'Активен',
+    payment: 'Оплачен',
+    inBudget: 'Да',
+    peoCode: 'ПЭО-001',
+    mtrCode: 'MTR-1000',
+    pzp: 'ПЗП-1',
+    agentReport: 'Агент-1',
+    ap: 'АП-1',
+    spec: 'СП-100',
+    commissioning: 'Q1 2027',
+    itAccounting: 'Да',
+    sedSpec: 'СЭД-1',
+    sedAgentReport: 'СЭД Агент-1',
+    state: 'Запущен',
+    realPriceNoVatPerUnit: 10000,
+    realSumNoVatPlusAgentNoVat: 11000,
+    sumNoVat: 12000,
+  },
+  {
+    pfNpf: 'НПФ',
+    name: 'Коммутатор Huawei S5735-L24T4X',
+    quantity: 2,
+    okdpFk: 2,
+    supplierFk: 2,
+    ogruzFk: 2,
+    status: 'В работе',
+    payment: 'Частично',
+    inBudget: 'Да',
+    peoCode: 'ПЭО-002',
+    mtrCode: 'MTR-1001',
+    pzp: 'ПЗП-2',
+    agentReport: 'Агент-2',
+    ap: 'АП-2',
+    spec: 'СП-101',
+    commissioning: 'Q2 2027',
+    itAccounting: 'Нет',
+    sedSpec: 'СЭД-2',
+    sedAgentReport: 'СЭД Агент-2',
+    state: 'В работе',
+    realPriceNoVatPerUnit: 15000,
+    realSumNoVatPlusAgentNoVat: 16500,
+    sumNoVat: 18000,
+  },
+  {
+    pfNpf: 'ПФ',
+    name: 'Точка доступа Ubiquiti UniFi U6-Pro',
+    quantity: 3,
+    okdpFk: 3,
+    supplierFk: 3,
+    ogruzFk: 3,
+    status: 'Завершен',
+    payment: 'Оплачен',
+    inBudget: 'Да',
+    peoCode: 'ПЭО-003',
+    mtrCode: 'MTR-1002',
+    pzp: 'ПЗП-3',
+    agentReport: 'Агент-3',
+    ap: 'АП-3',
+    spec: 'СП-102',
+    commissioning: 'Q3 2027',
+    itAccounting: 'Да',
+    sedSpec: 'СЭД-3',
+    sedAgentReport: 'СЭД Агент-3',
+    state: 'Завершен',
+    realPriceNoVatPerUnit: 8000,
+    realSumNoVatPlusAgentNoVat: 8800,
+    sumNoVat: 9600,
+  },
+  {
+    pfNpf: 'НПФ',
+    name: 'IP-телефон Yealink SIP-T54W',
+    quantity: 1,
+    okdpFk: 4,
+    supplierFk: 4,
+    ogruzFk: 4,
+    status: 'Активен',
+    payment: 'Не оплачен',
+    inBudget: 'Нет',
+    peoCode: 'ПЭО-004',
+    mtrCode: 'MTR-1003',
+    pzp: 'ПЗП-4',
+    agentReport: 'Агент-4',
+    ap: 'АП-4',
+    spec: 'СП-103',
+    commissioning: 'Q4 2027',
+    itAccounting: 'Нет',
+    sedSpec: 'СЭД-4',
+    sedAgentReport: 'СЭД Агент-4',
+    state: 'Проверка',
+    realPriceNoVatPerUnit: 5000,
+    realSumNoVatPlusAgentNoVat: 5500,
+    sumNoVat: 6000,
+  },
+  {
+    pfNpf: 'ПФ',
+    name: 'Радиомодем Eltex WOP-2ac-LR5',
+    quantity: 2,
+    okdpFk: 5,
+    supplierFk: 5,
+    ogruzFk: 5,
+    status: 'В работе',
+    payment: 'Частично',
+    inBudget: 'Да',
+    peoCode: 'ПЭО-005',
+    mtrCode: 'MTR-1004',
+    pzp: 'ПЗП-5',
+    agentReport: 'Агент-5',
+    ap: 'АП-5',
+    spec: 'СП-104',
+    commissioning: 'Q1 2028',
+    itAccounting: 'Да',
+    sedSpec: 'СЭД-5',
+    sedAgentReport: 'СЭД Агент-5',
+    state: 'Согласование',
+    realPriceNoVatPerUnit: 12000,
+    realSumNoVatPlusAgentNoVat: 13200,
+    sumNoVat: 14400,
   },
 ];
 
@@ -181,6 +342,35 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
     tableName: 'GN_invest_ogruz_rekvizit',
     idColumn: 'GN_invest_ogruz_rekvizit_id',
     editableColumns: ['GN_invest_ogruz_rekvizit'],
+  },
+  'invest-program': {
+    tableName: 'GN_invest_program',
+    idColumn: 'GN_invest_program_id',
+    editableColumns: [
+      'GN_invest_pf_npf',
+      'GN_invest_name',
+      'GN_invest_quantity',
+      'GN_invest_okdp_fk',
+      'GN_invest_supplier_fk',
+      'GN_invest_ogruz_fk',
+      'GN_invest_status',
+      'GN_invest_payment',
+      'GN_invest_in_budget',
+      'GN_invest_peo_code',
+      'GN_invest_mtr_code',
+      'GN_invest_pzp',
+      'GN_invest_agent_report',
+      'GN_invest_ap',
+      'GN_invest_spec',
+      'GN_invest_commissioning',
+      'GN_invest_it_accounting',
+      'GN_invest_sed_spec',
+      'GN_invest_sed_agent_report',
+      'GN_invest_state',
+      'GN_invest_real_price_no_vat_per_unit',
+      'GN_invest_real_sum_no_vat_plus_agent_no_vat',
+      'GN_invest_sum_no_vat',
+    ],
   },
 };
 

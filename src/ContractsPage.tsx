@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import './styles.css'
+import { formatHttpError } from './utils/forecastUtils'
 
+// Страница управления договорами.
+// Загружает справочники, отображает список договоров и позволяет сохранять изменения.
 type Row = Record<string, unknown>
 type LookupOption = { value: string; label: string }
 
@@ -79,9 +82,9 @@ export default function ContractsPage() {
           fetch('/api/gn/dogovors'),
         ])
 
-        if (!rowsRes.ok) throw new Error(`HTTP ${rowsRes.status}`)
-        if (!contractorRes.ok) throw new Error(`HTTP ${contractorRes.status}`)
-        if (!dogovorRes.ok) throw new Error(`HTTP ${dogovorRes.status}`)
+        if (!rowsRes.ok) throw new Error(formatHttpError(rowsRes.status))
+        if (!contractorRes.ok) throw new Error(formatHttpError(contractorRes.status))
+        if (!dogovorRes.ok) throw new Error(formatHttpError(dogovorRes.status))
 
         const nextRows = (await rowsRes.json()) as Row[]
         const contractors = (await contractorRes.json()) as Row[]
@@ -126,7 +129,7 @@ export default function ContractsPage() {
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string }
-        throw new Error(payload.error || `HTTP ${response.status}`)
+        throw new Error(payload.error || formatHttpError(response.status))
       }
 
       const updatedRow = toRow((await response.json()) as Row)
