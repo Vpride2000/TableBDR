@@ -17,6 +17,15 @@ type ContractRow = {
   GN_contract_status_updated_at: string
 }
 
+type ContractAdditionalAgreement = {
+  GN_additional_agreement_id: number
+  GN_contract_id_FK: number
+  GN_additional_agreement_number: string
+  GN_additional_agreement_date: string
+  GN_additional_agreement_description: string
+  GN_additional_agreement_amount: number
+}
+
 const COLUMNS = [
   { key: 'GN_contract_contractor_FK', label: 'контрагент', kind: 'lookup' as const },
   { key: 'GN_contract_dogovor_FK', label: 'договор', kind: 'lookup' as const },
@@ -60,10 +69,11 @@ function normalizeDateValue(value: unknown): string {
   return normalizedValue.length >= 10 ? normalizedValue.slice(0, 10) : normalizedValue
 }
 
-export default function ContractsPage() {
+export default function ContractsPage({ onOpenContract }: { onOpenContract: (contractName: string) => void }) {
   const [rows, setRows] = useState<ContractRow[]>([])
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([])
   const [dogovorOptions, setDogovorOptions] = useState<LookupOption[]>([])
+  const [agreementGroups, setAgreementGroups] = useState<Record<number, ContractAdditionalAgreement[]>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -76,23 +86,44 @@ export default function ContractsPage() {
       setError(null)
 
       try {
-        const [rowsRes, contractorRes, dogovorRes] = await Promise.all([
+        const [rowsRes, contractorRes, dogovorRes, agreementsRes] = await Promise.all([
           fetch('/api/gn/contracts'),
           fetch('/api/gn/contractors'),
           fetch('/api/gn/dogovors'),
+          fetch('/api/gn/contract-additional-agreements'),
         ])
 
         if (!rowsRes.ok) throw new Error(formatHttpError(rowsRes.status))
         if (!contractorRes.ok) throw new Error(formatHttpError(contractorRes.status))
         if (!dogovorRes.ok) throw new Error(formatHttpError(dogovorRes.status))
+        if (!agreementsRes.ok) throw new Error(formatHttpError(agreementsRes.status))
 
         const nextRows = (await rowsRes.json()) as Row[]
         const contractors = (await contractorRes.json()) as Row[]
         const dogovors = (await dogovorRes.json()) as Row[]
+        const agreements = (await agreementsRes.json()) as Row[]
+
+        const normalizedAgreements: ContractAdditionalAgreement[] = agreements.map((agreement) => ({
+          GN_additional_agreement_id: Number(agreement.GN_additional_agreement_id ?? 0),
+          GN_contract_id_FK: Number(agreement.GN_contract_id_FK ?? 0),
+          GN_additional_agreement_number: String(agreement.GN_additional_agreement_number ?? ''),
+          GN_additional_agreement_date: String(agreement.GN_additional_agreement_date ?? ''),
+          GN_additional_agreement_description: String(agreement.GN_additional_agreement_description ?? ''),
+          GN_additional_agreement_amount: Number(agreement.GN_additional_agreement_amount ?? 0),
+        }))
+
+        const groups: Record<number, ContractAdditionalAgreement[]> = {}
+        normalizedAgreements.forEach((agreement) => {
+          if (!groups[agreement.GN_contract_id_FK]) {
+            groups[agreement.GN_contract_id_FK] = []
+          }
+          groups[agreement.GN_contract_id_FK].push(agreement)
+        })
 
         setRows(nextRows.map(toRow))
         setContractorOptions(mapLookupOptions(contractors, 'GN_c_id', 'GN_contarctor'))
         setDogovorOptions(mapLookupOptions(dogovors, 'GN_dgv_id', 'GN_dogovor'))
+        setAgreementGroups(groups)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Не удалось загрузить данные')
       } finally {
@@ -202,6 +233,14 @@ export default function ContractsPage() {
                                     </option>
                                   ))}
                                 </select>
+                              ) : column.key === 'GN_contract_dogovor_FK' ? (
+                                <button
+                                  type="button"
+                                  className="contract-cell-button"
+                                  onClick={() => onOpenContract(displayLookupLabel(options, row[column.key as keyof ContractRow]))}
+                                >
+                                  {displayLookupLabel(options, row[column.key as keyof ContractRow])}
+                                </button>
                               ) : (
                                 <span className="invest-program-cell-text">
                                   {displayLookupLabel(options, row[column.key as keyof ContractRow])}
@@ -265,8 +304,30 @@ export default function ContractsPage() {
                         )}
                       </td>
                     </tr>
-                  )
-                })}
+                    {(agreementGroups[row.GN_contract_id] ?? []).map((agreement) => (
+                      <tr key={`agreement-${agreement.GN_additional_agreement_id}`} className="contract-agreement-row">
+                        <td />
+                        <td colSpan={COLUMNS.length + 1}>
+                          <div className="contract-agreement-inner">
+                            <div className="contract-agreement-title">Доп. соглашение: {agreement.GN_additional_agreement_number}</div>
+                            <div className="contract-agreement-text">
+                              <strong>Дата:</strong> {agreement.GN_additional_agreement_date.slice(0, 10)}
+                              {' · '}
+                              <strong>Описание:</strong> {agreement.GN_additional_agreement_description}
+                              {' · '}
+                              <strong>Сумма:</strong>{' '}
+                              {agreement.GN_additional_agreement_amount.toLocaleString('ru-RU', {
+                                style: 'currency',
+                                currency: 'RUB',
+                              })}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </>
+                )
+              })}
               </tbody>
             </table>
           </div>

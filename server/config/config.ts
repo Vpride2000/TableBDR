@@ -27,6 +27,14 @@ export interface ContractRowSeed {
   statusUpdatedAt: string;
 }
 
+export interface ContractAdditionalAgreementSeed {
+  contractId: number;
+  number: string;
+  date: string;
+  description: string;
+  amount: number;
+}
+
 export interface InvestProgramRowSeed {
   pfNpf: string;
   name: string;
@@ -119,6 +127,80 @@ export const INVEST_REFERENCE_TABLES: ReferenceTableDefinition[] = [
   },
 ];
 
+export const CONTRACT_ADDITIONAL_AGREEMENTS_SEEDS: ContractAdditionalAgreementSeed[] = [
+  {
+    contractId: 1,
+    number: 'ДС-001',
+    date: '2026-02-01',
+    description: 'Увеличение объема работ',
+    amount: 50000,
+  },
+  {
+    contractId: 1,
+    number: 'ДС-002',
+    date: '2026-03-15',
+    description: 'Изменение сроков',
+    amount: 0,
+  },
+  {
+    contractId: 2,
+    number: 'ДС-003',
+    date: '2026-04-10',
+    description: 'Дополнительные материалы',
+    amount: 25000,
+  },
+  {
+    contractId: 3,
+    number: 'ДС-004',
+    date: '2026-05-20',
+    description: 'Корректировка цены',
+    amount: -10000,
+  },
+];
+
+export const CONTRACT_ROW_SEEDS: ContractRowSeed[] = [
+  {
+    contractorId: 1,
+    dogovorId: 1,
+    sedLaunchDate: '2026-01-10',
+    asezLoadDate: '2026-01-12',
+    state: 'Запущен',
+    statusUpdatedAt: '2026-01-13',
+  },
+  {
+    contractorId: 2,
+    dogovorId: 2,
+    sedLaunchDate: '2026-01-15',
+    asezLoadDate: '2026-01-16',
+    state: 'В работе',
+    statusUpdatedAt: '2026-01-17',
+  },
+  {
+    contractorId: 3,
+    dogovorId: 3,
+    sedLaunchDate: '2026-01-20',
+    asezLoadDate: '2026-01-22',
+    state: 'Проверка',
+    statusUpdatedAt: '2026-01-23',
+  },
+  {
+    contractorId: 4,
+    dogovorId: 4,
+    sedLaunchDate: '2026-01-25',
+    asezLoadDate: '2026-01-27',
+    state: 'Согласование',
+    statusUpdatedAt: '2026-01-28',
+  },
+  {
+    contractorId: 5,
+    dogovorId: 5,
+    sedLaunchDate: '2026-02-01',
+    asezLoadDate: '2026-02-03',
+    state: 'Завершен',
+    statusUpdatedAt: '2026-02-04',
+  },
+];
+
 export const INVEST_PROGRAM_SEEDS: InvestProgramRowSeed[] = [
   {
     pfNpf: 'ПФ',
@@ -165,7 +247,8 @@ export const INVEST_PROGRAM_SEEDS: InvestProgramRowSeed[] = [
     itAccounting: 'Нет',
     sedSpec: 'СЭД-2',
     sedAgentReport: 'СЭД Агент-2',
-    state: 'В работе',
+    state: 'Завершен',
+    statusUpdatedAt: '2026-02-04',
     realPriceNoVatPerUnit: 15000,
     realSumNoVatPlusAgentNoVat: 16500,
     sumNoVat: 18000,
@@ -244,49 +327,6 @@ export const INVEST_PROGRAM_SEEDS: InvestProgramRowSeed[] = [
     realPriceNoVatPerUnit: 12000,
     realSumNoVatPlusAgentNoVat: 13200,
     sumNoVat: 14400,
-  },
-];
-
-export const CONTRACT_ROW_SEEDS: ContractRowSeed[] = [
-  {
-    contractorId: 1,
-    dogovorId: 1,
-    sedLaunchDate: '2026-01-10',
-    asezLoadDate: '2026-01-12',
-    state: 'Запущен',
-    statusUpdatedAt: '2026-01-13',
-  },
-  {
-    contractorId: 2,
-    dogovorId: 2,
-    sedLaunchDate: '2026-01-15',
-    asezLoadDate: '2026-01-16',
-    state: 'В работе',
-    statusUpdatedAt: '2026-01-17',
-  },
-  {
-    contractorId: 3,
-    dogovorId: 3,
-    sedLaunchDate: '2026-01-20',
-    asezLoadDate: '2026-01-22',
-    state: 'Проверка',
-    statusUpdatedAt: '2026-01-23',
-  },
-  {
-    contractorId: 4,
-    dogovorId: 4,
-    sedLaunchDate: '2026-01-25',
-    asezLoadDate: '2026-01-27',
-    state: 'Согласование',
-    statusUpdatedAt: '2026-01-28',
-  },
-  {
-    contractorId: 5,
-    dogovorId: 5,
-    sedLaunchDate: '2026-02-01',
-    asezLoadDate: '2026-02-03',
-    state: 'Завершен',
-    statusUpdatedAt: '2026-02-04',
   },
 ];
 
@@ -370,6 +410,17 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
       'GN_invest_real_price_no_vat_per_unit',
       'GN_invest_real_sum_no_vat_plus_agent_no_vat',
       'GN_invest_sum_no_vat',
+    ],
+  },
+  'contract-additional-agreements': {
+    tableName: 'GN_contract_additional_agreements',
+    idColumn: 'GN_additional_agreement_id',
+    editableColumns: [
+      'GN_contract_id_FK',
+      'GN_additional_agreement_number',
+      'GN_additional_agreement_date',
+      'GN_additional_agreement_description',
+      'GN_additional_agreement_amount',
     ],
   },
 };

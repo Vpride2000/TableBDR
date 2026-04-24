@@ -1,7 +1,7 @@
 ﻿import 'dotenv/config';
 import express from 'express';
 import { setupRoutes } from './routes/routes.js';
-import { createDbClient, ensureInvestReferenceTables, ensureContractsTable, ensureInvestProgramTable, ensureForecastMonthlyTable } from './db/db.js';
+import { createDbClient, ensureInvestReferenceTables, ensureContractsTable, ensureInvestProgramTable, ensureContractAdditionalAgreementsTable, ensureForecastMonthlyTable } from './db/db.js';
 
 // Точка входа backend-приложения.
 // Загружает переменные окружения, создает Express-приложение,
@@ -23,6 +23,7 @@ async function start(): Promise<void> {
     await ensureInvestReferenceTables(client);
     await ensureContractsTable(client);
     await ensureInvestProgramTable(client);
+    await ensureContractAdditionalAgreementsTable(client);
     await ensureForecastMonthlyTable(client);
   } finally {
     await client.end();

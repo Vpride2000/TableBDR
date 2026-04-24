@@ -302,11 +302,161 @@ export function setupRoutes(app: Express): void {
   app.get('/api/gn/contracts', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
-      const result = await client.query('SELECT * FROM "GN_contracts" ORDER BY "GN_contract_id" ASC');
+      const result = await client.query(`
+        SELECT
+          c.*,
+          d."GN_dogovor" AS "GN_contract_name"
+        FROM "GN_contracts" c
+        LEFT JOIN "GN_dogovor" d ON c."GN_contract_dogovor_FK" = d."GN_dgv_id"
+        ORDER BY c."GN_contract_id" ASC
+      `);
       res.json(result.rows);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to fetch GN_contracts' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/contract-additional-agreements', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(`
+        SELECT
+          caa."GN_additional_agreement_id",
+          caa."GN_contract_id_FK",
+          caa."GN_additional_agreement_number",
+          caa."GN_additional_agreement_date",
+          caa."GN_additional_agreement_description",
+          caa."GN_additional_agreement_amount",
+          d."GN_dogovor" AS contract_name
+        FROM "GN_contract_additional_agreements" caa
+        JOIN "GN_contracts" c ON caa."GN_contract_id_FK" = c."GN_contract_id"
+        LEFT JOIN "GN_dogovor" d ON c."GN_contract_dogovor_FK" = d."GN_dgv_id"
+        ORDER BY caa."GN_additional_agreement_date" DESC
+      `);
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_contract_additional_agreements' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.post('/api/gn/contract-additional-agreements', async (req: Request, res: Response): Promise<void> => {
+    const payload = req.body as {
+      contractId: number;
+      number: string;
+      date: string;
+      description: string;
+      amount: number;
+    };
+
+    if (!payload.contractId || !payload.number || !payload.date || !payload.description || payload.amount === undefined) {
+      res.status(400).json({ error: 'All fields are required' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `INSERT INTO "GN_contract_additional_agreements" (
+           "GN_contract_id_FK",
+           "GN_additional_agreement_number",
+           "GN_additional_agreement_date",
+           "GN_additional_agreement_description",
+           "GN_additional_agreement_amount"
+         ) VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [
+          payload.contractId,
+          payload.number,
+          payload.date,
+          payload.description,
+          payload.amount,
+        ]
+      );
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to create additional agreement' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.put('/api/gn/contract-additional-agreements/:id', async (req: Request, res: Response): Promise<void> => {
+    const id = Number(req.params.id);
+    const payload = req.body as {
+      contractId: number;
+      number: string;
+      date: string;
+      description: string;
+      amount: number;
+    };
+
+    if (!Number.isFinite(id) || !payload.contractId || !payload.number || !payload.date || !payload.description || payload.amount === undefined) {
+      res.status(400).json({ error: 'All fields are required' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `UPDATE "GN_contract_additional_agreements"
+         SET
+           "GN_contract_id_FK" = $1,
+           "GN_additional_agreement_number" = $2,
+           "GN_additional_agreement_date" = $3,
+           "GN_additional_agreement_description" = $4,
+           "GN_additional_agreement_amount" = $5
+         WHERE "GN_additional_agreement_id" = $6
+         RETURNING *`,
+        [
+          payload.contractId,
+          payload.number,
+          payload.date,
+          payload.description,
+          payload.amount,
+          id,
+        ]
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Additional agreement not found' });
+        return;
+      }
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to update additional agreement' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.delete('/api/gn/contract-additional-agreements/:id', async (req: Request, res: Response): Promise<void> => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: 'Invalid ID' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        'DELETE FROM "GN_contract_additional_agreements" WHERE "GN_additional_agreement_id" = $1',
+        [id]
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Additional agreement not found' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to delete additional agreement' });
     } finally {
       await client.end();
     }

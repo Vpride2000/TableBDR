@@ -3,12 +3,15 @@ import {
   INVEST_REFERENCE_TABLES,
   CONTRACT_ROW_SEEDS,
   INVEST_PROGRAM_SEEDS,
+  CONTRACT_ADDITIONAL_AGREEMENTS_SEEDS,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   ReferenceTableDefinition,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   ContractRowSeed,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   InvestProgramRowSeed,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  ContractAdditionalAgreementSeed,
 } from '../config/config.js';
 
 // Создает подключение к базе PostgreSQL по переменным окружения.
@@ -186,6 +189,49 @@ export async function ensureInvestProgramTable(client: Client): Promise<void> {
         seed.realPriceNoVatPerUnit,
         seed.realSumNoVatPlusAgentNoVat,
         seed.sumNoVat,
+      ]
+    );
+  }
+}
+
+// Обеспечивает наличие таблицы дополнительных соглашений к контрактам.
+export async function ensureContractAdditionalAgreementsTable(client: Client): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_contract_additional_agreements" (
+      "GN_additional_agreement_id" SERIAL NOT NULL UNIQUE,
+      "GN_contract_id_FK" INTEGER NOT NULL REFERENCES "GN_contracts"("GN_contract_id") ON DELETE CASCADE,
+      "GN_additional_agreement_number" TEXT NOT NULL,
+      "GN_additional_agreement_date" DATE NOT NULL,
+      "GN_additional_agreement_description" TEXT NOT NULL,
+      "GN_additional_agreement_amount" NUMERIC(15,2) NOT NULL,
+      PRIMARY KEY("GN_additional_agreement_id")
+    )
+  `);
+
+  const rowCountResult = await client.query<{ row_count: string }>(
+    `SELECT COUNT(*)::text AS row_count
+     FROM "GN_contract_additional_agreements"`
+  );
+
+  if (Number(rowCountResult.rows[0]?.row_count ?? '0') > 0) {
+    return;
+  }
+
+  for (const seed of CONTRACT_ADDITIONAL_AGREEMENTS_SEEDS) {
+    await client.query(
+      `INSERT INTO "GN_contract_additional_agreements" (
+         "GN_contract_id_FK",
+         "GN_additional_agreement_number",
+         "GN_additional_agreement_date",
+         "GN_additional_agreement_description",
+         "GN_additional_agreement_amount"
+       ) VALUES ($1, $2, $3, $4, $5)`,
+      [
+        seed.contractId,
+        seed.number,
+        seed.date,
+        seed.description,
+        seed.amount,
       ]
     );
   }

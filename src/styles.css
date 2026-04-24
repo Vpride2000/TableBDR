@@ -1090,6 +1090,30 @@ p {
   gap: 8px;
 }
 
+.contract-agreement-row td {
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  background: #fafafb;
+}
+
+.contract-agreement-inner {
+  padding: 10px 12px 10px 18px;
+}
+
+.contract-agreement-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: #1f2937;
+}
+
+.contract-agreement-text {
+  font-size: 0.86rem;
+  color: #4b5563;
+  line-height: 1.5;
+}
+
+}
+
 .invest-popup-group {
   margin-top: 6px;
   padding-top: 8px;

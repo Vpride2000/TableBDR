@@ -838,7 +838,7 @@ export default function App() {
             Прогнозы
           </a>
           <a href="#contracts" onClick={(event) => { event.preventDefault(); goTo('contracts') }}>
-            Контракты
+            Договора
           </a>
           <a href="#invest-program-table" onClick={(event) => { event.preventDefault(); goTo('invest-program-table') }}>
             Инвестпрограмма
@@ -853,7 +853,7 @@ export default function App() {
 
       {page === 'guide' && <Guide />}
       {page === 'budget' && <BudgetTable onAddRow={openAddRowWindow} onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
-      {page === 'contracts' && <ContractsPage />}
+      {page === 'contracts' && <ContractsPage onOpenContract={openContractWindow} />}
       {page === 'forecasts' && <Forecasts onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
       {page === 'invest-program-table' && <InvestProgramTablePage />}
     </main>
