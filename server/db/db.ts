@@ -69,6 +69,7 @@ export async function ensureContractsTable(client: Client): Promise<void> {
       "GN_contract_asez_load_date" DATE NOT NULL,
       "GN_contract_state" TEXT NOT NULL,
       "GN_contract_status_updated_at" DATE NOT NULL,
+      "GN_contract_approval_status" TEXT NOT NULL DEFAULT 'действующий',
       PRIMARY KEY("GN_contract_id")
     )
   `);
@@ -90,9 +91,10 @@ export async function ensureContractsTable(client: Client): Promise<void> {
          "GN_contract_sed_launch_date",
          "GN_contract_asez_load_date",
          "GN_contract_state",
-         "GN_contract_status_updated_at"
-       ) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [seed.contractorId, seed.dogovorId, seed.sedLaunchDate, seed.asezLoadDate, seed.state, seed.statusUpdatedAt]
+         "GN_contract_status_updated_at",
+         "GN_contract_approval_status"
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [seed.contractorId, seed.dogovorId, seed.sedLaunchDate, seed.asezLoadDate, seed.state, seed.statusUpdatedAt, seed.approvalStatus || 'действующий']
     );
   }
 }
@@ -204,6 +206,7 @@ export async function ensureContractAdditionalAgreementsTable(client: Client): P
       "GN_additional_agreement_date" DATE NOT NULL,
       "GN_additional_agreement_description" TEXT NOT NULL,
       "GN_additional_agreement_amount" NUMERIC(15,2) NOT NULL,
+      "GN_additional_agreement_status" TEXT NOT NULL DEFAULT 'действующий',
       PRIMARY KEY("GN_additional_agreement_id")
     )
   `);
@@ -224,14 +227,16 @@ export async function ensureContractAdditionalAgreementsTable(client: Client): P
          "GN_additional_agreement_number",
          "GN_additional_agreement_date",
          "GN_additional_agreement_description",
-         "GN_additional_agreement_amount"
-       ) VALUES ($1, $2, $3, $4, $5)`,
+         "GN_additional_agreement_amount",
+         "GN_additional_agreement_status"
+       ) VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         seed.contractId,
         seed.number,
         seed.date,
         seed.description,
         seed.amount,
+        seed.approvalStatus || 'действующий',
       ]
     );
   }

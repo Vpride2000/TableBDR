@@ -25,14 +25,16 @@ export interface ContractRowSeed {
   asezLoadDate: string;
   state: string;
   statusUpdatedAt: string;
+  approvalStatus?: string
 }
 
 export interface ContractAdditionalAgreementSeed {
-  contractId: number;
-  number: string;
-  date: string;
-  description: string;
-  amount: number;
+  contractId: number
+  number: string
+  date: string
+  description: string
+  amount: number
+  approvalStatus?: string
 }
 
 export interface InvestProgramRowSeed {
@@ -134,6 +136,7 @@ export const CONTRACT_ADDITIONAL_AGREEMENTS_SEEDS: ContractAdditionalAgreementSe
     date: '2026-02-01',
     description: 'Увеличение объема работ',
     amount: 50000,
+    approvalStatus: 'действующий',
   },
   {
     contractId: 1,
@@ -141,6 +144,7 @@ export const CONTRACT_ADDITIONAL_AGREEMENTS_SEEDS: ContractAdditionalAgreementSe
     date: '2026-03-15',
     description: 'Изменение сроков',
     amount: 0,
+    approvalStatus: 'на согласовании',
   },
   {
     contractId: 2,
@@ -148,6 +152,7 @@ export const CONTRACT_ADDITIONAL_AGREEMENTS_SEEDS: ContractAdditionalAgreementSe
     date: '2026-04-10',
     description: 'Дополнительные материалы',
     amount: 25000,
+    approvalStatus: 'действующий',
   },
   {
     contractId: 3,
@@ -155,6 +160,7 @@ export const CONTRACT_ADDITIONAL_AGREEMENTS_SEEDS: ContractAdditionalAgreementSe
     date: '2026-05-20',
     description: 'Корректировка цены',
     amount: -10000,
+    approvalStatus: 'на согласовании',
   },
 ];
 
@@ -166,6 +172,7 @@ export const CONTRACT_ROW_SEEDS: ContractRowSeed[] = [
     asezLoadDate: '2026-01-12',
     state: 'Запущен',
     statusUpdatedAt: '2026-01-13',
+    approvalStatus: 'действующий',
   },
   {
     contractorId: 2,
@@ -174,6 +181,7 @@ export const CONTRACT_ROW_SEEDS: ContractRowSeed[] = [
     asezLoadDate: '2026-01-16',
     state: 'В работе',
     statusUpdatedAt: '2026-01-17',
+    approvalStatus: 'на согласовании',
   },
   {
     contractorId: 3,
@@ -182,6 +190,7 @@ export const CONTRACT_ROW_SEEDS: ContractRowSeed[] = [
     asezLoadDate: '2026-01-22',
     state: 'Проверка',
     statusUpdatedAt: '2026-01-23',
+    approvalStatus: 'действующий',
   },
   {
     contractorId: 4,
@@ -190,6 +199,7 @@ export const CONTRACT_ROW_SEEDS: ContractRowSeed[] = [
     asezLoadDate: '2026-01-27',
     state: 'Согласование',
     statusUpdatedAt: '2026-01-28',
+    approvalStatus: 'на согласовании',
   },
   {
     contractorId: 5,
@@ -198,6 +208,7 @@ export const CONTRACT_ROW_SEEDS: ContractRowSeed[] = [
     asezLoadDate: '2026-02-03',
     state: 'Завершен',
     statusUpdatedAt: '2026-02-04',
+    approvalStatus: 'действующий',
   },
 ];
 

@@ -330,6 +330,7 @@ export function setupRoutes(app: Express): void {
           caa."GN_additional_agreement_date",
           caa."GN_additional_agreement_description",
           caa."GN_additional_agreement_amount",
+          caa."GN_additional_agreement_status",
           d."GN_dogovor" AS contract_name
         FROM "GN_contract_additional_agreements" caa
         JOIN "GN_contracts" c ON caa."GN_contract_id_FK" = c."GN_contract_id"
@@ -352,10 +353,17 @@ export function setupRoutes(app: Express): void {
       date: string;
       description: string;
       amount: number;
+      approvalStatus?: string;
     };
 
     if (!payload.contractId || !payload.number || !payload.date || !payload.description || payload.amount === undefined) {
       res.status(400).json({ error: 'All fields are required' });
+      return;
+    }
+
+    const status = payload.approvalStatus || 'действующий';
+    if (!['действующий', 'на согласовании'].includes(status)) {
+      res.status(400).json({ error: 'Invalid approval status' });
       return;
     }
 
@@ -367,8 +375,9 @@ export function setupRoutes(app: Express): void {
            "GN_additional_agreement_number",
            "GN_additional_agreement_date",
            "GN_additional_agreement_description",
-           "GN_additional_agreement_amount"
-         ) VALUES ($1, $2, $3, $4, $5)
+           "GN_additional_agreement_amount",
+           "GN_additional_agreement_status"
+         ) VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
         [
           payload.contractId,
@@ -376,6 +385,7 @@ export function setupRoutes(app: Express): void {
           payload.date,
           payload.description,
           payload.amount,
+          status,
         ]
       );
       res.json(result.rows[0]);
@@ -395,10 +405,17 @@ export function setupRoutes(app: Express): void {
       date: string;
       description: string;
       amount: number;
+      approvalStatus?: string;
     };
 
     if (!Number.isFinite(id) || !payload.contractId || !payload.number || !payload.date || !payload.description || payload.amount === undefined) {
       res.status(400).json({ error: 'All fields are required' });
+      return;
+    }
+
+    const status = payload.approvalStatus || 'действующий';
+    if (!['действующий', 'на согласовании'].includes(status)) {
+      res.status(400).json({ error: 'Invalid approval status' });
       return;
     }
 
@@ -411,8 +428,9 @@ export function setupRoutes(app: Express): void {
            "GN_additional_agreement_number" = $2,
            "GN_additional_agreement_date" = $3,
            "GN_additional_agreement_description" = $4,
-           "GN_additional_agreement_amount" = $5
-         WHERE "GN_additional_agreement_id" = $6
+           "GN_additional_agreement_amount" = $5,
+           "GN_additional_agreement_status" = $6
+         WHERE "GN_additional_agreement_id" = $7
          RETURNING *`,
         [
           payload.contractId,
@@ -420,6 +438,7 @@ export function setupRoutes(app: Express): void {
           payload.date,
           payload.description,
           payload.amount,
+          status,
           id,
         ]
       );

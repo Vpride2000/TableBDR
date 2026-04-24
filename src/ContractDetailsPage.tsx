@@ -24,6 +24,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
   const [newAgreementDate, setNewAgreementDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [newAgreementDescription, setNewAgreementDescription] = useState('');
   const [newAgreementAmount, setNewAgreementAmount] = useState('0');
+  const [newAgreementStatus, setNewAgreementStatus] = useState('действующий');
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editingAgreementId, setEditingAgreementId] = useState<number | null>(null);
@@ -31,6 +32,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
   const [editAgreementDate, setEditAgreementDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [editAgreementDescription, setEditAgreementDescription] = useState('');
   const [editAgreementAmount, setEditAgreementAmount] = useState('0');
+  const [editAgreementStatus, setEditAgreementStatus] = useState('действующий');
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -134,6 +136,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
           date: newAgreementDate,
           description: newAgreementDescription.trim(),
           amount,
+          approvalStatus: newAgreementStatus,
         }),
       });
 
@@ -148,6 +151,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
       setNewAgreementDate(new Date().toISOString().slice(0, 10));
       setNewAgreementDescription('');
       setNewAgreementAmount('0');
+      setNewAgreementStatus('действующий');
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Ошибка при создании соглашения');
     } finally {

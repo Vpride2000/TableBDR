@@ -5,5 +5,6 @@ export interface ContractAdditionalAgreement {
   GN_additional_agreement_date: string;
   GN_additional_agreement_description: string;
   GN_additional_agreement_amount: number;
+  GN_additional_agreement_status?: string;
   contract_number?: string;
 }
