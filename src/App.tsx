@@ -832,16 +832,16 @@ export default function App() {
       <nav className="app-nav">
         <div className="app-nav-center">
           <a href="#budget" onClick={(event) => { event.preventDefault(); goTo('budget') }}>
-            Бюджет
+            Услуги_связи
           </a>
           <a href="#forecasts" onClick={(event) => { event.preventDefault(); goTo('forecasts') }}>
-            Прогнозы
+            Прогнозы_УС
           </a>
           <a href="#contracts" onClick={(event) => { event.preventDefault(); goTo('contracts') }}>
             Договора
           </a>
           <a href="#invest-program-table" onClick={(event) => { event.preventDefault(); goTo('invest-program-table') }}>
-            Инвестпрограмма
+            Закупки
           </a>
         </div>
         <div className="app-nav-guide">

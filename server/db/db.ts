@@ -74,6 +74,16 @@ export async function ensureContractsTable(client: Client): Promise<void> {
     )
   `);
 
+  // Add the approval_status column if it doesn't exist (for existing tables)
+  try {
+    await client.query(`
+      ALTER TABLE "GN_contracts"
+      ADD COLUMN IF NOT EXISTS "GN_contract_approval_status" TEXT NOT NULL DEFAULT 'действующий'
+    `);
+  } catch (err) {
+    // Column might already exist, ignore error
+  }
+
   const rowCountResult = await client.query<{ row_count: string }>(
     `SELECT COUNT(*)::text AS row_count
      FROM "GN_contracts"`
@@ -210,6 +220,16 @@ export async function ensureContractAdditionalAgreementsTable(client: Client): P
       PRIMARY KEY("GN_additional_agreement_id")
     )
   `);
+
+  // Add the status column if it doesn't exist (for existing tables)
+  try {
+    await client.query(`
+      ALTER TABLE "GN_contract_additional_agreements"
+      ADD COLUMN IF NOT EXISTS "GN_additional_agreement_status" TEXT NOT NULL DEFAULT 'действующий'
+    `);
+  } catch (err) {
+    // Column might already exist, ignore error
+  }
 
   const rowCountResult = await client.query<{ row_count: string }>(
     `SELECT COUNT(*)::text AS row_count

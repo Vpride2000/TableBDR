@@ -382,6 +382,7 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
       'GN_contract_asez_load_date',
       'GN_contract_state',
       'GN_contract_status_updated_at',
+      'GN_contract_approval_status',
     ],
   },
   'invest-okdp-tko-is-prit': {

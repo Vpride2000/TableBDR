@@ -362,8 +362,9 @@ export function setupRoutes(app: Express): void {
     }
 
     const status = payload.approvalStatus || 'действующий';
-    if (!['действующий', 'на согласовании'].includes(status)) {
-      res.status(400).json({ error: 'Invalid approval status' });
+    const validStatuses = ['действующий', 'на согласовании'];
+    if (status && !validStatuses.includes(status)) {
+      res.status(400).json({ error: `Invalid approval status. Must be one of: ${validStatuses.join(', ')}` });
       return;
     }
 
