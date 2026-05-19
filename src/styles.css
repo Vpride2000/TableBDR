@@ -592,11 +592,13 @@ p {
 .forecast-section {
   padding: 0;
   margin: 0;
+  background: transparent;
 }
 
 .forecast-section-content {
   margin: 0;
   padding: 0;
+  background: transparent;
 }
 
 .forecast-section-content h2 {
@@ -607,6 +609,7 @@ p {
 .forecast-table-wrap {
   margin: 0;
   padding: 0;
+  background: transparent;
 }
 
 .forecast-pivot-wrap {
@@ -682,7 +685,7 @@ p {
 }
 
 .forecast-month-header {
-  background: #f3f6fb;
+  background: transparent;
 }
 
 

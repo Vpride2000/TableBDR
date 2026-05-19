@@ -10,6 +10,12 @@ const PaoItemSummaryTable = lazy(() => import('./BudgetSummaryByPaoItem'));
 const BudgetItemDepartmentSummaryTable = lazy(() => import('./BudgetSummaryByBudgetItemDepartment'));
 
 type Row = Record<string, unknown>;
+interface BudgetTableProps {
+  onAddRow: () => void;
+  onOpenLimit: (rowId: number) => void;
+  onOpenContract: (contractName: string) => void;
+  showMainTable?: boolean;
+}
 type SortDirection = 'asc' | 'desc';
 const BDR_UPDATED_EVENT_KEY = 'bdr:last-update';
 type SelectOption = { value: string; label: string };
@@ -78,7 +84,7 @@ interface BudgetTableProps {
   onOpenContract: (contractName: string) => void;
 }
 
-export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: BudgetTableProps) {
+export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, showMainTable = true }: BudgetTableProps) {
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -504,7 +510,7 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract }: B
         </div>
       )}
 
-      {!loading && !error && data.length > 0 && (
+      {!loading && !error && data.length > 0 && showMainTable && (
         <>
           <div className="guide-table-wrap">
             <table className="guide-table table-compact">

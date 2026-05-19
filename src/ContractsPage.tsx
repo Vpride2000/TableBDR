@@ -478,9 +478,8 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
   }
 
   return (
-    <section className="guide invest-program-section">
+    <section className="guide invest-program-section" style={{ background: 'transparent' }}>
       <div className="guide-section invest-program-content">
-        <h2>Договора</h2>
         {loading && <p className="hint">Загрузка данных...</p>}
         {error && <p className="hint hint--error">Ошибка: {error}</p>}
         {saveError && <p className="hint hint--error">Ошибка сохранения: {saveError}</p>}
@@ -489,7 +488,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           <div>
             {/* Documents pending approval */}
             <div className="guide-table-wrap invest-program-table-wrap" style={{ marginBottom: '2rem' }}>
-              <h3 style={{ marginBottom: '1rem', color: '#d97706' }}>Документы на согласовании</h3>
+              <h3 style={{ marginBottom: '1rem', color: '#d97706' }}>На согласовании</h3>
               <table className="guide-table table-compact invest-program-table-min">
                   <thead>
                     <tr>
@@ -506,10 +505,10 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                     {pendingDocuments.map((doc) => {
                       const isEditingDoc = editingPendingDocId === doc.id && draftPendingDoc != null
                       return (
-                        <tr key={doc.id} style={{ backgroundColor: '#fef3c7' }}>
+                        <tr key={doc.id}>
                           <td>
                             <span style={{
-                              backgroundColor: doc.type === 'contract' ? '#fef3c7' : '#dbeafe',
+                              backgroundColor: doc.type === 'contract' ? '#fef3c7' : 'transparent',
                               padding: '2px 6px',
                               borderRadius: '4px',
                               fontSize: '0.875rem',
@@ -569,7 +568,15 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                               }) : ''
                             )}
                           </td>
-                          <td>{doc.contractName}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="contract-cell-button"
+                              onClick={() => onOpenContract(doc.contractName)}
+                            >
+                              {doc.contractName}
+                            </button>
+                          </td>
                           <td>
                             {isEditingDoc ? (
                               <>
@@ -623,7 +630,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                   </tbody>
                 </table>
               </div>
-
+       <h3 style={{ marginBottom: '1rem', color: '#4f8f2a' }}>Действующие договора</h3>
             {/* Main contracts table */}
             <div className="guide-table-wrap invest-program-table-wrap">
               <table className="guide-table table-compact invest-program-table-min">
@@ -637,7 +644,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, rowIndex) => {
+                {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') !== 'не действующий').map((row, rowIndex) => {
                   const isEditing = editingRowIndex === rowIndex && draftRow != null
 
                   return (
@@ -699,8 +706,8 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
 
                         if (column.kind === 'status') {
                           const statusValue = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? 'действующий')
-                          const bgColor = statusValue === 'на согласовании' ? '#fef3c7' : statusValue === 'действующий' ? '#dcfce7' : '#f3f4f6'
-                          const textColor = statusValue === 'на согласовании' ? '#92400e' : statusValue === 'действующий' ? '#15803d' : '#6b7280'
+                          const bgColor = statusValue === 'на согласовании' ? '#fef3c7' : statusValue === 'действующий' ? '#dcfce7' : statusValue === 'не действующий' ? '#f3e8e8' : '#f3f4f6'
+                          const textColor = statusValue === 'на согласовании' ? '#92400e' : statusValue === 'действующий' ? '#15803d' : statusValue === 'не действующий' ? '#7f1d1d' : '#6b7280'
                           return (
                             <td key={column.key} style={{ backgroundColor: bgColor }}>
                               {isEditing ? (
@@ -712,6 +719,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                 >
                                   <option value="действующий">действующий</option>
                                   <option value="на согласовании">на согласовании</option>
+                                  <option value="не действующий">не действующий</option>
                                 </select>
                               ) : (
                                 <span className="invest-program-cell-text" style={{ color: textColor, fontWeight: '500' }}>{statusValue}</span>
@@ -901,7 +909,148 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           </div>
           </div>
         )}
-      </div>
+        {/* Archive table for inactive contracts */}
+        {!loading && !error && rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий').length > 0 && (
+          <div className="guide-table-wrap invest-program-table-wrap" style={{ marginTop: '2rem' }}>
+            <h3 style={{ marginBottom: '1rem', color: '#7f1d1d' }}>Архив (не действующие договора)</h3>
+            <table className="guide-table table-compact invest-program-table-min">
+              <thead>
+                <tr>
+                  <th>№</th>
+                  {COLUMNS.map((column) => (
+                    <th key={column.key}>{column.label}</th>
+                  ))}
+                  <th>Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий').map((row, rowIndex) => {
+                  const isEditing = editingRowIndex === rowIndex && draftRow != null
+
+                  return (
+                    <Fragment key={`archive-contract-block-${row.GN_contract_id}`}>
+                      <tr key={`archive-contract-${row.GN_contract_id}`}>
+                        <td className="invest-program-row-number">{rowIndex + 1}</td>
+                        {COLUMNS.map((column) => {
+                          if (column.kind === 'lookup') {
+                            const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
+                            const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                            return (
+                              <td key={column.key}>
+                                {isEditing ? (
+                                  <select
+                                    className="invest-program-cell-select"
+                                    value={value}
+                                    onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
+                                  >
+                                    {options.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : column.key === 'GN_contract_dogovor_FK' ? (
+                                  <button
+                                    type="button"
+                                    className="contract-cell-button"
+                                    onClick={() => onOpenContract(displayLookupLabel(options, row[column.key as keyof ContractRow]))}
+                                  >
+                                    {displayLookupLabel(options, row[column.key as keyof ContractRow])}
+                                  </button>
+                                ) : (
+                                  <span className="invest-program-cell-text">
+                                    {displayLookupLabel(options, row[column.key as keyof ContractRow])}
+                                  </span>
+                                )}
+                              </td>
+                            )
+                          }
+
+                          if (column.kind === 'date') {
+                            const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                            return (
+                              <td key={column.key}>
+                                {isEditing ? (
+                                  <input
+                                    className="invest-program-inline-input"
+                                    type="date"
+                                    value={value}
+                                    onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
+                                  />
+                                ) : (
+                                  <span className="invest-program-cell-text">{value}</span>
+                                )}
+                              </td>
+                            )
+                          }
+
+                          if (column.kind === 'status') {
+                            const statusValue = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? 'действующий')
+                            const bgColor = statusValue === 'на согласовании' ? '#fef3c7' : statusValue === 'действующий' ? '#dcfce7' : statusValue === 'не действующий' ? '#f3e8e8' : '#f3f4f6'
+                            const textColor = statusValue === 'на согласовании' ? '#92400e' : statusValue === 'действующий' ? '#15803d' : statusValue === 'не действующий' ? '#7f1d1d' : '#6b7280'
+                            return (
+                              <td key={column.key} style={{ backgroundColor: bgColor }}>
+                                {isEditing ? (
+                                  <select
+                                    className="invest-program-cell-select"
+                                    value={statusValue}
+                                    onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
+                                    style={{ backgroundColor: bgColor, color: textColor }}
+                                  >
+                                    <option value="действующий">действующий</option>
+                                    <option value="на согласовании">на согласовании</option>
+                                    <option value="не действующий">не действующий</option>
+                                  </select>
+                                ) : (
+                                  <span className="invest-program-cell-text" style={{ color: textColor, fontWeight: '500' }}>{statusValue}</span>
+                                )}
+                              </td>
+                            )
+                          }
+
+                          const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                          return (
+                            <td key={column.key}>
+                              {isEditing ? (
+                                <input
+                                  className="invest-program-inline-input"
+                                  value={value}
+                                  onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
+                                />
+                              ) : (
+                                <span className="invest-program-cell-text">{value}</span>
+                              )}
+                            </td>
+                          )
+                        })}
+                        <td className="invest-program-actions-cell">
+                          {isEditing ? (
+                            <>
+                              <button type="button" className="invest-program-row-action-button" onClick={() => void saveEdit()}>
+                                СОХР
+                              </button>
+                              <button
+                                type="button"
+                                className="invest-program-row-action-button invest-program-row-action-button--secondary"
+                                onClick={cancelEdit}
+                              >
+                                ОТМ
+                              </button>
+                            </>
+                          ) : (
+                            <button type="button" className="invest-program-row-action-button" onClick={() => startEdit(rowIndex)}>
+                              ИЗМ
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}      </div>
     </section>
   )
 }

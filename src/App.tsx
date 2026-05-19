@@ -43,11 +43,28 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
     forecastFilters,
   } = useForecast()
 
+  const [isMonthsCollapsed, setIsMonthsCollapsed] = useState(true)
+
   return (
     <section className="guide forecast-section">
       <div className="guide-section forecast-section-content">
         <h2>Прогнозы расходов лимита по месяцам</h2>
         <p className="hint">Для редактирования нажмите на название месяца. Откроется отдельное окно с соседними месяцами.</p>
+        <button
+          type="button"
+          onClick={() => setIsMonthsCollapsed(!isMonthsCollapsed)}
+          style={{
+            marginBottom: '1rem',
+            padding: '0.5rem 1rem',
+            backgroundColor: '#3b82f6',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer'
+          }}
+        >
+          {isMonthsCollapsed ? 'Развернуть месяцы' : 'Свернуть месяцы'}
+        </button>
         {loading && <p className="hint">Загрузка данных...</p>}
         {error && <p className="hint hint--error">Ошибка: {error}</p>}
         {!loading && !error && forecastRows.length === 0 && <p className="hint">Нет данных для прогноза.</p>}
@@ -65,7 +82,7 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                       <th key={column}>{column}</th>
                     ))}
                     <th className="number-cell forecast-total-col">Итого за год</th>
-                    {FORECAST_MONTH_LABELS.map((month, monthIndex) => {
+                    {!isMonthsCollapsed && FORECAST_MONTH_LABELS.map((month, monthIndex) => {
                       return (
                         <th key={month} className="number-cell forecast-month-col forecast-month-header">
                           <button
@@ -85,7 +102,7 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                       <th key={`total-header-${column}`} />
                     ))}
                     <th className="number-cell forecast-total-col">{FORECAST_NUMBER_FORMATTER.format(grandTotal)}</th>
-                    {totalByMonths.map((value, index) => (
+                    {!isMonthsCollapsed && totalByMonths.map((value, index) => (
                       <th key={`total-header-month-${index}`} className="number-cell forecast-month-col">
                         {FORECAST_NUMBER_FORMATTER.format(value)}
                       </th>
@@ -104,7 +121,7 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                       </th>
                     ))}
                     <th />
-                    {FORECAST_MONTH_LABELS.map((month) => (
+                    {!isMonthsCollapsed && FORECAST_MONTH_LABELS.map((month) => (
                       <th key={`forecast-filter-${month}`} />
                     ))}
                   </tr>
@@ -152,7 +169,7 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
                           </button>
                         </td>
 
-                        {displayedMonthlyValues.map((value, monthIndex) => (
+                        {!isMonthsCollapsed && displayedMonthlyValues.map((value, monthIndex) => (
                           <td
                             key={`month-${rowIndex}-${monthIndex}`}
                             className={`number-cell forecast-month-col forecast-month-cell--locked ${getForecastCellStatusClass(value, displayedMonthlyFactValues[monthIndex] ?? 0)}`}
@@ -712,6 +729,10 @@ export default function App() {
   const forecastMonthIndex = forecastMonthPopupMatch ? Number(forecastMonthPopupMatch[1]) : null
   const isForecastMonthPopup = forecastMonthIndex != null && forecastMonthIndex >= 0 && forecastMonthIndex < 12
   const [page, setPage] = useState<Page>(() => pageFromHash(window.location.hash))
+  const [budgetTab, setBudgetTab] = useState<'budget' | 'forecasts'>(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    return urlParams.get('tab') === 'forecasts' ? 'forecasts' : 'budget'
+  })
 
   useEffect(() => {
     const onHashChange = () => {
@@ -720,6 +741,8 @@ export default function App() {
       if (/^#contract-window-.+$/.test(window.location.hash)) return
       if (/^#forecast-month-window-\d{1,2}$/.test(window.location.hash)) return
       setPage(pageFromHash(window.location.hash))
+      const urlParams = new URLSearchParams(window.location.search)
+      setBudgetTab(urlParams.get('tab') === 'forecasts' ? 'forecasts' : 'budget')
     }
 
     window.addEventListener('hashchange', onHashChange)
@@ -742,7 +765,7 @@ export default function App() {
       return
     }
     if (nextPage === 'forecasts') {
-      window.location.hash = '#forecasts'
+      window.location.hash = '#budget?tab=forecasts'
       return
     }
     if (nextPage === 'guide') {
@@ -834,9 +857,6 @@ export default function App() {
           <a href="#budget" onClick={(event) => { event.preventDefault(); goTo('budget') }}>
             Услуги_связи
           </a>
-          <a href="#forecasts" onClick={(event) => { event.preventDefault(); goTo('forecasts') }}>
-            Прогнозы_УС
-          </a>
           <a href="#contracts" onClick={(event) => { event.preventDefault(); goTo('contracts') }}>
             Договора
           </a>
@@ -852,9 +872,53 @@ export default function App() {
       </nav>
 
       {page === 'guide' && <Guide />}
-      {page === 'budget' && <BudgetTable onAddRow={openAddRowWindow} onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
+      {page === 'budget' && (
+        <div>
+          <div style={{ marginBottom: '1rem', borderBottom: '1px solid #e5e4e7', paddingBottom: '1rem' }}>
+            <button
+              onClick={() => {
+                setBudgetTab('budget')
+                window.history.replaceState(null, '', '#budget')
+              }}
+              style={{
+                marginRight: '1rem',
+                padding: '0.5rem 1rem',
+                backgroundColor: budgetTab === 'budget' ? '#3b82f6' : '#f3f4f6',
+                color: budgetTab === 'budget' ? 'white' : '#374151',
+                border: '1px solid #d1d5db',
+                borderRadius: '0.375rem',
+                cursor: 'pointer'
+              }}
+            >
+              Бюджет
+            </button>
+            <button
+              onClick={() => {
+                setBudgetTab('forecasts')
+                window.history.replaceState(null, '', '#budget?tab=forecasts')
+              }}
+              style={{
+                padding: '0.5rem 1rem',
+                backgroundColor: budgetTab === 'forecasts' ? '#3b82f6' : '#f3f4f6',
+                color: budgetTab === 'forecasts' ? 'white' : '#374151',
+                border: '1px solid #d1d5db',
+                borderRadius: '0.375rem',
+                cursor: 'pointer'
+              }}
+            >
+              Прогнозы_УС
+            </button>
+          </div>
+          <BudgetTable
+            onAddRow={openAddRowWindow}
+            onOpenLimit={openLimitWindow}
+            onOpenContract={openContractWindow}
+            showMainTable={budgetTab === 'budget'}
+          />
+          {budgetTab === 'forecasts' && <Forecasts onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
+        </div>
+      )}
       {page === 'contracts' && <ContractsPage onOpenContract={openContractWindow} />}
-      {page === 'forecasts' && <Forecasts onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
       {page === 'invest-program-table' && <InvestProgramTablePage />}
     </main>
   )

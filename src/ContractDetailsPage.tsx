@@ -35,6 +35,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
   const [editAgreementStatus, setEditAgreementStatus] = useState('действующий');
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [isAddingAgreement, setIsAddingAgreement] = useState(false);
 
   useEffect(() => {
     async function loadContractRows(): Promise<void> {
@@ -269,36 +270,54 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
       )}
 
       <h3>Дополнительные соглашения</h3>
-      <div className="form-fields-vertical" style={{ marginBottom: 18 }}>
-        <div className="form-field">
-          <label className="form-field-label" htmlFor="agreement-number">Номер</label>
-          <input
-            id="agreement-number"
-            type="text"
-            value={newAgreementNumber}
-            onChange={(event) => setNewAgreementNumber(event.target.value)}
-            placeholder="Например: ДС-005"
-          />
-        </div>
-        <div className="form-field">
-          <label className="form-field-label" htmlFor="agreement-date">Дата</label>
-          <input
-            id="agreement-date"
-            type="date"
-            value={newAgreementDate}
-            onChange={(event) => setNewAgreementDate(event.target.value)}
-          />
-        </div>
-        <div className="form-field">
-          <label className="form-field-label" htmlFor="agreement-description">Описание</label>
-          <input
-            id="agreement-description"
-            type="text"
-            value={newAgreementDescription}
-            onChange={(event) => setNewAgreementDescription(event.target.value)}
-            placeholder="Краткое описание соглашения"
-          />
-        </div>
+      {!isAddingAgreement && (
+        <button
+          type="button"
+          onClick={() => setIsAddingAgreement(true)}
+          style={{
+            marginBottom: '1rem',
+            padding: '0.5rem 1rem',
+            backgroundColor: '#10b981',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer'
+          }}
+        >
+          Добавить соглашение
+        </button>
+      )}
+      {isAddingAgreement && (
+        <div className="form-fields-vertical" style={{ marginBottom: 18 }}>
+          <div className="form-field">
+            <label className="form-field-label" htmlFor="agreement-number">Номер</label>
+            <input
+              id="agreement-number"
+              type="text"
+              value={newAgreementNumber}
+              onChange={(event) => setNewAgreementNumber(event.target.value)}
+              placeholder="Например: ДС-005"
+            />
+          </div>
+          <div className="form-field">
+            <label className="form-field-label" htmlFor="agreement-date">Дата</label>
+            <input
+              id="agreement-date"
+              type="date"
+              value={newAgreementDate}
+              onChange={(event) => setNewAgreementDate(event.target.value)}
+            />
+          </div>
+          <div className="form-field">
+            <label className="form-field-label" htmlFor="agreement-description">Описание</label>
+            <input
+              id="agreement-description"
+              type="text"
+              value={newAgreementDescription}
+              onChange={(event) => setNewAgreementDescription(event.target.value)}
+              placeholder="Краткое описание соглашения"
+            />
+          </div>
         <div className="form-field">
           <label className="form-field-label" htmlFor="agreement-amount">Сумма</label>
           <input
@@ -316,12 +335,36 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
             className="form-submit-btn"
             onClick={() => void createAgreement()}
             disabled={createLoading}
+            style={{ marginRight: '0.5rem' }}
           >
             {createLoading ? 'Сохранение...' : 'Добавить соглашение'}
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsAddingAgreement(false);
+              setNewAgreementNumber('');
+              setNewAgreementDate(new Date().toISOString().slice(0, 10));
+              setNewAgreementDescription('');
+              setNewAgreementAmount('0');
+              setNewAgreementStatus('действующий');
+              setCreateError(null);
+            }}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: '#ef4444',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Отмена
+          </button>
         </div>
         {createError && <p className="hint hint--error">Ошибка: {createError}</p>}
-      </div>
+        </div>
+      )}
 
       {editingAgreementId && (
         <div className="form-fields-vertical" style={{ marginBottom: 18, border: '1px solid #e5e7eb', padding: 16, borderRadius: 8 }}>
