@@ -1,14 +1,43 @@
 ﻿import 'dotenv/config';
 import express from 'express';
-import { setupRoutes } from './routes/routes.js';
-import { createDbClient, ensureInvestReferenceTables, ensureContractsTable, ensureInvestProgramTable, ensureContractAdditionalAgreementsTable, ensureForecastMonthlyTable } from './db/db.js';
+import { setupRoutes } from './routes.js';
+import { createDbClient, ensureDatabaseTables } from './db.js';
 
 // Точка входа backend-приложения.
 // Загружает переменные окружения, создает Express-приложение,
 // настраивает маршруты и инициализирует базу данных перед запуском.
 const PORT = process.env.SERVER_PORT ? Number(process.env.SERVER_PORT) : 4000;
+const CORS_ALLOWED_ORIGINS = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) || ['*'];
 
 const app = express();
+
+// Разрешаем CORS для фронтенда на другом хосте/порту.
+const CORS_ALLOW_CREDENTIALS = process.env.CORS_ALLOW_CREDENTIALS === 'true';
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const isAllowedOrigin = origin && (CORS_ALLOWED_ORIGINS.includes('*') || CORS_ALLOWED_ORIGINS.includes(origin));
+
+  if (isAllowedOrigin) {
+    const allowOrigin = CORS_ALLOWED_ORIGINS.includes('*') ? '*' : origin;
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+
+    if (allowOrigin !== '*' && CORS_ALLOW_CREDENTIALS) {
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+
+    if (allowOrigin !== '*') {
+      res.setHeader('Vary', 'Origin');
+    }
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
 
 // Use JSON payloads if needed later
 app.use(express.json());
@@ -20,11 +49,7 @@ async function start(): Promise<void> {
 
   try {
     // Проверяем и создаем обязательные таблицы, если они отсутствуют.
-    await ensureInvestReferenceTables(client);
-    await ensureContractsTable(client);
-    await ensureInvestProgramTable(client);
-    await ensureContractAdditionalAgreementsTable(client);
-    await ensureForecastMonthlyTable(client);
+    await ensureDatabaseTables(client);
   } finally {
     await client.end();
   }

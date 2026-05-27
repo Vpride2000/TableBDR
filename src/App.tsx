@@ -1,16 +1,15 @@
 import { useRef, useState, useMemo, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import BudgetTable from './BudgetTable'
+import BudgetTable from './budget/BudgetTable'
 import Guide from './Guide'
-import AddBudgetRowPage from './AddBudgetRowPage'
-import LimitDetailsPage from './LimitDetailsPage'
-import ContractDetailsPage from './ContractDetailsPage'
-import ContractsPage from './ContractsPage'
-import InvestProgramTablePage from './InvestProgramTablePage'
+import AddBudgetRowPage from './budget/AddBudgetRowPage'
+import LimitDetailsPage from './budget/LimitDetailsPage'
+import ContractDetailsPage from './contract/ContractDetailsPage'
+import ContractsPage from './contract/ContractsPage'
+import InvestProgramTablePage from './Purchase/InvestProgramTablePage'
 import { useForecast } from './hooks/useForecast'
 import { Page, FORECAST_HIERARCHY_COLUMNS, FORECAST_MONTH_LABELS, FORECAST_NUMBER_FORMATTER, FORECAST_UPDATED_EVENT_KEY, BDR_UPDATED_EVENT_KEY, ForecastRow, ForecastMonthlyApiRow, ForecastMonthlyEdits, ForecastMonthlyFactEdits } from './types/forecast'
 import { pageFromHash, toForecastNumber, buildForecastRows, normalizeMonthlyValues, getForecastRowKey, toForecastKeyPart, buildRowSpans } from './utils/forecastUtils'
-import './styles.css'
 
 /*
   Основная точка входа клиентской части приложения.
@@ -52,16 +51,8 @@ function Forecasts({ onOpenLimit, onOpenContract }: ForecastsProps) {
         <p className="hint">Для редактирования нажмите на название месяца. Откроется отдельное окно с соседними месяцами.</p>
         <button
           type="button"
+          className="toggle-months-button"
           onClick={() => setIsMonthsCollapsed(!isMonthsCollapsed)}
-          style={{
-            marginBottom: '1rem',
-            padding: '0.5rem 1rem',
-            backgroundColor: '#3b82f6',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}
         >
           {isMonthsCollapsed ? 'Развернуть месяцы' : 'Свернуть месяцы'}
         </button>
@@ -569,12 +560,12 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
 
         {!loading && !error && forecastRows.length > 0 && (
           <div className="guide-table-wrap forecast-table-wrap">
-            <div className="budget-actions" style={{ marginBottom: '12px' }}>
+            <div className="budget-actions budget-actions--spaced">
               <input
                 ref={importFileInputRef}
                 type="file"
                 accept=".xlsx"
-                style={{ display: 'none' }}
+                className="hidden-input"
                 onChange={(event) => {
                   void importMonthTableFromXlsx(event)
                 }}
@@ -699,7 +690,7 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
               </tbody>
             </table>
 
-            <div className="budget-actions" style={{ marginTop: '12px' }}>
+            <div className="budget-actions budget-actions--top">
               <button type="button" className="form-submit-btn" disabled={saving} onClick={() => void saveMonthlyForecastEdits()}>
                 Сохранить
               </button>
@@ -712,6 +703,247 @@ function ForecastMonthPopupPage({ monthIndex, onBack }: ForecastMonthPopupPagePr
             {saveError && <p className="hint hint--error">Ошибка сохранения: {saveError}</p>}
           </div>
         )}
+      </div>
+    </section>
+  )
+}
+
+interface DashboardSummary {
+  serviceLines: number
+  serviceTypes: number
+  totalServiceBudget: number
+  contractCount: number
+  contractStatusCounts: Record<string, number>
+  agreementCount: number
+  agreementStatusCounts: Record<string, number>
+  purchaseItems: number
+  purchaseQuantity: number
+  purchaseStatusCounts: Record<string, number>
+  purchaseInBudget: number
+  topServices: Array<{ name: string; budget: number }>
+}
+
+function StartDashboard() {
+  const [summary, setSummary] = useState<DashboardSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadSummary(): Promise<void> {
+      try {
+        const [bdrResponse, contractsResponse, agreementsResponse, investResponse] = await Promise.all([
+          fetch('/api/gn/bdr'),
+          fetch('/api/gn/contracts'),
+          fetch('/api/gn/contract-additional-agreements'),
+          fetch('/api/gn/invest-program'),
+        ])
+
+        if (!bdrResponse.ok) throw new Error(`BDR HTTP ${bdrResponse.status}`)
+        if (!contractsResponse.ok) throw new Error(`Contracts HTTP ${contractsResponse.status}`)
+        if (!agreementsResponse.ok) throw new Error(`Agreements HTTP ${agreementsResponse.status}`)
+        if (!investResponse.ok) throw new Error(`Invest HTTP ${investResponse.status}`)
+
+        const bdrRows = (await bdrResponse.json()) as Array<Record<string, unknown>>
+        const contractRows = (await contractsResponse.json()) as Array<Record<string, unknown>>
+        const agreementRows = (await agreementsResponse.json()) as Array<Record<string, unknown>>
+        const investRows = (await investResponse.json()) as Array<Record<string, unknown>>
+
+        const parseNumber = (value: unknown): number => {
+          const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
+          const parsed = Number(normalized)
+          return Number.isFinite(parsed) ? parsed : 0
+        }
+
+        const serviceBudgetByType = new Map<string, number>()
+        bdrRows.forEach((row) => {
+          const serviceName = String(row['Статья бюджета УС'] ?? row['Статья бюджета'] ?? 'Не указана').trim()
+          const amount = parseNumber(row['Лимит'])
+          serviceBudgetByType.set(serviceName, (serviceBudgetByType.get(serviceName) ?? 0) + amount)
+        })
+
+        const countBy = (rows: Array<Record<string, unknown>>, key: string): Record<string, number> => {
+          return rows.reduce<Record<string, number>>((acc, row) => {
+            const value = String(row[key] ?? 'не указано').trim() || 'не указано'
+            acc[value] = (acc[value] ?? 0) + 1
+            return acc
+          }, {})
+        }
+
+        const normalizeStatus = (value: unknown): string => String(value ?? 'не указано').trim() || 'не указано'
+        const contractStatusCounts = contractRows.reduce<Record<string, number>>((acc, row) => {
+          const status = normalizeStatus(row['GN_contract_approval_status'] ?? row['GN_contract_state'])
+          acc[status] = (acc[status] ?? 0) + 1
+          return acc
+        }, {})
+
+        const agreementStatusCounts = agreementRows.reduce<Record<string, number>>((acc, row) => {
+          const status = normalizeStatus(row['GN_additional_agreement_status'])
+          acc[status] = (acc[status] ?? 0) + 1
+          return acc
+        }, {})
+
+        const purchaseStatusCounts = investRows.reduce<Record<string, number>>((acc, row) => {
+          const status = normalizeStatus(row['GN_invest_status'])
+          acc[status] = (acc[status] ?? 0) + 1
+          return acc
+        }, {})
+
+        if (!isMounted) return
+
+        setSummary({
+          serviceLines: bdrRows.length,
+          serviceTypes: serviceBudgetByType.size,
+          totalServiceBudget: Array.from(serviceBudgetByType.values()).reduce((sum, value) => sum + value, 0),
+          contractCount: contractRows.length,
+          contractStatusCounts,
+          agreementCount: agreementRows.length,
+          agreementStatusCounts,
+          purchaseItems: investRows.length,
+          purchaseQuantity: investRows.reduce((sum, row) => sum + parseNumber(row['GN_invest_quantity']), 0),
+          purchaseStatusCounts,
+          purchaseInBudget: investRows.filter((row) => String(row['GN_invest_in_budget'] ?? '').trim().toLowerCase() === 'да').length,
+          topServices: Array.from(serviceBudgetByType.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([name, budget]) => ({ name, budget })),
+        })
+      } catch (err) {
+        if (!isMounted) return
+        setError(err instanceof Error ? err.message : 'Не удалось загрузить данные')
+      } finally {
+        if (!isMounted) return
+        setLoading(false)
+      }
+    }
+
+    void loadSummary()
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  const formatCount = (value: number): string => new Intl.NumberFormat('ru-RU').format(value)
+  const formatMoney = (value: number): string => new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 0,
+  }).format(value)
+
+  if (loading) {
+    return <p className="hint">Загрузка сводной информации...</p>
+  }
+
+  if (error || !summary) {
+    return <p className="hint hint--error">Ошибка загрузки: {error ?? 'данные недоступны'}</p>
+  }
+
+  const usefulLinks = [
+    { label: 'Обзор рынка телеком-услуг', href: 'https://www.cnews.ru/reviews/telecom' },
+    { label: 'Стандарты сетевой инфраструктуры', href: 'https://habr.com/ru/search/?q=network%20infrastructure' },
+    { label: 'Цифровая трансформация связи', href: 'https://www.osp.ru/os/2024/01/12542721/' },
+  ]
+
+  const renderStatusItems = (statusCounts: Record<string, number>) => (
+    <ul className="dashboard-stat-list">
+      {Object.entries(statusCounts).map(([status, count]) => (
+        <li className="dashboard-stat-item" key={status}>
+          <span>{status}</span>
+          <strong>{formatCount(count)}</strong>
+        </li>
+      ))}
+    </ul>
+  )
+
+  return (
+    <section className="dashboard-section">
+      <div className="dashboard-header">
+        <div>
+          <h2>Сводный дашбоард</h2>
+          <p className="hint">Обзор ключевых метрик по услугам связи, договорам и закупкам оборудования.</p>
+        </div>
+      </div>
+
+      <div className="dashboard-grid">
+        <div className="dashboard-card">
+          <h3>Услуги связи</h3>
+          <ul className="dashboard-stat-list">
+            <li className="dashboard-stat-item">
+              <span>Всего строк</span>
+              <strong>{formatCount(summary.serviceLines)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Уникальных услуг</span>
+              <strong>{formatCount(summary.serviceTypes)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Общий лимит</span>
+              <strong>{formatMoney(summary.totalServiceBudget)}</strong>
+            </li>
+          </ul>
+        </div>
+
+        <div className="dashboard-card">
+          <h3>Договоры</h3>
+          <p className="dashboard-card-value">Всего: <strong>{formatCount(summary.contractCount)}</strong></p>
+          {renderStatusItems(summary.contractStatusCounts)}
+        </div>
+
+        <div className="dashboard-card">
+          <h3>Доп. соглашения</h3>
+          <p className="dashboard-card-value">Всего: <strong>{formatCount(summary.agreementCount)}</strong></p>
+          {renderStatusItems(summary.agreementStatusCounts)}
+        </div>
+
+        <div className="dashboard-card">
+          <h3>Закупки оборудования</h3>
+          <ul className="dashboard-stat-list">
+            <li className="dashboard-stat-item">
+              <span>Позиции</span>
+              <strong>{formatCount(summary.purchaseItems)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Сумма единиц</span>
+              <strong>{formatCount(summary.purchaseQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>В бюджете</span>
+              <strong>{formatCount(summary.purchaseInBudget)}</strong>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div className="dashboard-grid">
+        <div className="dashboard-card">
+          <h3>Полезные ссылки</h3>
+          <ul className="dashboard-links-list">
+            {usefulLinks.map((link) => (
+              <li key={link.href}>
+                <a href={link.href} target="_blank" rel="noreferrer">
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="dashboard-card">
+          <h3>Статусы закупок</h3>
+          {renderStatusItems(summary.purchaseStatusCounts)}
+        </div>
+
+        <div className="dashboard-card">
+          <h3>Топ услуг по бюджету</h3>
+          <ul className="dashboard-compact-list">
+            {summary.topServices.map((item) => (
+              <li key={item.name}>
+                <strong>{item.name}</strong> — {formatMoney(item.budget)}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     </section>
   )
@@ -748,7 +980,7 @@ export default function App() {
     window.addEventListener('hashchange', onHashChange)
 
     if (!window.location.hash && !isAddRowPopup && !isLimitPopup && !isContractPopup && !isForecastMonthPopup) {
-      window.location.hash = '#budget'
+      window.location.hash = '#start'
     }
 
     return () => window.removeEventListener('hashchange', onHashChange)
@@ -756,6 +988,10 @@ export default function App() {
 
   // Переключает активную страницу приложения, обновляя хэш URL.
   function goTo(nextPage: Page): void {
+    if (nextPage === 'start') {
+      window.location.hash = '#start'
+      return
+    }
     if (nextPage === 'contracts') {
       window.location.hash = '#contracts'
       return
@@ -854,6 +1090,9 @@ export default function App() {
     <main>
       <nav className="app-nav">
         <div className="app-nav-center">
+          <a href="#start" onClick={(event) => { event.preventDefault(); goTo('start') }}>
+            Начало
+          </a>
           <a href="#budget" onClick={(event) => { event.preventDefault(); goTo('budget') }}>
             Услуги_связи
           </a>
@@ -872,38 +1111,32 @@ export default function App() {
       </nav>
 
       {page === 'guide' && <Guide />}
+      {page === 'start' && (
+        <div className="page-start-wrapper">
+     
+          <StartDashboard />
+         
+        </div>
+      )}
       {page === 'budget' && (
         <div>
-          <div style={{ marginBottom: '1rem', borderBottom: '1px solid #e5e4e7', paddingBottom: '1rem' }}>
+          <div className="page-tabs">
             <button
+              type="button"
+              className={`tab-button ${budgetTab === 'budget' ? 'tab-button--active' : ''}`}
               onClick={() => {
                 setBudgetTab('budget')
                 window.history.replaceState(null, '', '#budget')
-              }}
-              style={{
-                marginRight: '1rem',
-                padding: '0.5rem 1rem',
-                backgroundColor: budgetTab === 'budget' ? '#3b82f6' : '#f3f4f6',
-                color: budgetTab === 'budget' ? 'white' : '#374151',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                cursor: 'pointer'
               }}
             >
               Бюджет
             </button>
             <button
+              type="button"
+              className={`tab-button ${budgetTab === 'forecasts' ? 'tab-button--active' : ''}`}
               onClick={() => {
                 setBudgetTab('forecasts')
                 window.history.replaceState(null, '', '#budget?tab=forecasts')
-              }}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: budgetTab === 'forecasts' ? '#3b82f6' : '#f3f4f6',
-                color: budgetTab === 'forecasts' ? 'white' : '#374151',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                cursor: 'pointer'
               }}
             >
               Прогнозы_УС

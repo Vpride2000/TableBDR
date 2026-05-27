@@ -2,6 +2,7 @@ import { ForecastRow, FORECAST_HIERARCHY_COLUMNS } from '../types/forecast'
 
 // Утилиты для обработки прогнозных данных и построения таблиц.
 export function pageFromHash(hash: string): import('../types/forecast').Page {
+  if (hash === '#start') return 'start'
   if (hash === '#invest-program-table') return 'invest-program-table'
   if (hash === '#contracts') return 'contracts'
   if (hash === '#forecasts') return 'forecasts'

@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import './styles.css';
 import { formatHttpError } from './utils/forecastUtils';
 // Страница справочника GN.
 // Отображает разделы справочных таблиц с возможностью разворачивать
-// и редактировать отдельные записи.type Row = Record<string, unknown>;
+// редактировать отдельные записи и управлять строками.
+type Row = Record<string, unknown>;
 type SelectOption = { value: string; label: string };
 
 interface TableSection {
@@ -51,12 +51,14 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
   const [draft, setDraft] = useState<Row>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [creatingRow, setCreatingRow] = useState(false);
+  const [newRow, setNewRow] = useState<Row>({});
+  const [createError, setCreateError] = useState<string | null>(null);
 
   if (section.loading) return <p className="hint">Загрузка...</p>;
   if (section.error)   return <p className="hint hint--error">Ошибка: {section.error}</p>;
-  if (section.data.length === 0) return <p className="hint">Нет данных.</p>;
 
-  const columns = Object.keys(section.data[0]);
+  const columns = section.data.length > 0 ? Object.keys(section.data[0]) : [section.idColumn];
 
   function startEdit(row: Row): void {
     setEditingRowId(Number(row[section.idColumn]));
@@ -72,6 +74,76 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
 
   function updateDraft(column: string, value: string): void {
     setDraft((prev) => ({ ...prev, [column]: value }));
+  }
+
+  function startCreate(): void {
+    setCreatingRow(true);
+    setCreateError(null);
+    setNewRow(columns.reduce((acc, column) => {
+      if (column === section.idColumn) return acc;
+      return { ...acc, [column]: '' };
+    }, {} as Row));
+  }
+
+  function cancelCreate(): void {
+    setCreatingRow(false);
+    setCreateError(null);
+    setNewRow({});
+  }
+
+  function updateNewRow(column: string, value: string): void {
+    setNewRow((prev) => ({ ...prev, [column]: value }));
+  }
+
+  async function saveNewRow(): Promise<void> {
+    setSaving(true);
+    setCreateError(null);
+
+    try {
+      const response = await fetch(`/api/gn/${section.entity}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRow),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || formatHttpError(response.status));
+      }
+
+      const createdRow = (await response.json()) as Row;
+      onSectionRowsUpdate(section.endpoint, [createdRow, ...section.data]);
+      cancelCreate();
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Не удалось добавить запись');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteRow(rowId: number): Promise<void> {
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      const response = await fetch(`/api/gn/${section.entity}/${rowId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || formatHttpError(response.status));
+      }
+
+      onSectionRowsUpdate(
+        section.endpoint,
+        section.data.filter((row) => Number(row[section.idColumn]) !== rowId)
+      );
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Не удалось удалить запись');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function saveEdit(): Promise<void> {
@@ -108,6 +180,44 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
 
   return (
     <div className="guide-table-wrap">
+      <div className="guide-table-actions">
+        <button type="button" className="page-action-btn page-action-btn--secondary" onClick={startCreate} disabled={creatingRow}>Добавить</button>
+      </div>
+      {creatingRow && (
+        <div className="guide-new-row">
+          <h2>Новая запись</h2>
+          <div className="guide-new-row-fields">
+            {columns.filter((col) => col !== section.idColumn).map((col) => (
+              <label key={col}>
+                <div>{col}</div>
+                {fkOptions[col] ? (
+                  <select
+                    value={String(newRow[col] ?? '')}
+                    onChange={(event) => updateNewRow(col, event.target.value)}
+                  >
+                    <option value="">Выберите значение</option>
+                    {fkOptions[col].map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={String(newRow[col] ?? '')}
+                    onChange={(event) => updateNewRow(col, event.target.value)}
+                  />
+                )}
+              </label>
+            ))}
+          </div>
+          <div style={{ marginTop: '10px' }}>
+            <button type="button" className="page-action-btn page-action-btn--success" onClick={() => void saveNewRow()} disabled={saving}>Сохранить</button>
+            <button type="button" className="page-action-btn page-action-btn--secondary" onClick={cancelCreate} disabled={saving}>Отмена</button>
+          </div>
+          {createError && <p className="hint hint--error">Ошибка добавления: {createError}</p>}
+        </div>
+      )}
       <table className="guide-table table-compact">
         <thead>
           <tr>
@@ -148,11 +258,14 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
                 ))}
                 <td>
                   {!isEditing ? (
-                    <button type="button" onClick={() => startEdit(row)}>испр</button>
+                    <>
+                      <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => startEdit(row)}>испр</button>
+                      <button type="button" className="page-action-btn page-action-btn--danger" onClick={() => void deleteRow(rowId)} disabled={saving}>удал</button>
+                    </>
                   ) : (
                     <>
-                      <button type="button" onClick={() => void saveEdit()} disabled={saving}>сохр</button>
-                      <button type="button" onClick={cancelEdit} disabled={saving}>отм</button>
+                      <button type="button" className="page-action-btn page-action-btn--success" onClick={() => void saveEdit()} disabled={saving}>сохр</button>
+                      <button type="button" className="page-action-btn page-action-btn--secondary" onClick={cancelEdit} disabled={saving}>отм</button>
                     </>
                   )}
                 </td>
@@ -162,6 +275,7 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
         </tbody>
       </table>
       {saveError && <p className="hint hint--error">Ошибка редактирования: {saveError}</p>}
+      {!saveError && section.data.length === 0 && <p className="hint">Нет данных.</p>}
     </div>
   );
 }

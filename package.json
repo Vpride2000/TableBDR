@@ -4,9 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "webpack serve --mode development",
-    "server": "tsx server/index.ts",
-    "build": "webpack --mode production",
+    "server-dev": "tsx server/index.ts",
+    "front-dev": "webpack serve --mode development",
+    "build-front": "webpack --mode production",
+    "build-server": "npx tsc -p tsconfig.server.json",
     "lint": "eslint .",
     "preview": "webpack serve --mode production",
     "test:db": "ts-node --project tsconfig.server.json scripts/testPostgresConnection.ts"

@@ -2,6 +2,19 @@
 
 A React + TypeScript + Webpack project with a collapsible budget table connected to PostgreSQL. Displays telecom and connectivity service budgets with expandable row groups.
 
+## 🧭 Начало
+
+Сводный дашбоард по проекту:
+
+- **Стек:** React 19, TypeScript, Webpack, Express, PostgreSQL
+- **Запуск:** `npm install` → создать `.env` → `npm run server` → `npm run dev`
+- **Фронтенд:** `src/` (`App.tsx`, `BudgetTable.tsx`, `main.tsx`)
+- **Бэкенд:** `server/` (`index.ts`, API `/api/*`, `GET /api/health`)
+- **Скрипты:** `scripts/testPostgresConnection.ts`, seed/инициализация БД
+- **Схема БД:** GN/PAO таблицы (`GN_bdr`, `GN_department`, `GN_dogovor`, и т.д.)
+- **Особенности:** коллапсируемые строки, HMR, строгий TypeScript, ESLint, dev proxy `/api/*`
+- **Сборка:** `npm run build` → результат в `dist/bundle.js`
+
 ## 🚀 Quick Start
 
 ### Prerequisites
