@@ -840,9 +840,12 @@ function StartDashboard() {
   }
 
   const usefulLinks = [
-    { label: 'Обзор рынка телеком-услуг', href: 'https://www.cnews.ru/reviews/telecom' },
-    { label: 'Стандарты сетевой инфраструктуры', href: 'https://habr.com/ru/search/?q=network%20infrastructure' },
-    { label: 'Цифровая трансформация связи', href: 'https://www.osp.ru/os/2024/01/12542721/' },
+    { label: 'Диск на портале', href: 'http://portal.corp.nedra.gazprom.ru/company/personal/user/10705/disk/path/Отдел%20телекоммуникаций%20СИУСиС/' },
+    { label: 'Файл Услуги связи', href: 'http://portal.corp.nedra.gazprom.ru/~XHH57' },
+    { label: 'Redmine Отдел телекоммуникаций', href: 'https://appredmine.adm.ggr.gazprom.ru/projects/telecom/issues?per_page=50&query_id=30' },
+    { label: 'Управление связи', href: 'https://ucn.adm.gazprom.ru/ucn/' },
+    { label: 'Zabbix', href: 'https://monitoring.adm.ggr.gazprom.ru/zabbix/index.php' },
+    { label: 'NetBox', href: 'https://netbox.esk.nedra.gazprom.ru/' },
   ]
 
   const renderStatusItems = (statusCounts: Record<string, number>) => (

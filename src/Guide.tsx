@@ -178,6 +178,13 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
     }
   }
 
+  function resolveFkLabel(column: string, value: unknown): string {
+    if (!fkOptions[column] || value == null) return String(value ?? '');
+    const stringValue = String(value);
+    const option = fkOptions[column].find((item) => item.value === stringValue);
+    return option ? option.label : stringValue;
+  }
+
   return (
     <div className="guide-table-wrap">
       <div className="guide-table-actions">
@@ -252,7 +259,7 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
                         onChange={(event) => updateDraft(col, event.target.value)}
                       />
                     ) : (
-                      String((isEditing ? draft[col] : row[col]) ?? '')
+                      resolveFkLabel(col, row[col])
                     )}
                   </td>
                 ))}
@@ -353,6 +360,12 @@ export default function Guide() {
 
     Object.entries(configByColumn).forEach(([column, config]) => {
       const sourceSection = sections.find((item) => item.entity === config.sourceEntity);
+      // If source section exists but not loaded yet, trigger its loading so labels become available.
+      if (sourceSection && sourceSection.data.length === 0 && !sourceSection.loading && !sourceSection.loaded) {
+        // kick off async load; options will populate on next render
+        loadSectionData(sourceSection.endpoint);
+      }
+
       if (!sourceSection || sourceSection.data.length === 0) {
         result[column] = [];
         return;

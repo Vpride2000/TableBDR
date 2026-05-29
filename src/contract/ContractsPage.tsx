@@ -81,7 +81,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null)
+  const [editingContractId, setEditingContractId] = useState<number | null>(null)
   const [draftRow, setDraftRow] = useState<ContractRow | null>(null)
   const [editingAgreementId, setEditingAgreementId] = useState<number | null>(null)
   const [draftAgreement, setDraftAgreement] = useState<ContractAgreement | null>(null)
@@ -240,20 +240,20 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     setPendingDocuments(pendingDocs)
   }, [rows, agreementsByContract, dogovorOptions])
 
-  function startEdit(rowIndex: number): void {
-    setEditingRowIndex(rowIndex)
-    setDraftRow({ ...rows[rowIndex] })
+  function startEdit(row: ContractRow): void {
+    setEditingContractId(row.GN_contract_id)
+    setDraftRow({ ...row })
     setSaveError(null)
   }
 
   function cancelEdit(): void {
-    setEditingRowIndex(null)
+    setEditingContractId(null)
     setDraftRow(null)
     setSaveError(null)
   }
 
   async function saveEdit(): Promise<void> {
-    if (editingRowIndex == null || draftRow == null) return
+    if (editingContractId == null || draftRow == null) return
 
     setSaveError(null)
 
@@ -270,7 +270,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
       }
 
       const updatedRow = toRow((await response.json()) as Row)
-      setRows((prevRows) => prevRows.map((row, index) => (index === editingRowIndex ? updatedRow : row)))
+      setRows((prevRows) => prevRows.map((row) => (row.GN_contract_id === editingContractId ? updatedRow : row)))
       cancelEdit()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Не удалось сохранить изменения')
@@ -483,6 +483,28 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     return 'status-default'
   }
 
+  // Add-contract quick form state
+  const [newDogovorName, setNewDogovorName] = useState('')
+  const [newDogovorStatus, setNewDogovorStatus] = useState('на согласовании')
+
+  function addPendingContract(): void {
+    if (!newDogovorName.trim()) return
+    const id = `contract-new-${Date.now()}`
+    setPendingDocuments((prev) => [
+      {
+        id,
+        type: 'contract',
+        number: newDogovorName.trim(),
+        date: new Date().toISOString().slice(0, 10),
+        description: `Договор: ${newDogovorName.trim()}`,
+        contractName: newDogovorName.trim(),
+      },
+      ...prev,
+    ])
+    setNewDogovorName('')
+    setNewDogovorStatus('на согласовании')
+  }
+
   return (
     <section className="guide invest-program-section transparent-section">
       <div className="guide-section invest-program-content">
@@ -495,6 +517,19 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
             {/* Documents pending approval */}
             <div className="guide-table-wrap invest-program-table-wrap section-bottom-space">
               <h3 className="section-title section-title--warning">На согласовании</h3>
+              <div className="form-fields-inline" style={{ marginBottom: '10px' }}>
+                <input
+                  type="text"
+                  placeholder="Договор"
+                  value={newDogovorName}
+                  onChange={(e) => setNewDogovorName(e.target.value)}
+                />
+                <select value={newDogovorStatus} onChange={(e) => setNewDogovorStatus(e.target.value)}>
+                  <option value="на согласовании">на согласовании</option>
+                  <option value="действующий">действующий</option>
+                </select>
+                <button type="button" className="page-action-btn page-action-btn--success" onClick={addPendingContract}>Добавить договор</button>
+              </div>
               <table className="guide-table table-compact invest-program-table-min">
                   <thead>
                     <tr>
@@ -618,7 +653,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <thead>
                 <tr>
                   <th>№</th>
-                  {COLUMNS.map((column) => (
+                  {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date').map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
                   <th>Действия</th>
@@ -626,67 +661,44 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               </thead>
               <tbody>
                 {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') !== 'не действующий').map((row, rowIndex) => {
-                  const isEditing = editingRowIndex === rowIndex && draftRow != null
+                  const isEditing = editingContractId === row.GN_contract_id && draftRow != null
 
                   return (
                     <Fragment key={`contract-block-${row.GN_contract_id}`}>
                       <tr key={`contract-${row.GN_contract_id}`}>
                     <td className="invest-program-row-number">{rowIndex + 1}</td>
-                    {COLUMNS.map((column) => {
+                    {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date').map((column) => {
                         if (column.kind === 'lookup') {
                           const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
-                          const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                          const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
                           return (
                             <td key={column.key}>
-                              {isEditing ? (
-                                <select
-                                  className="invest-program-cell-select"
-                                  value={value}
-                                  onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
-                                >
-                                  {options.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : column.key === 'GN_contract_dogovor_FK' ? (
+                              {column.key === 'GN_contract_dogovor_FK' ? (
                                 <button
                                   type="button"
                                   className="contract-cell-button"
-                                  onClick={() => onOpenContract(displayLookupLabel(options, row[column.key as keyof ContractRow]))}
+                                  onClick={() => startEdit(row)}
                                 >
-                                  {displayLookupLabel(options, row[column.key as keyof ContractRow])}
+                                  {label}
                                 </button>
                               ) : (
-                                <span className="invest-program-cell-text">
-                                  {displayLookupLabel(options, row[column.key as keyof ContractRow])}
-                                </span>
+                                <span className="invest-program-cell-text">{label}</span>
                               )}
                             </td>
                           )
                         }
 
                         if (column.kind === 'date') {
-                          const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                          const value = String(row[column.key as keyof ContractRow] ?? '')
                           return (
                             <td key={column.key}>
-                              {isEditing ? (
-                                <input
-                                  className="invest-program-inline-input"
-                                  type="date"
-                                  value={value}
-                                  onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
-                                />
-                              ) : (
-                                <span className="invest-program-cell-text">{value}</span>
-                              )}
+                              <span className="invest-program-cell-text">{value}</span>
                             </td>
                           )
                         }
 
                         if (column.kind === 'status') {
-                          const statusValue = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? 'действующий')
+                          const statusValue = String(row[column.key as keyof ContractRow] ?? 'действующий')
                           const statusClass = statusValue === 'на согласовании'
                             ? 'status-cell status-cell--pending'
                             : statusValue === 'действующий'
@@ -696,35 +708,15 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                 : 'status-cell'
                           return (
                             <td key={column.key} className={statusClass}>
-                              {isEditing ? (
-                                <select
-                                  className={`invest-program-cell-select status-select ${statusClass}`}
-                                  value={statusValue}
-                                  onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
-                                >
-                                  <option value="действующий">действующий</option>
-                                  <option value="на согласовании">на согласовании</option>
-                                  <option value="не действующий">не действующий</option>
-                                </select>
-                              ) : (
-                                <span className={`invest-program-cell-text status-label ${statusClass}`}>{statusValue}</span>
-                              )}
+                              <span className={`invest-program-cell-text status-label ${statusClass}`}>{statusValue}</span>
                             </td>
                           )
                         }
 
-                        const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                        const value = String(row[column.key as keyof ContractRow] ?? '')
                         return (
                           <td key={column.key}>
-                            {isEditing ? (
-                              <input
-                                className="invest-program-inline-input"
-                                value={value}
-                                onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
-                              />
-                            ) : (
-                              <span className="invest-program-cell-text">{value}</span>
-                            )}
+                            <span className="invest-program-cell-text">{value}</span>
                           </td>
                         )
                       })}
@@ -736,24 +728,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                         >
                           {expandedContracts.has(row.GN_contract_id) ? 'Скрыть доп.' : 'Показать доп.'}
                         </button>
-                        {isEditing ? (
-                          <>
-                            <button type="button" className="invest-program-row-action-button" onClick={() => void saveEdit()}>
-                              СОХР
-                            </button>
-                            <button
-                              type="button"
-                              className="invest-program-row-action-button invest-program-row-action-button--secondary"
-                              onClick={cancelEdit}
-                            >
-                              ОТМ
-                            </button>
-                          </>
-                        ) : (
-                          <button type="button" className="invest-program-row-action-button" onClick={() => startEdit(rowIndex)}>
-                            ИЗМ
-                          </button>
-                        )}
                       </td>
                     </tr>
                     {(() => {
@@ -904,7 +878,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <thead>
                 <tr>
                   <th>№</th>
-                  {COLUMNS.map((column) => (
+                  {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date').map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
                   <th>Действия</th>
@@ -912,7 +886,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               </thead>
               <tbody>
                 {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий').map((row, rowIndex) => {
-                  const isEditing = editingRowIndex === rowIndex && draftRow != null
+                  const isEditing = editingContractId === row.GN_contract_id && draftRow != null
 
                   return (
                     <Fragment key={`archive-contract-block-${row.GN_contract_id}`}>
@@ -921,58 +895,35 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                         {COLUMNS.map((column) => {
                           if (column.kind === 'lookup') {
                             const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
-                            const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                            const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
                             return (
                               <td key={column.key}>
-                                {isEditing ? (
-                                  <select
-                                    className="invest-program-cell-select"
-                                    value={value}
-                                    onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
-                                  >
-                                    {options.map((option) => (
-                                      <option key={option.value} value={option.value}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : column.key === 'GN_contract_dogovor_FK' ? (
+                                {column.key === 'GN_contract_dogovor_FK' ? (
                                   <button
                                     type="button"
                                     className="contract-cell-button"
-                                    onClick={() => onOpenContract(displayLookupLabel(options, row[column.key as keyof ContractRow]))}
+                                    onClick={() => startEdit(row)}
                                   >
-                                    {displayLookupLabel(options, row[column.key as keyof ContractRow])}
+                                    {label}
                                   </button>
                                 ) : (
-                                  <span className="invest-program-cell-text">
-                                    {displayLookupLabel(options, row[column.key as keyof ContractRow])}
-                                  </span>
+                                  <span className="invest-program-cell-text">{label}</span>
                                 )}
                               </td>
                             )
                           }
 
                           if (column.kind === 'date') {
-                            const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                            const value = String(row[column.key as keyof ContractRow] ?? '')
                             return (
                               <td key={column.key}>
-                                {isEditing ? (
-                                  <input
-                                    className="invest-program-inline-input"
-                                    type="date"
-                                    value={value}
-                                    onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
-                                  />
-                                ) : (
-                                  <span className="invest-program-cell-text">{value}</span>
-                                )}
+                                <span className="invest-program-cell-text">{value}</span>
                               </td>
                             )
                           }
 
                           if (column.kind === 'status') {
-                            const statusValue = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? 'действующий')
+                            const statusValue = String(row[column.key as keyof ContractRow] ?? 'действующий')
                             const statusClass = statusValue === 'на согласовании'
                               ? 'status-cell status-cell--pending'
                               : statusValue === 'действующий'
@@ -982,57 +933,19 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                   : 'status-cell'
                             return (
                               <td key={column.key} className={statusClass}>
-                                {isEditing ? (
-                                  <select
-                                    className={`invest-program-cell-select status-select ${statusClass}`}
-                                    value={statusValue}
-                                    onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
-                                  >
-                                    <option value="действующий">действующий</option>
-                                    <option value="на согласовании">на согласовании</option>
-                                    <option value="не действующий">не действующий</option>
-                                  </select>
-                                ) : (
-                                  <span className={`invest-program-cell-text status-label ${statusClass}`}>{statusValue}</span>
-                                )}
+                                <span className={`invest-program-cell-text status-label ${statusClass}`}>{statusValue}</span>
                               </td>
                             )
                           }
 
-                          const value = isEditing ? getDraftValue(column.key as keyof ContractRow) : String(row[column.key as keyof ContractRow] ?? '')
+                          const value = String(row[column.key as keyof ContractRow] ?? '')
                           return (
                             <td key={column.key}>
-                              {isEditing ? (
-                                <input
-                                  className="invest-program-inline-input"
-                                  value={value}
-                                  onChange={(event) => updateDraft(column.key as keyof ContractRow, event.target.value)}
-                                />
-                              ) : (
-                                <span className="invest-program-cell-text">{value}</span>
-                              )}
+                              <span className="invest-program-cell-text">{value}</span>
                             </td>
                           )
                         })}
                         <td className="invest-program-actions-cell">
-                          {isEditing ? (
-                            <>
-                              <button type="button" className="invest-program-row-action-button" onClick={() => void saveEdit()}>
-                                СОХР
-                              </button>
-                              <button
-                                type="button"
-                                className="invest-program-row-action-button invest-program-row-action-button--secondary"
-                                onClick={cancelEdit}
-                              >
-                                ОТМ
-                              </button>
-                            </>
-                          ) : (
-                            <button type="button" className="invest-program-row-action-button" onClick={() => startEdit(rowIndex)}>
-                              ИЗМ
-                            </button>
-                          )}
                         </td>
                       </tr>
                     </Fragment>
@@ -1041,7 +954,74 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               </tbody>
             </table>
           </div>
-        )}      </div>
+        )}
+
+        {editingContractId && draftRow && (
+          <div className="modal-overlay">
+            <div className="modal modal--small">
+              <h4>Редактирование договора</h4>
+              <div className="form-field">
+                <label className="form-field-label">Договор</label>
+                <select
+                  value={String(draftRow.GN_contract_dogovor_FK ?? '')}
+                  onChange={(e) => updateDraft('GN_contract_dogovor_FK' as keyof ContractRow, e.target.value)}
+                >
+                  {dogovorOptions.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-field">
+                <label className="form-field-label">Контрагент</label>
+                <select
+                  value={String(draftRow.GN_contract_contractor_FK ?? '')}
+                  onChange={(e) => updateDraft('GN_contract_contractor_FK' as keyof ContractRow, e.target.value)}
+                >
+                  {contractorOptions.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-field">
+                <label className="form-field-label">Статус</label>
+                <select
+                  value={String(draftRow.GN_contract_approval_status ?? 'действующий')}
+                  onChange={(e) => updateDraft('GN_contract_approval_status' as keyof ContractRow, e.target.value)}
+                >
+                  <option value="действующий">действующий</option>
+                  <option value="на согласовании">на согласовании</option>
+                  <option value="не действующий">не действующий</option>
+                </select>
+              </div>
+
+              <div className="form-field">
+                <label className="form-field-label">Дата запуска в СЭД</label>
+                <input
+                  type="date"
+                  value={String(draftRow.GN_contract_sed_launch_date ?? '')}
+                  onChange={(e) => updateDraft('GN_contract_sed_launch_date' as keyof ContractRow, e.target.value)}
+                />
+              </div>
+
+              <div className="form-field">
+                <label className="form-field-label">Дата загрузки в АСЭЗ</label>
+                <input
+                  type="date"
+                  value={String(draftRow.GN_contract_asez_load_date ?? '')}
+                  onChange={(e) => updateDraft('GN_contract_asez_load_date' as keyof ContractRow, e.target.value)}
+                />
+              </div>
+
+              <div className="form-actions-row">
+                <button type="button" className="form-submit-btn" onClick={() => void saveEdit()}>Сохранить</button>
+                <button type="button" className="page-action-btn page-action-btn--secondary" onClick={cancelEdit}>Отмена</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   )
 }
