@@ -658,6 +658,43 @@ p {
   background: #f0f9ff;
 }
 
+/* Compact form layout for popup editing */
+.form-fields-compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.form-field-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.form-field-compact .form-field-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  min-width: 110px;
+  white-space: nowrap;
+}
+
+.form-field-compact input,
+.form-field-compact select {
+  padding: 6px 8px;
+  font-size: 0.9rem;
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 4px;
+  min-width: 120px;
+}
+
+.form-actions-row-compact {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .table-compact {
   font-size: 0.75rem;
   min-width: 720px;

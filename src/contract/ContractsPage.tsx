@@ -4,7 +4,7 @@ import { formatHttpError } from '../utils/forecastUtils'
 // Страница управления договорами.
 // Загружает справочники, отображает список договоров и позволяет сохранять изменения.
 type Row = Record<string, unknown>
-type LookupOption = { value: string; label: string }
+type LookupOption = { value: string; label: string; meta?: Row }
 
 type ContractRow = {
   GN_contract_id: number
@@ -41,6 +41,7 @@ function mapLookupOptions(rows: Row[], valueKey: string, labelKey: string): Look
   return rows.map((row) => ({
     value: String(row[valueKey] ?? ''),
     label: String(row[labelKey] ?? ''),
+    meta: row,
   }))
 }
 
@@ -81,8 +82,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [editingContractId, setEditingContractId] = useState<number | null>(null)
-  const [draftRow, setDraftRow] = useState<ContractRow | null>(null)
   const [editingAgreementId, setEditingAgreementId] = useState<number | null>(null)
   const [draftAgreement, setDraftAgreement] = useState<ContractAgreement | null>(null)
   const [editingPendingDocId, setEditingPendingDocId] = useState<string | null>(null)
@@ -240,60 +239,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     setPendingDocuments(pendingDocs)
   }, [rows, agreementsByContract, dogovorOptions])
 
-  function startEdit(row: ContractRow): void {
-    setEditingContractId(row.GN_contract_id)
-    setDraftRow({ ...row })
-    setSaveError(null)
-  }
-
-  function cancelEdit(): void {
-    setEditingContractId(null)
-    setDraftRow(null)
-    setSaveError(null)
-  }
-
-  async function saveEdit(): Promise<void> {
-    if (editingContractId == null || draftRow == null) return
-
-    setSaveError(null)
-
-    try {
-      const response = await fetch(`/api/gn/contracts/${draftRow.GN_contract_id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draftRow),
-      })
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as { error?: string }
-        throw new Error(payload.error || formatHttpError(response.status))
-      }
-
-      const updatedRow = toRow((await response.json()) as Row)
-      setRows((prevRows) => prevRows.map((row) => (row.GN_contract_id === editingContractId ? updatedRow : row)))
-      cancelEdit()
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Не удалось сохранить изменения')
-    }
-  }
-
-  function updateDraft(column: keyof ContractRow, value: string): void {
-    setDraftRow((prevRow) => {
-      if (!prevRow) return prevRow
-
-      if (column === 'GN_contract_contractor_FK' || column === 'GN_contract_dogovor_FK') {
-        return { ...prevRow, [column]: Number(value) }
-      }
-
-      return { ...prevRow, [column]: value }
-    })
-  }
-
-  function getDraftValue(column: keyof ContractRow): string {
-    if (!draftRow) return ''
-    return String(draftRow[column] ?? '')
-  }
-
   function toggleContractAgreements(contractId: number): void {
     setExpandedContracts((prev) => {
       const next = new Set(prev)
@@ -379,81 +324,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     return String(value ?? '')
   }
 
-  function handleEdit(doc: { id: string; type: 'contract' | 'agreement'; number: string; contractName?: string }): void {
-    setEditingPendingDocId(doc.id)
-    const docToEdit = pendingDocuments.find(d => d.id === doc.id)
-    if (docToEdit) {
-      setDraftPendingDoc({ ...docToEdit })
-    }
-    setSaveError(null)
-  }
-
-  function cancelPendingDocEdit(): void {
-    setEditingPendingDocId(null)
-    setDraftPendingDoc(null)
-    setSaveError(null)
-  }
-
-  async function savePendingDocEdit(): Promise<void> {
-    if (editingPendingDocId == null || draftPendingDoc == null) return
-
-    setSaveError(null)
-
-    try {
-      // Determine the API endpoint and payload based on document type
-      let endpoint: string
-      let payload: any
-
-      if (draftPendingDoc.type === 'contract') {
-        // Find the contract by number
-        const contract = rows.find(r => dogovorOptions.find(d => d.value === String(r.GN_contract_dogovor_FK))?.label === draftPendingDoc.number)
-        if (!contract) throw new Error('Контракт не найден')
-
-        endpoint = `/api/gn/contracts/${contract.GN_contract_id}`
-        payload = {
-          contractorId: contract.GN_contract_contractor_FK,
-          dogovorId: contract.GN_contract_dogovor_FK,
-          sedLaunchDate: draftPendingDoc.date,
-          asezLoadDate: contract.GN_contract_asez_load_date,
-          state: contract.GN_contract_state,
-          statusUpdatedAt: contract.GN_contract_status_updated_at,
-          approvalStatus: 'approved' // Change status to approved
-        }
-      } else {
-        // Find the agreement by number
-        const agreement = Object.values(agreementsByContract).flat().find(a => a.GN_additional_agreement_number === draftPendingDoc.number)
-        if (!agreement) throw new Error('Дополнительное соглашение не найдено')
-
-        endpoint = `/api/gn/contract-additional-agreements/${agreement.GN_additional_agreement_id}`
-        payload = {
-          contractId: agreement.GN_contract_id_FK,
-          number: draftPendingDoc.number,
-          date: draftPendingDoc.date,
-          description: draftPendingDoc.description,
-          amount: draftPendingDoc.amount,
-          approvalStatus: 'approved' // Change status to approved
-        }
-      }
-
-      const response = await fetch(endpoint, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as { error?: string }
-        throw new Error(payload.error || formatHttpError(response.status))
-      }
-
-      // Update the document status in pendingDocuments
-      setPendingDocuments(prev => prev.filter(doc => doc.id !== editingPendingDocId))
-
-      cancelPendingDocEdit()
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Не удалось сохранить изменения')
-    }
-  }
 
   function updatePendingDocDraft(field: string, value: string | number): void {
     setDraftPendingDoc((prevDoc) => {
@@ -476,33 +346,69 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     return String(value ?? '')
   }
 
-  function getStatusClass(statusValue: string): string {
-    if (statusValue === 'на согласовании') return 'status-pending'
-    if (statusValue === 'действующий') return 'status-active'
-    if (statusValue === 'не действующий') return 'status-inactive'
-    return 'status-default'
-  }
-
   // Add-contract quick form state
-  const [newDogovorName, setNewDogovorName] = useState('')
+  const [showAddContractForm, setShowAddContractForm] = useState(false)
+  const [newDogovorId, setNewDogovorId] = useState('')
   const [newDogovorStatus, setNewDogovorStatus] = useState('на согласовании')
 
-  function addPendingContract(): void {
-    if (!newDogovorName.trim()) return
-    const id = `contract-new-${Date.now()}`
-    setPendingDocuments((prev) => [
-      {
-        id,
-        type: 'contract',
-        number: newDogovorName.trim(),
-        date: new Date().toISOString().slice(0, 10),
-        description: `Договор: ${newDogovorName.trim()}`,
-        contractName: newDogovorName.trim(),
-      },
-      ...prev,
-    ])
-    setNewDogovorName('')
-    setNewDogovorStatus('на согласовании')
+  async function addPendingContract(): Promise<void> {
+    if (!newDogovorId) return
+    const selectedDogovor = dogovorOptions.find((opt) => opt.value === newDogovorId)
+    if (!selectedDogovor || !selectedDogovor.meta) return
+
+    const contractorFk = Number(selectedDogovor.meta.GN_contarctor_FK ?? 0)
+    if (!contractorFk) {
+      setSaveError('Не найден контрагент для выбранного договора')
+      return
+    }
+
+    setSaveError(null)
+    try {
+      const payload = {
+        GN_contract_contractor_FK: contractorFk,
+        GN_contract_dogovor_FK: Number(newDogovorId),
+        GN_contract_sed_launch_date: new Date().toISOString().slice(0, 10),
+        GN_contract_asez_load_date: new Date().toISOString().slice(0, 10),
+        GN_contract_state: '',
+        GN_contract_approval_status: newDogovorStatus,
+      }
+
+      const response = await fetch('/api/gn/contracts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const payloadErr = (await response.json().catch(() => ({}))) as { error?: string }
+        throw new Error(payloadErr.error || formatHttpError(response.status))
+      }
+
+      const created = await response.json()
+
+      // Add created contract to local state so popup can find it
+      setRows((prev) => [toRow(created), ...prev])
+
+      const id = `contract-${created.GN_contract_id ?? `new-${Date.now()}`}`
+      const contractName = selectedDogovor.label
+      setPendingDocuments((prev) => [
+        {
+          id,
+          type: 'contract',
+          number: contractName,
+          date: created.GN_contract_sed_launch_date || new Date().toISOString().slice(0, 10),
+          description: `Договор: ${contractName}`,
+          contractName,
+        },
+        ...prev,
+      ])
+
+      setNewDogovorId('')
+      setNewDogovorStatus('на согласовании')
+      setShowAddContractForm(false)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Не удалось создать договор')
+    }
   }
 
   return (
@@ -516,20 +422,43 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           <div>
             {/* Documents pending approval */}
             <div className="guide-table-wrap invest-program-table-wrap section-bottom-space">
-              <h3 className="section-title section-title--warning">На согласовании</h3>
               <div className="form-fields-inline" style={{ marginBottom: '10px' }}>
-                <input
-                  type="text"
-                  placeholder="Договор"
-                  value={newDogovorName}
-                  onChange={(e) => setNewDogovorName(e.target.value)}
-                />
+              <button
+                type="button"
+                className="page-action-btn page-action-btn--success"
+                onClick={() => setShowAddContractForm((prev) => !prev)}
+              >
+                {showAddContractForm ? 'Отмена' : 'Добавить договор'}
+              </button>
+            </div>
+            {showAddContractForm && (
+              <div className="form-fields-inline" style={{ marginBottom: '10px' }}>
+                <select
+                  value={newDogovorId}
+                  onChange={(e) => setNewDogovorId(e.target.value)}
+                >
+                  <option value="">Выберите договор</option>
+                  {dogovorOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
                 <select value={newDogovorStatus} onChange={(e) => setNewDogovorStatus(e.target.value)}>
                   <option value="на согласовании">на согласовании</option>
                   <option value="действующий">действующий</option>
                 </select>
-                <button type="button" className="page-action-btn page-action-btn--success" onClick={addPendingContract}>Добавить договор</button>
+                <button
+                  type="button"
+                  className="page-action-btn page-action-btn--success"
+                  onClick={addPendingContract}
+                  disabled={!newDogovorId}
+                >
+                  Добавить
+                </button>
               </div>
+            )}
+            <h3 className="section-title section-title--warning">На согласовании</h3>
               <table className="guide-table table-compact invest-program-table-min">
                   <thead>
                     <tr>
@@ -539,7 +468,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                       <th>Описание</th>
                       <th>Сумма</th>
                       <th>Договор</th>
-                      <th>Действия</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -607,38 +535,11 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                             <button
                               type="button"
                               className="contract-cell-button"
-                              onClick={() => onOpenContract(doc.contractName)}
+                              disabled={!doc.contractName}
+                              onClick={() => doc.contractName && onOpenContract(doc.contractName)}
                             >
-                              {doc.contractName}
+                              {doc.contractName || '-'}
                             </button>
-                          </td>
-                          <td>
-                            {isEditingDoc ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className="page-action-btn page-action-btn--success"
-                                  onClick={savePendingDocEdit}
-                                >
-                                  Сохранить
-                                </button>
-                                <button
-                                  type="button"
-                                  className="page-action-btn page-action-btn--danger"
-                                  onClick={cancelPendingDocEdit}
-                                >
-                                  Отмена
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                className="page-action-btn"
-                                onClick={() => handleEdit(doc)}
-                              >
-                                ИЗМ
-                              </button>
-                            )}
                           </td>
                         </tr>
                       )
@@ -653,21 +554,19 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <thead>
                 <tr>
                   <th>№</th>
-                  {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date').map((column) => (
+                  {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date' && c.kind !== 'status').map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
-                  <th>Действия</th>
+                  <th>ДС</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') !== 'не действующий').map((row, rowIndex) => {
-                  const isEditing = editingContractId === row.GN_contract_id && draftRow != null
-
+                {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'действующий').map((row, rowIndex) => {
                   return (
                     <Fragment key={`contract-block-${row.GN_contract_id}`}>
                       <tr key={`contract-${row.GN_contract_id}`}>
                     <td className="invest-program-row-number">{rowIndex + 1}</td>
-                    {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date').map((column) => {
+                    {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date' && c.kind !== 'status').map((column) => {
                         if (column.kind === 'lookup') {
                           const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
                           const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
@@ -677,7 +576,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                 <button
                                   type="button"
                                   className="contract-cell-button"
-                                  onClick={() => startEdit(row)}
+                                  onClick={() => onOpenContract(label)}
                                 >
                                   {label}
                                 </button>
@@ -721,13 +620,25 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                         )
                       })}
                       <td className="invest-program-actions-cell">
-                        <button
-                          type="button"
-                          className="invest-program-row-action-button invest-program-row-action-button--secondary"
-                          onClick={() => toggleContractAgreements(row.GN_contract_id)}
-                        >
-                          {expandedContracts.has(row.GN_contract_id) ? 'Скрыть доп.' : 'Показать доп.'}
-                        </button>
+                        {(() => {
+                          const contractAgreements = agreementsByContract[row.GN_contract_id] ?? []
+                          const agreementCount = contractAgreements.length
+                          const hasAgreements = agreementCount > 0
+                          const isExpanded = expandedContracts.has(row.GN_contract_id)
+
+                          return hasAgreements ? (
+                            <button
+                              type="button"
+                              className="invest-program-row-action-button invest-program-row-action-button--secondary"
+                              onClick={() => toggleContractAgreements(row.GN_contract_id)}
+                              aria-label={isExpanded ? `Скрыть ${agreementCount} дополнительных соглашений` : `Показать ${agreementCount} дополнительных соглашений`}
+                            >
+                              {isExpanded ? `− ${agreementCount}` : `+ ${agreementCount}`}
+                            </button>
+                          ) : (
+                            <span className="invest-program-row-action-button invest-program-row-action-button--disabled">-</span>
+                          )
+                        })()}
                       </td>
                     </tr>
                     {(() => {
@@ -878,7 +789,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <thead>
                 <tr>
                   <th>№</th>
-                  {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date').map((column) => (
+                  {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date' && c.kind !== 'status').map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
                   <th>Действия</th>
@@ -886,13 +797,12 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               </thead>
               <tbody>
                 {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий').map((row, rowIndex) => {
-                  const isEditing = editingContractId === row.GN_contract_id && draftRow != null
 
                   return (
                     <Fragment key={`archive-contract-block-${row.GN_contract_id}`}>
                       <tr key={`archive-contract-${row.GN_contract_id}`}>
                         <td className="invest-program-row-number">{rowIndex + 1}</td>
-                        {COLUMNS.map((column) => {
+                        {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date' && c.kind !== 'status').map((column) => {
                           if (column.kind === 'lookup') {
                             const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
                             const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
@@ -902,7 +812,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                   <button
                                     type="button"
                                     className="contract-cell-button"
-                                    onClick={() => startEdit(row)}
+                                    onClick={() => onOpenContract(label)}
                                   >
                                     {label}
                                   </button>
@@ -956,71 +866,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           </div>
         )}
 
-        {editingContractId && draftRow && (
-          <div className="modal-overlay">
-            <div className="modal modal--small">
-              <h4>Редактирование договора</h4>
-              <div className="form-field">
-                <label className="form-field-label">Договор</label>
-                <select
-                  value={String(draftRow.GN_contract_dogovor_FK ?? '')}
-                  onChange={(e) => updateDraft('GN_contract_dogovor_FK' as keyof ContractRow, e.target.value)}
-                >
-                  {dogovorOptions.map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-field">
-                <label className="form-field-label">Контрагент</label>
-                <select
-                  value={String(draftRow.GN_contract_contractor_FK ?? '')}
-                  onChange={(e) => updateDraft('GN_contract_contractor_FK' as keyof ContractRow, e.target.value)}
-                >
-                  {contractorOptions.map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-field">
-                <label className="form-field-label">Статус</label>
-                <select
-                  value={String(draftRow.GN_contract_approval_status ?? 'действующий')}
-                  onChange={(e) => updateDraft('GN_contract_approval_status' as keyof ContractRow, e.target.value)}
-                >
-                  <option value="действующий">действующий</option>
-                  <option value="на согласовании">на согласовании</option>
-                  <option value="не действующий">не действующий</option>
-                </select>
-              </div>
-
-              <div className="form-field">
-                <label className="form-field-label">Дата запуска в СЭД</label>
-                <input
-                  type="date"
-                  value={String(draftRow.GN_contract_sed_launch_date ?? '')}
-                  onChange={(e) => updateDraft('GN_contract_sed_launch_date' as keyof ContractRow, e.target.value)}
-                />
-              </div>
-
-              <div className="form-field">
-                <label className="form-field-label">Дата загрузки в АСЭЗ</label>
-                <input
-                  type="date"
-                  value={String(draftRow.GN_contract_asez_load_date ?? '')}
-                  onChange={(e) => updateDraft('GN_contract_asez_load_date' as keyof ContractRow, e.target.value)}
-                />
-              </div>
-
-              <div className="form-actions-row">
-                <button type="button" className="form-submit-btn" onClick={() => void saveEdit()}>Сохранить</button>
-                <button type="button" className="page-action-btn page-action-btn--secondary" onClick={cancelEdit}>Отмена</button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </section>
   )

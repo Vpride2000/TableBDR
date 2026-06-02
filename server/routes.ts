@@ -316,6 +316,126 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.post('/api/gn/contracts', async (req: Request, res: Response): Promise<void> => {
+    const payload = req.body as {
+      GN_contract_contractor_FK?: number;
+      GN_contract_dogovor_FK: number;
+      GN_contract_sed_launch_date?: string;
+      GN_contract_asez_load_date?: string;
+      GN_contract_state?: string;
+      GN_contract_status_updated_at?: string;
+      GN_contract_approval_status?: string;
+    };
+
+    if (!payload || !payload.GN_contract_dogovor_FK) {
+      res.status(400).json({ error: 'Missing required fields: GN_contract_dogovor_FK' });
+      return;
+    }
+
+    const statusUpdatedAt = payload.GN_contract_status_updated_at || new Date().toISOString().slice(0, 10);
+    const approvalStatus = payload.GN_contract_approval_status || 'действующий';
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `INSERT INTO "GN_contracts" (
+           "GN_contract_contractor_FK",
+           "GN_contract_dogovor_FK",
+           "GN_contract_sed_launch_date",
+           "GN_contract_asez_load_date",
+           "GN_contract_state",
+           "GN_contract_status_updated_at",
+           "GN_contract_approval_status"
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING *,
+           (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name"`,
+        [
+          payload.GN_contract_contractor_FK ?? null,
+          payload.GN_contract_dogovor_FK,
+          payload.GN_contract_sed_launch_date || statusUpdatedAt,
+          payload.GN_contract_asez_load_date || statusUpdatedAt,
+          payload.GN_contract_state || '',
+          statusUpdatedAt,
+          approvalStatus,
+        ]
+      );
+
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error(err && (err.stack || err));
+      res.status(500).json({ error: String(err instanceof Error ? err.message : 'Failed to create GN_contracts') });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.put('/api/gn/contracts/:id', async (req: Request, res: Response): Promise<void> => {
+    const id = Number(req.params.id);
+    const payload = req.body as {
+      GN_contract_contractor_FK: number;
+      GN_contract_dogovor_FK: number;
+      GN_contract_sed_launch_date: string;
+      GN_contract_asez_load_date: string;
+      GN_contract_state: string;
+      GN_contract_status_updated_at?: string;
+      GN_contract_approval_status?: string;
+    };
+
+    if (!Number.isFinite(id)
+      || !payload.GN_contract_contractor_FK
+      || !payload.GN_contract_dogovor_FK
+      || !payload.GN_contract_sed_launch_date
+      || !payload.GN_contract_asez_load_date
+      || payload.GN_contract_state === undefined
+    ) {
+      res.status(400).json({ error: 'Invalid contract update payload' });
+      return;
+    }
+
+    const statusUpdatedAt = payload.GN_contract_status_updated_at || new Date().toISOString().slice(0, 10);
+    const approvalStatus = payload.GN_contract_approval_status || 'действующий';
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `UPDATE "GN_contracts"
+         SET
+           "GN_contract_contractor_FK" = $1,
+           "GN_contract_dogovor_FK" = $2,
+           "GN_contract_sed_launch_date" = $3,
+           "GN_contract_asez_load_date" = $4,
+           "GN_contract_state" = $5,
+           "GN_contract_status_updated_at" = $6,
+           "GN_contract_approval_status" = $7
+         WHERE "GN_contract_id" = $8
+         RETURNING *,
+           (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name"`,
+        [
+          payload.GN_contract_contractor_FK,
+          payload.GN_contract_dogovor_FK,
+          payload.GN_contract_sed_launch_date,
+          payload.GN_contract_asez_load_date,
+          payload.GN_contract_state,
+          statusUpdatedAt,
+          approvalStatus,
+          id,
+        ]
+      );
+
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
+
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to update GN_contracts' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.get('/api/gn/contract-additional-agreements', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
