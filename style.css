@@ -304,8 +304,41 @@ p {
   color: #6d28d9;
 }
 
+.object-cell-button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: #047857;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.object-cell-button:hover,
+.object-cell-button:focus-visible {
+  color: #065f46;
+}
+
 .contract-details {
   padding: 20px;
+}
+
+.object-summary-section {
+  margin-top: 18px;
+}
+
+.object-summary-table {
+  width: 100%;
+  min-width: 0;
+}
+
+.object-summary-table th,
+.object-summary-table td {
+  padding: 6px 8px;
+}
+
+.object-summary-table td {
+  white-space: nowrap;
 }
 
 .contract-details-header {

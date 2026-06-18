@@ -13,6 +13,9 @@ interface BudgetTableProps {
   onAddRow: () => void;
   onOpenLimit: (rowId: number) => void;
   onOpenContract: (contractName: string) => void;
+  onOpenObject: (rowId: number) => void;
+  onOpenDepartment: (rowId: number) => void;
+  onOpenContractor: (rowId: number) => void;
   showMainTable?: boolean;
 }
 type SortDirection = 'asc' | 'desc';
@@ -81,9 +84,10 @@ interface BudgetTableProps {
   onAddRow: () => void;
   onOpenLimit: (rowId: number) => void;
   onOpenContract: (contractName: string) => void;
+  onOpenObject: (rowId: number) => void;
 }
 
-export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, showMainTable = true }: BudgetTableProps) {
+export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onOpenObject, onOpenDepartment, onOpenContractor, showMainTable = true }: BudgetTableProps) {
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -610,6 +614,30 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, sho
                               onClick={() => onOpenLimit(rowId)}
                             >
                               {formatFinancialValue(row[col])}
+                            </button>
+                          ) : !isEditing && col === 'Объект' && String(row[col] ?? '').trim() !== '' ? (
+                            <button
+                              type="button"
+                              className="object-cell-button"
+                              onClick={() => onOpenObject(rowId)}
+                            >
+                              {String(row[col] ?? '')}
+                            </button>
+                          ) : !isEditing && col === 'Подразделение' && String(row[col] ?? '').trim() !== '' ? (
+                            <button
+                              type="button"
+                              className="object-cell-button"
+                              onClick={() => onOpenDepartment(rowId)}
+                            >
+                              {String(row[col] ?? '')}
+                            </button>
+                          ) : !isEditing && col === 'Контрагент' && String(row[col] ?? '').trim() !== '' ? (
+                            <button
+                              type="button"
+                              className="contract-cell-button"
+                              onClick={() => onOpenContractor(rowId)}
+                            >
+                              {String(row[col] ?? '')}
                             </button>
                           ) : !isEditing && col === 'Договор' && String(row[col] ?? '').trim() !== '' ? (
                             <button

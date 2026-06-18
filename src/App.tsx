@@ -4,6 +4,9 @@ import BudgetTable from './budget/BudgetTable'
 import Guide from './Guide'
 import AddBudgetRowPage from './budget/AddBudgetRowPage'
 import LimitDetailsPage from './budget/LimitDetailsPage'
+import ObjectDetailsPage from './budget/ObjectDetailsPage'
+import DepartmentDetailsPage from './budget/DepartmentDetailsPage'
+import ContractorDetailsPage from './budget/ContractorDetailsPage'
 import ContractDetailsPage from './contract/ContractDetailsPage'
 import ContractsPage from './contract/ContractsPage'
 import InvestProgramTablePage from './Purchase/InvestProgramTablePage'
@@ -960,6 +963,15 @@ export default function App() {
   const contractPopupMatch = window.location.hash.match(/^#contract-window-(.+)$/)
   const contractPopupName = contractPopupMatch ? decodeURIComponent(contractPopupMatch[1]) : null
   const isContractPopup = contractPopupName != null && contractPopupName !== ''
+  const objectPopupMatch = window.location.hash.match(/^#object-window-(\d+)$/)
+  const objectPopupRowId = objectPopupMatch ? Number(objectPopupMatch[1]) : null
+  const isObjectPopup = objectPopupRowId != null && !Number.isNaN(objectPopupRowId)
+  const departmentPopupMatch = window.location.hash.match(/^#department-window-(\d+)$/)
+  const departmentPopupRowId = departmentPopupMatch ? Number(departmentPopupMatch[1]) : null
+  const isDepartmentPopup = departmentPopupRowId != null && !Number.isNaN(departmentPopupRowId)
+  const contractorPopupMatch = window.location.hash.match(/^#contractor-window-(\d+)$/)
+  const contractorPopupRowId = contractorPopupMatch ? Number(contractorPopupMatch[1]) : null
+  const isContractorPopup = contractorPopupRowId != null && !Number.isNaN(contractorPopupRowId)
   const forecastMonthPopupMatch = window.location.hash.match(/^#forecast-month-window-(\d{1,2})$/)
   const forecastMonthIndex = forecastMonthPopupMatch ? Number(forecastMonthPopupMatch[1]) : null
   const isForecastMonthPopup = forecastMonthIndex != null && forecastMonthIndex >= 0 && forecastMonthIndex < 12
@@ -974,6 +986,9 @@ export default function App() {
       if (window.location.hash === '#add-row-window') return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
+      if (/^#object-window-\d+$/.test(window.location.hash)) return
+      if (/^#department-window-\d+$/.test(window.location.hash)) return
+      if (/^#contractor-window-\d+$/.test(window.location.hash)) return
       if (/^#forecast-month-window-\d{1,2}$/.test(window.location.hash)) return
       setPage(pageFromHash(window.location.hash))
       const urlParams = new URLSearchParams(window.location.search)
@@ -1057,6 +1072,48 @@ export default function App() {
     }
   }
 
+  // Открывает окно просмотра информации по объекту, передавая идентификатор строки.
+  function openObjectWindow(rowId: number): void {
+    const popupUrl = `${window.location.pathname}#object-window-${rowId}`
+    const popup = window.open(
+      popupUrl,
+      `object-window-${rowId}`,
+      'popup=yes,width=900,height=700,resizable=yes,scrollbars=yes'
+    )
+
+    if (popup) {
+      popup.focus()
+    }
+  }
+
+  // Открывает окно просмотра информации по подразделению, передавая идентификатор строки.
+  function openDepartmentWindow(rowId: number): void {
+    const popupUrl = `${window.location.pathname}#department-window-${rowId}`
+    const popup = window.open(
+      popupUrl,
+      `department-window-${rowId}`,
+      'popup=yes,width=900,height=700,resizable=yes,scrollbars=yes'
+    )
+
+    if (popup) {
+      popup.focus()
+    }
+  }
+
+  // Открывает окно просмотра информации по контрагенту, передавая идентификатор строки.
+  function openContractorWindow(rowId: number): void {
+    const popupUrl = `${window.location.pathname}#contractor-window-${rowId}`
+    const popup = window.open(
+      popupUrl,
+      `contractor-window-${rowId}`,
+      'popup=yes,width=900,height=700,resizable=yes,scrollbars=yes'
+    )
+
+    if (popup) {
+      popup.focus()
+    }
+  }
+
   if (isAddRowPopup) {
     return (
       <main>
@@ -1081,6 +1138,30 @@ export default function App() {
     )
   }
 
+  if (isObjectPopup && objectPopupRowId != null) {
+    return (
+      <main>
+        <ObjectDetailsPage rowId={objectPopupRowId} onBack={() => window.close()} />
+      </main>
+    )
+  }
+
+  if (isDepartmentPopup && departmentPopupRowId != null) {
+    return (
+      <main>
+        <DepartmentDetailsPage rowId={departmentPopupRowId} onBack={() => window.close()} />
+      </main>
+    )
+  }
+
+  if (isContractorPopup && contractorPopupRowId != null) {
+    return (
+      <main>
+        <ContractorDetailsPage rowId={contractorPopupRowId} onBack={() => window.close()} />
+      </main>
+    )
+  }
+
   if (isForecastMonthPopup && forecastMonthIndex != null) {
     return (
       <main>
@@ -1100,7 +1181,7 @@ export default function App() {
             Услуги_связи
           </a>
           <a href="#contracts" onClick={(event) => { event.preventDefault(); goTo('contracts') }}>
-            Договора
+            Карта_договоров
           </a>
           <a href="#invest-program-table" onClick={(event) => { event.preventDefault(); goTo('invest-program-table') }}>
             Закупки
@@ -1149,6 +1230,9 @@ export default function App() {
             onAddRow={openAddRowWindow}
             onOpenLimit={openLimitWindow}
             onOpenContract={openContractWindow}
+            onOpenObject={openObjectWindow}
+            onOpenDepartment={openDepartmentWindow}
+            onOpenContractor={openContractorWindow}
             showMainTable={budgetTab === 'budget'}
           />
           {budgetTab === 'forecasts' && <Forecasts onOpenLimit={openLimitWindow} onOpenContract={openContractWindow} />}
