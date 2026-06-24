@@ -618,7 +618,7 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
                           ) : !isEditing && col === 'Объект' && String(row[col] ?? '').trim() !== '' ? (
                             <button
                               type="button"
-                              className="object-cell-button"
+                              className="contract-cell-button"
                               onClick={() => onOpenObject(rowId)}
                             >
                               {String(row[col] ?? '')}
@@ -626,7 +626,7 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
                           ) : !isEditing && col === 'Подразделение' && String(row[col] ?? '').trim() !== '' ? (
                             <button
                               type="button"
-                              className="object-cell-button"
+                              className="contract-cell-button"
                               onClick={() => onOpenDepartment(rowId)}
                             >
                               {String(row[col] ?? '')}

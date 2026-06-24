@@ -94,6 +94,37 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
     idColumn: 'GN_invest_ogruz_rekvizit_id',
     editableColumns: ['GN_invest_ogruz_rekvizit'],
   },
+  'equipment-manufacturers': {
+    tableName: 'GN_equipment_manufacturer',
+    idColumn: 'GN_equipment_manufacturer_id',
+    editableColumns: ['GN_equipment_manufacturer'],
+  },
+  'equipment-types': {
+    tableName: 'GN_equipment_type',
+    idColumn: 'GN_equipment_type_id',
+    editableColumns: ['GN_equipment_type'],
+  },
+  'equipment-models': {
+    tableName: 'GN_equipment_model',
+    idColumn: 'GN_equipment_model_id',
+    editableColumns: [
+      'GN_equipment_model',
+      'GN_equipment_manufacturer_FK',
+      'GN_equipment_type_FK',
+    ],
+  },
+  'equipment-purchases': {
+    tableName: 'GN_equipment_purchase',
+    idColumn: 'GN_equipment_purchase_id',
+    editableColumns: [
+      'GN_equipment_model_FK',
+      'GN_department_FK',
+      'GN_budget_network_item_FK',
+      'GN_departament_object_FK',
+      'GN_purchase_status',
+      'GN_purchase_quantity',
+    ],
+  },
   'invest-program': {
     tableName: 'GN_invest_program',
     idColumn: 'GN_invest_program_id',

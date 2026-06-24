@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils'
+import { EquipmentPurchaseTable } from './EquipmentPurchaseTable'
 
 // Страница инвестпрограммы.
 // Генерирует демонстрационную таблицу с инвестиционными позициями,
@@ -27,35 +28,16 @@ const PF_NPF_COLUMN = 'ПФ/НПФ'
 const NAME_COLUMN = 'Наименование'
 const MAIN_TEXT_EDIT_COLUMNS = new Set(['Кол-во', 'Статус', 'оплата', 'в бюджете'])
 
-const EQUIPMENT_MODELS = [
-  'Маршрутизатор Cisco ISR 4331',
-  'Коммутатор Huawei S5735-L24T4X',
-  'Точка доступа Ubiquiti UniFi U6-Pro',
-  'IP-телефон Yealink SIP-T54W',
-  'Радиомодем Eltex WOP-2ac-LR5',
-]
-
 type LookupOption = { value: string; label: string }
 type InvestRow = Record<string, string>
 
-function buildInitialRows(count: number): InvestRow[] {
-  return Array.from({ length: count }, () =>
-    Object.fromEntries([...INVEST_TABLE_COLUMNS, ...DETAIL_COLUMNS].map((column) => [column, '-'])) as InvestRow
-  ).map((row, index) => ({
-    ...row,
-    'код ПЭО': `ПЭО-${String(index + 1).padStart(3, '0')}`,
-    [NAME_COLUMN]: EQUIPMENT_MODELS[index % EQUIPMENT_MODELS.length],
-    'Кол-во': String((index % 3) + 1),
-    'Код МТР': `MTR-${1000 + index}`,
-    'ПЗП': `ПЗП-${index + 1}`,
-    'отчет агента': `Агент-${index + 1}`,
-    'АП': `АП-${index + 1}`,
-    'Спецификация': `СП-${100 + index}`,
-    'Ввод в эксплуатацию': `Q${(index % 4) + 1} 2027`,
-    'Учёт ИТ': index % 2 === 0 ? 'Да' : 'Нет',
-  }))
-}
-
+/**
+ * Преобразует массив строк справочника в список опций для select.
+ * @param rows - данные справочника с полями-ключами
+ * @param valueKey - ключ поля, которое используется как value
+ * @param labelKey - ключ поля, которое используется как метка
+ * @returns список опций вида { value, label }
+ */
 function mapLookupOptions(
   rows: Array<Record<string, unknown>>,
   valueKey: string,
@@ -68,21 +50,37 @@ function mapLookupOptions(
   })
 }
 
+/**
+ * Возвращает метку опции справочника по ее идентификатору.
+ * Если значение не найдено, возвращает оригинальный текст.
+ */
+function getLookupLabel(options: LookupOption[], value: string): string {
+  return options.find((option) => option.value === value)?.label ?? value
+}
+
 export default function InvestProgramTablePage() {
+  // Основные строки таблицы инвестпрограммы.
   const [rows, setRows] = useState<InvestRow[]>([])
+  // Опции справочников для выпадающих списков.
   const [okdpOptions, setOkdpOptions] = useState<LookupOption[]>([])
   const [ogruzOptions, setOgruzOptions] = useState<LookupOption[]>([])
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([])
   const [departmentOptions, setDepartmentOptions] = useState<LookupOption[]>([])
+  // Статусы загрузки и ошибки для основной таблицы и для справочников.
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loadingLookups, setLoadingLookups] = useState(true)
   const [lookupError, setLookupError] = useState<string | null>(null)
+  // Индексы для всплывающего окна деталей и редактирования строки.
   const [activePopupRowIndex, setActivePopupRowIndex] = useState<number | null>(null)
   const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null)
   const [editingRowDraft, setEditingRowDraft] = useState<InvestRow | null>(null)
 
   useEffect(() => {
+    /**
+     * Загружает данные инвестпрограммы из API и формирует строки таблицы.
+     * Устанавливает состояние загрузки и отображает ошибки при неудаче.
+     */
     async function loadInvestProgram(): Promise<void> {
       setLoading(true)
       setError(null)
@@ -130,6 +128,10 @@ export default function InvestProgramTablePage() {
   }, [])
 
   useEffect(() => {
+    /**
+     * Загружает внешние справочники для селектов и обновляет строки значениями из них.
+     * При отсутствии данных справочников показывает соответствующее сообщение.
+     */
     async function loadLookups(): Promise<void> {
       setLoadingLookups(true)
       setLookupError(null)
@@ -200,22 +202,34 @@ export default function InvestProgramTablePage() {
     void loadLookups()
   }, [])
 
+  /**
+   * Обновляет значение ячейки в строке таблицы по индексу и названию колонки.
+   */
   function updateCell(rowIndex: number, column: string, nextValue: string): void {
     setRows((prevRows) =>
       prevRows.map((row, index) => (index === rowIndex ? { ...row, [column]: nextValue } : row))
     )
   }
 
+  /**
+   * Устанавливает строку для редактирования и копирует её данные в черновик.
+   */
   function startRowEdit(rowIndex: number): void {
     setEditingRowIndex(rowIndex)
     setEditingRowDraft({ ...rows[rowIndex] })
   }
 
+  /**
+   * Отменяет редактирование текущей строки и сбрасывает состояние черновика.
+   */
   function cancelRowEdit(): void {
     setEditingRowIndex(null)
     setEditingRowDraft(null)
   }
 
+  /**
+   * Сохраняет изменения из черновика в основную таблицу и завершает режим редактирования.
+   */
   function saveRowEdit(): void {
     if (editingRowIndex == null || editingRowDraft == null) return
 
@@ -226,10 +240,16 @@ export default function InvestProgramTablePage() {
     cancelRowEdit()
   }
 
+  /**
+   * Обновляет значение в черновике редактируемой строки.
+   */
   function updateDraftCell(column: string, nextValue: string): void {
     setEditingRowDraft((prevRow) => (prevRow ? { ...prevRow, [column]: nextValue } : prevRow))
   }
 
+  /**
+   * Возвращает текущую строку, выбранную для просмотра деталей в попапе.
+   */
   function activePopupRow(): InvestRow | null {
     if (activePopupRowIndex == null) return null
     return rows[activePopupRowIndex] ?? null
@@ -238,17 +258,18 @@ export default function InvestProgramTablePage() {
   const popupRow = activePopupRow()
 
   return (
-    <section className="guide invest-program-section">
-      <div className="guide-section invest-program-content">
-        <h2>Инвест.программа: таблица</h2>
-        {loading && <p className="hint">Загрузка данных...</p>}
-        {error && <p className="hint hint--error">Ошибка: {error}</p>}
-        {loadingLookups && <p className="hint">Загрузка справочников...</p>}
-        {lookupError && <p className="hint hint--error">Ошибка: {lookupError}</p>}
+    <>
+      <section className="guide invest-program">
+        <div className="guide-section">
+          <h2>Инвест.программа: таблица</h2>
+          {loading && <p className="hint">Загрузка данных...</p>}
+          {error && <p className="hint hint--error">Ошибка: {error}</p>}
+          {loadingLookups && <p className="hint">Загрузка справочников...</p>}
+          {lookupError && <p className="hint hint--error">Ошибка: {lookupError}</p>}
 
-        {!loading && !error && (
-          <div className="guide-table-wrap invest-program-table-wrap">
-            <table className="guide-table table-compact invest-program-table-min">
+          {!loading && !error && (
+            <div className="guide-table-wrap">
+            <table className="guide-table table-compact">
               <thead>
                 <tr>
                   <th>№</th>
@@ -270,17 +291,15 @@ export default function InvestProgramTablePage() {
                       return (
                         <td key={`${column}-${rowIndex}`}>
                           {isEditingRow ? (
-                            <div className="invest-program-name-cell">
-                              <input
-                                className="invest-program-inline-input invest-program-inline-input--name"
-                                value={cellValue}
-                                onChange={(event) => updateDraftCell(column, event.target.value)}
-                              />
-                            </div>
+                            <input
+                              className="invest-program-field invest-program-field--name"
+                              value={cellValue}
+                              onChange={(event) => updateDraftCell(column, event.target.value)}
+                            />
                           ) : (
                             <button
                               type="button"
-                              className="invest-program-name-link"
+                              className="contract-cell-button"
                               onClick={() => setActivePopupRowIndex(rowIndex)}
                             >
                               {cellValue}
@@ -295,7 +314,7 @@ export default function InvestProgramTablePage() {
                         <td key={`${column}-${rowIndex}`}>
                           {isEditingRow ? (
                             <select
-                              className="invest-program-cell-select"
+                              className="invest-program-field"
                               value={cellValue}
                               onChange={(event) => updateDraftCell(column, event.target.value)}
                               disabled={loadingLookups || okdpOptions.length === 0}
@@ -311,7 +330,9 @@ export default function InvestProgramTablePage() {
                               )}
                             </select>
                           ) : (
-                            <span className="invest-program-cell-text">{cellValue}</span>
+                            <span className="invest-program-cell-text">
+                              {getLookupLabel(okdpOptions, String(cellValue))}
+                            </span>
                           )}
                         </td>
                       )
@@ -322,7 +343,7 @@ export default function InvestProgramTablePage() {
                         <td key={`${column}-${rowIndex}`}>
                           {isEditingRow ? (
                             <select
-                              className="invest-program-cell-select"
+                              className="invest-program-field"
                               value={cellValue}
                               onChange={(event) => updateDraftCell(column, event.target.value)}
                               disabled={loadingLookups || ogruzOptions.length === 0}
@@ -338,7 +359,9 @@ export default function InvestProgramTablePage() {
                               )}
                             </select>
                           ) : (
-                            <span className="invest-program-cell-text">{cellValue}</span>
+                            <span className="invest-program-cell-text">
+                              {getLookupLabel(ogruzOptions, String(cellValue))}
+                            </span>
                           )}
                         </td>
                       )
@@ -349,7 +372,7 @@ export default function InvestProgramTablePage() {
                         <td key={`${column}-${rowIndex}`}>
                           {isEditingRow ? (
                             <select
-                              className="invest-program-cell-select"
+                              className="invest-program-field"
                               value={cellValue}
                               onChange={(event) => updateDraftCell(column, event.target.value)}
                               disabled={loadingLookups || contractorOptions.length === 0}
@@ -365,7 +388,9 @@ export default function InvestProgramTablePage() {
                               )}
                             </select>
                           ) : (
-                            <span className="invest-program-cell-text">{cellValue}</span>
+                            <span className="invest-program-cell-text">
+                              {getLookupLabel(contractorOptions, String(cellValue))}
+                            </span>
                           )}
                         </td>
                       )
@@ -376,7 +401,7 @@ export default function InvestProgramTablePage() {
                         <td key={`${column}-${rowIndex}`}>
                           {isEditingRow ? (
                             <select
-                              className="invest-program-cell-select"
+                              className="invest-program-field"
                               value={cellValue}
                               onChange={(event) => updateDraftCell(column, event.target.value)}
                               disabled={loadingLookups || departmentOptions.length === 0}
@@ -392,7 +417,9 @@ export default function InvestProgramTablePage() {
                               )}
                             </select>
                           ) : (
-                            <span className="invest-program-cell-text">{cellValue}</span>
+                            <span className="invest-program-cell-text">
+                              {getLookupLabel(departmentOptions, String(cellValue))}
+                            </span>
                           )}
                         </td>
                       )
@@ -403,7 +430,7 @@ export default function InvestProgramTablePage() {
                         <td key={`${column}-${rowIndex}`}>
                           {isEditingRow ? (
                             <input
-                              className="invest-program-inline-input"
+                            className="invest-program-field"
                               value={cellValue}
                               onChange={(event) => updateDraftCell(column, event.target.value)}
                             />
@@ -505,8 +532,8 @@ export default function InvestProgramTablePage() {
               </div>
             </div>
           </div>
-        )}
-      </div>
-    </section>
-  )
-}
+        </section>
+        <EquipmentPurchaseTable />
+      </>
+    )
+  }

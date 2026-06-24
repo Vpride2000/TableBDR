@@ -1251,15 +1251,9 @@ p {
   white-space: nowrap;
 }
 
-.invest-program-name-cell {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.invest-program-inline-input {
-  min-width: 84px;
-  width: 100%;
+.invest-program-field,
+.invest-program-inline-input,
+.invest-program-cell-select {
   box-sizing: border-box;
   font: inherit;
   font-size: 0.66rem;
@@ -1270,7 +1264,13 @@ p {
   background: #fff;
 }
 
-.invest-program-inline-input--name {
+.invest-program-field,
+.invest-program-inline-input {
+  min-width: 84px;
+  width: 100%;
+}
+
+.invest-program-field--name {
   min-width: 180px;
 }
 
@@ -1285,18 +1285,8 @@ p {
   min-height: 1em;
 }
 
-.invest-program-cell-select {
-  min-width: 150px;
-  font-size: 0.66rem;
-  line-height: 1.1;
-  padding: 1px 3px;
-}
-
-.invest-program-name-button {
-  display: none;
-}
-
-.invest-program-name-link {
+.invest-program-name-link,
+.invest-program-name-link:not(.limit-cell-button):not(.contract-cell-button) {
   border: none;
   background: transparent;
   color: #1d4ed8;

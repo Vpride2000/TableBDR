@@ -625,6 +625,113 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.get('/api/gn/equipment-manufacturers', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query('SELECT * FROM "GN_equipment_manufacturer" ORDER BY "GN_equipment_manufacturer_id" ASC');
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_equipment_manufacturer' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/equipment-types', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query('SELECT * FROM "GN_equipment_type" ORDER BY "GN_equipment_type_id" ASC');
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_equipment_type' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/equipment-models', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query('SELECT * FROM "GN_equipment_model" ORDER BY "GN_equipment_model_id" ASC');
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_equipment_model' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/equipment-purchases', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(`
+        SELECT
+          ep."GN_equipment_purchase_id",
+          em."GN_equipment_model" AS equipment_model,
+          mf."GN_equipment_manufacturer" AS manufacturer,
+          et."GN_equipment_type" AS equipment_type,
+          dep."GN_department" AS department,
+          bni."GN_budget_network_item" AS budget_item,
+          obj."GN_departament_object" AS object,
+          ep."GN_purchase_status" AS purchase_status,
+          ep."GN_purchase_quantity" AS purchase_quantity,
+          ep."GN_equipment_model_FK",
+          ep."GN_department_FK",
+          ep."GN_budget_network_item_FK",
+          ep."GN_departament_object_FK"
+        FROM "GN_equipment_purchase" ep
+        JOIN "GN_equipment_model" em ON ep."GN_equipment_model_FK" = em."GN_equipment_model_id"
+        JOIN "GN_equipment_manufacturer" mf ON em."GN_equipment_manufacturer_FK" = mf."GN_equipment_manufacturer_id"
+        JOIN "GN_equipment_type" et ON em."GN_equipment_type_FK" = et."GN_equipment_type_id"
+        JOIN "GN_department" dep ON ep."GN_department_FK" = dep."GN_Dep_id"
+        JOIN "GN_budget_network_item" bni ON ep."GN_budget_network_item_FK" = bni."GN_b_id"
+        JOIN "GN_departament_object" obj ON ep."GN_departament_object_FK" = obj."GN_do_id"
+        ORDER BY ep."GN_equipment_purchase_id" ASC
+      `);
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_equipment_purchase' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/equipment-lookups', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const [manufacturers, types, departments, budgetItems, objects] = await Promise.all([
+        client.query('SELECT "GN_equipment_manufacturer_id" as id, "GN_equipment_manufacturer" as name FROM "GN_equipment_manufacturer" ORDER BY "GN_equipment_manufacturer" ASC'),
+        client.query('SELECT "GN_equipment_type_id" as id, "GN_equipment_type" as name FROM "GN_equipment_type" ORDER BY "GN_equipment_type" ASC'),
+        client.query('SELECT "GN_Dep_id" as id, "GN_department" as name FROM "GN_department" ORDER BY "GN_department" ASC'),
+        client.query('SELECT "GN_b_id" as id, "GN_budget_network_item" as name FROM "GN_budget_network_item" ORDER BY "GN_budget_network_item" ASC'),
+        client.query('SELECT "GN_do_id" as id, "GN_departament_object" as name FROM "GN_departament_object" ORDER BY "GN_departament_object" ASC'),
+      ]);
+      
+      res.json({
+        manufacturers: manufacturers.rows,
+        types: types.rows,
+        departments: departments.rows,
+        budgetItems: budgetItems.rows,
+        objects: objects.rows,
+        statuses: [
+          { id: 'готово к закупке', name: 'готово к закупке' },
+          { id: 'в закупе', name: 'в закупе' },
+          { id: 'поставка', name: 'поставка' },
+          { id: 'поставленно', name: 'поставленно' }
+        ]
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch lookup data' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.get('/api/gn/invest-program', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {

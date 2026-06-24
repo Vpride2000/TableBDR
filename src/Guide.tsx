@@ -11,6 +11,7 @@ interface TableSection {
   endpoint: string;
   entity: string;
   idColumn: string;
+  columns?: string[];
   data: Row[];
   expanded: boolean;
   loaded: boolean;
@@ -18,7 +19,7 @@ interface TableSection {
   error: string | null;
 }
 
-const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: string }[] = [
+const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: string; columns?: string[] }[] = [
   { title: 'Подразделения', endpoint: '/api/gn/departments', entity: 'departments', idColumn: 'GN_Dep_id' },
   { title: 'Статьи бюджета', endpoint: '/api/gn/budget-items', entity: 'budget-items', idColumn: 'GN_b_id' },
   { title: 'Статьи бюджета УС', endpoint: '/api/gn/pao-budget-items', entity: 'pao-budget-items', idColumn: 'PAO_b_id' },
@@ -27,6 +28,9 @@ const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: s
   { title: 'Объекты', endpoint: '/api/gn/objects', entity: 'objects', idColumn: 'GN_do_id' },
   { title: 'ОКДП ТКО для ИС ПРИТ', endpoint: '/api/gn/invest-okdp-tko-is-prit', entity: 'invest-okdp-tko-is-prit', idColumn: 'GN_invest_okdp_tko_is_prit_id' },
   { title: 'Огрузочный реквизит', endpoint: '/api/gn/invest-ogruz-rekvizit', entity: 'invest-ogruz-rekvizit', idColumn: 'GN_invest_ogruz_rekvizit_id' },
+  { title: 'Производители оборудования', endpoint: '/api/gn/equipment-manufacturers', entity: 'equipment-manufacturers', idColumn: 'GN_equipment_manufacturer_id', columns: ['GN_equipment_manufacturer'] },
+  { title: 'Типы оборудования', endpoint: '/api/gn/equipment-types', entity: 'equipment-types', idColumn: 'GN_equipment_type_id', columns: ['GN_equipment_type'] },
+  { title: 'Модели оборудования', endpoint: '/api/gn/equipment-models', entity: 'equipment-models', idColumn: 'GN_equipment_model_id', columns: ['GN_equipment_model', 'GN_equipment_manufacturer_FK', 'GN_equipment_type_FK'] },
 ];
 
 const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: string; valueKey: string; labelKey: string }>> = {
@@ -44,6 +48,18 @@ const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: stri
       labelKey: 'GN_department',
     },
   },
+  'equipment-models': {
+    GN_equipment_manufacturer_FK: {
+      sourceEntity: 'equipment-manufacturers',
+      valueKey: 'GN_equipment_manufacturer_id',
+      labelKey: 'GN_equipment_manufacturer',
+    },
+    GN_equipment_type_FK: {
+      sourceEntity: 'equipment-types',
+      valueKey: 'GN_equipment_type_id',
+      labelKey: 'GN_equipment_type',
+    },
+  },
 };
 
 function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: TableSection; onSectionRowsUpdate: (endpoint: string, rows: Row[]) => void; fkOptions: Record<string, SelectOption[]> }) {
@@ -58,7 +74,9 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
   if (section.loading) return <p className="hint">Загрузка...</p>;
   if (section.error)   return <p className="hint hint--error">Ошибка: {section.error}</p>;
 
-  const columns = section.data.length > 0 ? Object.keys(section.data[0]) : [section.idColumn];
+  const columns = section.data.length > 0
+    ? Object.keys(section.data[0])
+    : section.columns ?? [section.idColumn];
 
   function startEdit(row: Row): void {
     setEditingRowId(Number(row[section.idColumn]));

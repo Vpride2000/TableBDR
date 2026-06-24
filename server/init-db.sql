@@ -66,6 +66,45 @@ CREATE TABLE IF NOT EXISTS "GN_invest_ogruz_rekvizit" (
 
 COMMENT ON TABLE "GN_invest_ogruz_rekvizit" IS 'Огрузочный реквизит';
 
+CREATE TABLE IF NOT EXISTS "GN_equipment_manufacturer" (
+  "GN_equipment_manufacturer_id" SERIAL NOT NULL UNIQUE,
+  "GN_equipment_manufacturer" TEXT NOT NULL,
+  PRIMARY KEY("GN_equipment_manufacturer_id")
+);
+
+COMMENT ON TABLE "GN_equipment_manufacturer" IS 'Справочник производителей оборудования';
+
+CREATE TABLE IF NOT EXISTS "GN_equipment_type" (
+  "GN_equipment_type_id" SERIAL NOT NULL UNIQUE,
+  "GN_equipment_type" TEXT NOT NULL,
+  PRIMARY KEY("GN_equipment_type_id")
+);
+
+COMMENT ON TABLE "GN_equipment_type" IS 'Справочник типов оборудования';
+
+CREATE TABLE IF NOT EXISTS "GN_equipment_model" (
+  "GN_equipment_model_id" SERIAL NOT NULL UNIQUE,
+  "GN_equipment_model" TEXT NOT NULL,
+  "GN_equipment_manufacturer_FK" INTEGER NOT NULL REFERENCES "GN_equipment_manufacturer"("GN_equipment_manufacturer_id") ON DELETE NO ACTION,
+  "GN_equipment_type_FK" INTEGER NOT NULL REFERENCES "GN_equipment_type"("GN_equipment_type_id") ON DELETE NO ACTION,
+  PRIMARY KEY("GN_equipment_model_id")
+);
+
+COMMENT ON TABLE "GN_equipment_model" IS 'Справочник моделей оборудования';
+
+CREATE TABLE IF NOT EXISTS "GN_equipment_purchase" (
+  "GN_equipment_purchase_id" SERIAL NOT NULL UNIQUE,
+  "GN_equipment_model_FK" INTEGER NOT NULL REFERENCES "GN_equipment_model"("GN_equipment_model_id") ON DELETE NO ACTION,
+  "GN_department_FK" INTEGER NOT NULL REFERENCES "GN_department"("GN_Dep_id") ON DELETE NO ACTION,
+  "GN_budget_network_item_FK" INTEGER NOT NULL REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE NO ACTION,
+  "GN_departament_object_FK" INTEGER NOT NULL REFERENCES "GN_departament_object"("GN_do_id") ON DELETE NO ACTION,
+  "GN_purchase_status" TEXT NOT NULL DEFAULT 'готово к закупке',
+  "GN_purchase_quantity" INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY("GN_equipment_purchase_id")
+);
+
+COMMENT ON TABLE "GN_equipment_purchase" IS 'Закупки оборудования по подразделениям и объектам';
+
 CREATE TABLE IF NOT EXISTS "GN_contracts" (
   "GN_contract_id" SERIAL NOT NULL UNIQUE,
   "GN_contract_contractor_FK" INTEGER NOT NULL REFERENCES "GN_contractor"("GN_c_id") ON DELETE NO ACTION,
@@ -250,6 +289,45 @@ INSERT INTO "GN_invest_ogruz_rekvizit" ("GN_invest_ogruz_rekvizit") VALUES
   ('Реквизит В'),
   ('Реквизит Г'),
   ('Реквизит Д');
+
+INSERT INTO "GN_equipment_manufacturer" ("GN_equipment_manufacturer") VALUES
+  ('Cisco'),
+  ('HP'),
+  ('Huawei'),
+  ('Yealink'),
+  ('Ubiquiti');
+
+INSERT INTO "GN_equipment_type" ("GN_equipment_type") VALUES
+  ('Коммутаторы'),
+  ('Телефоны'),
+  ('Маршрутизаторы'),
+  ('Точки доступа'),
+  ('Серверы');
+
+INSERT INTO "GN_equipment_model" (
+  "GN_equipment_model",
+  "GN_equipment_manufacturer_FK",
+  "GN_equipment_type_FK"
+) VALUES
+  ('Cisco Catalyst 9300', 1, 1),
+  ('HP OfficeConnect 1920S', 2, 1),
+  ('Huawei S5735-L24T4X', 3, 1),
+  ('Yealink SIP-T54W', 4, 2),
+  ('Ubiquiti UniFi U6-Pro', 5, 4);
+
+INSERT INTO "GN_equipment_purchase" (
+  "GN_equipment_model_FK",
+  "GN_department_FK",
+  "GN_budget_network_item_FK",
+  "GN_departament_object_FK",
+  "GN_purchase_status",
+  "GN_purchase_quantity"
+) VALUES
+  (1, 1, 4, 1, 'готово к закупке', 2),
+  (2, 2, 4, 2, 'в закупе', 1),
+  (3, 1, 4, 1, 'поставка', 3),
+  (4, 3, 2, 5, 'поставленно', 1),
+  (5, 2, 4, 2, 'готово к закупке', 2);
 
 -- Initial contract records (requires GN_contractor and GN_dogovor rows to exist).
 INSERT INTO "GN_contracts" (
