@@ -22,10 +22,6 @@ export async function ensureDatabaseTables(client: Client): Promise<void> {
     'GN_contract_additional_agreements',
     'GN_bdr_limit_calculation',
     'GN_bdr_monthly_forecast',
-    'GN_equipment_manufacturer',
-    'GN_equipment_type',
-    'GN_equipment_model',
-    'GN_equipment_purchase',
   ];
 
   const result = await client.query<{ table_name: string }>(
@@ -41,6 +37,30 @@ export async function ensureDatabaseTables(client: Client): Promise<void> {
 
   if (missingTables.length > 0) {
     throw new Error(`Required database tables are missing: ${missingTables.join(', ')}`);
+  }
+}
+
+export async function ensureContractColumns(client: Client): Promise<void> {
+  const requiredColumns = [
+    'GN_contract_date',
+    'GN_contract_term_from',
+    'GN_contract_term_to',
+  ];
+
+  const result = await client.query<{ column_name: string }>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'GN_contracts'
+        AND column_name = ANY($1::text[])`,
+    [requiredColumns]
+  );
+
+  const existingColumns = new Set(result.rows.map((row) => row.column_name));
+  const missingColumns = requiredColumns.filter((columnName) => !existingColumns.has(columnName));
+
+  for (const columnName of missingColumns) {
+    await client.query(`ALTER TABLE "GN_contracts" ADD COLUMN IF NOT EXISTS "${columnName}" DATE`);
   }
 }
 

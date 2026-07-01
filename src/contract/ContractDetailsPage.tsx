@@ -16,7 +16,10 @@ type ContractInfo = {
   GN_contract_state: string
   GN_contract_status_updated_at: string
   GN_contract_approval_status?: string
-  GN_contract_name?: string
+  GN_contract_name?: string;
+  GN_contract_date?: string;
+  GN_contract_term_from?: string;
+  GN_contract_term_to?: string
 }
 
 interface ContractDetailsPageProps {
@@ -386,6 +389,18 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
               <div className="contract-details-meta-row">
                 <strong>Состояние:</strong> {contractInfo.GN_contract_state}
               </div>
+
+              <div className="contract-details-meta-row">
+                <strong>Дата договора:</strong> {contractInfo.GN_contract_date}
+              </div> 
+
+              <div className="contract-details-meta-row">
+                <strong>Дата начала действия</strong> {contractInfo.GN_contract_term_from}
+              </div> 
+              <div className="contract-details-meta-row">
+                <strong>Дата окончания действия:</strong> {contractInfo.GN_contract_term_to}
+              </div>
+
               <div className="contract-details-meta-row">
                 <strong>Дата запуска в СЭД:</strong> {contractInfo.GN_contract_sed_launch_date}
               </div>

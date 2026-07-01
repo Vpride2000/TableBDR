@@ -92,19 +92,6 @@ CREATE TABLE IF NOT EXISTS "GN_equipment_model" (
 
 COMMENT ON TABLE "GN_equipment_model" IS 'Справочник моделей оборудования';
 
-CREATE TABLE IF NOT EXISTS "GN_equipment_purchase" (
-  "GN_equipment_purchase_id" SERIAL NOT NULL UNIQUE,
-  "GN_equipment_model_FK" INTEGER NOT NULL REFERENCES "GN_equipment_model"("GN_equipment_model_id") ON DELETE NO ACTION,
-  "GN_department_FK" INTEGER NOT NULL REFERENCES "GN_department"("GN_Dep_id") ON DELETE NO ACTION,
-  "GN_budget_network_item_FK" INTEGER NOT NULL REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE NO ACTION,
-  "GN_departament_object_FK" INTEGER NOT NULL REFERENCES "GN_departament_object"("GN_do_id") ON DELETE NO ACTION,
-  "GN_purchase_status" TEXT NOT NULL DEFAULT 'готово к закупке',
-  "GN_purchase_quantity" INTEGER NOT NULL DEFAULT 1,
-  PRIMARY KEY("GN_equipment_purchase_id")
-);
-
-COMMENT ON TABLE "GN_equipment_purchase" IS 'Закупки оборудования по подразделениям и объектам';
-
 CREATE TABLE IF NOT EXISTS "GN_contracts" (
   "GN_contract_id" SERIAL NOT NULL UNIQUE,
   "GN_contract_contractor_FK" INTEGER NOT NULL REFERENCES "GN_contractor"("GN_c_id") ON DELETE NO ACTION,
@@ -113,6 +100,9 @@ CREATE TABLE IF NOT EXISTS "GN_contracts" (
   "GN_contract_asez_load_date" DATE NOT NULL,
   "GN_contract_state" TEXT NOT NULL,
   "GN_contract_status_updated_at" DATE NOT NULL,
+  "GN_contract_date" DATE,
+  "GN_contract_term_from" DATE,
+  "GN_contract_term_to" DATE,
   "GN_contract_approval_status" TEXT NOT NULL DEFAULT 'действующий',
   PRIMARY KEY("GN_contract_id")
 );
@@ -170,6 +160,9 @@ CREATE TABLE IF NOT EXISTS "GN_bdr" (
   "GN_bdr_ed.izm" TEXT NOT NULL,
   "GN_bdr_kol-vo" NUMERIC NOT NULL,
   "GN_bdr_limit" NUMERIC NOT NULL,
+  "GN_bdr_bdr25_corr" NUMERIC,
+  "GN_bdr_bdr26" NUMERIC,
+  "GN_bdr_bdr26_corr" NUMERIC,
   "GN_bdr_edin.limit" NUMERIC NOT NULL,
   "GN_bdr_comments" TEXT NOT NULL,
   PRIMARY KEY("GN_bdr_ID")
@@ -314,20 +307,6 @@ INSERT INTO "GN_equipment_model" (
   ('Huawei S5735-L24T4X', 3, 1),
   ('Yealink SIP-T54W', 4, 2),
   ('Ubiquiti UniFi U6-Pro', 5, 4);
-
-INSERT INTO "GN_equipment_purchase" (
-  "GN_equipment_model_FK",
-  "GN_department_FK",
-  "GN_budget_network_item_FK",
-  "GN_departament_object_FK",
-  "GN_purchase_status",
-  "GN_purchase_quantity"
-) VALUES
-  (1, 1, 4, 1, 'готово к закупке', 2),
-  (2, 2, 4, 2, 'в закупе', 1),
-  (3, 1, 4, 1, 'поставка', 3),
-  (4, 3, 2, 5, 'поставленно', 1),
-  (5, 2, 4, 2, 'готово к закупке', 2);
 
 -- Initial contract records (requires GN_contractor and GN_dogovor rows to exist).
 INSERT INTO "GN_contracts" (

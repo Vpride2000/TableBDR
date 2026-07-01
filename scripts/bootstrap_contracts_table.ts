@@ -44,6 +44,9 @@ async function main(): Promise<void> {
         "GN_contract_asez_load_date" DATE NOT NULL,
         "GN_contract_state" TEXT NOT NULL,
         "GN_contract_status_updated_at" DATE NOT NULL,
+        "GN_contract_date" DATE,
+        "GN_contract_term_from" DATE,
+        "GN_contract_term_to" DATE,
         PRIMARY KEY("GN_contract_id")
       )
     `);

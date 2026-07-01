@@ -36,9 +36,14 @@ const BDR_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> 
 };
 
 const LOCKED_EDIT_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Лимит', 'Един. лимит']);
-const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Един. лимит', 'Предмет договора']);
+const EXTRA_NUMERIC_COLUMNS = new Set(['БДР25корр', 'БДР26', 'БДР26корр']);
+const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Един. лимит', 'Предмет договора', 'Примечания']);
 const COLUMN_TITLES: Record<string, string> = {
   GN_bdr_ID: '№',
+  Лимит: 'БДР25',
+  БДР25корр: 'БДР25корр',
+  БДР26: 'БДР26',
+  БДР26корр: 'БДР26корр',
 };
 
 interface SortState {
@@ -174,10 +179,19 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
     return next;
   }, [columns]);
 
-  const visibleMainColumns = useMemo(
-    () => orderedColumns.filter((col) => !MAIN_HIDDEN_COLUMNS.has(col)),
-    [orderedColumns]
-  );
+  const visibleMainColumns = useMemo(() => {
+    const withExtraColumns = [...orderedColumns];
+    const limitIndex = withExtraColumns.indexOf('Лимит');
+
+    EXTRA_NUMERIC_COLUMNS.forEach((column) => {
+      if (withExtraColumns.includes(column)) return;
+
+      const insertAt = limitIndex === -1 ? withExtraColumns.length : limitIndex + 1;
+      withExtraColumns.splice(insertAt, 0, column);
+    });
+
+    return withExtraColumns.filter((col) => !MAIN_HIDDEN_COLUMNS.has(col));
+  }, [orderedColumns]);
 
   const sortedData = useMemo(() => {
     if (!sort) return data;
@@ -362,6 +376,16 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
     });
   }
 
+  function formatCellValue(column: string, value: unknown): string {
+    if (column === 'Лимит' || EXTRA_NUMERIC_COLUMNS.has(column)) {
+      const trimmed = String(value ?? '').trim();
+      if (trimmed === '') return '';
+      return formatFinancialValue(value);
+    }
+
+    return String(value ?? '');
+  }
+
   function getSelectOptionsForColumn(column: string): SelectOption[] {
     const config = BDR_SELECT_CONFIG[column];
     if (!config) return [];
@@ -515,12 +539,19 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
 
       {!loading && !error && data.length > 0 && showMainTable && (
         <>
+          <div className="budget-actions budget-actions--top-right">
+            <button type="button" className="page-action-btn" onClick={onAddRow}>
+              Добавить строку
+            </button>
+          </div>
+
           <div className="guide-table-wrap">
             <table className="guide-table table-compact">
               <thead>
                 <tr>
                   {visibleMainColumns.map((col) => {
                     const isLimitColumn = col === 'Лимит';
+                    const displayName = COLUMN_TITLES[col] ?? col;
 
                     return (
                       <th key={col}>
@@ -530,7 +561,7 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
                           onClick={() => toggleSort(col)}
                         >
                           <span className={isLimitColumn ? 'budget-limit-header' : undefined}>
-                            {COLUMN_TITLES[col] ?? col}
+                            {displayName}
                             {isLimitColumn && (
                               <span className="budget-limit-header-total">
                                 {FINANCIAL_NUMBER_FORMATTER.format(filteredLimitTotal)}
@@ -582,26 +613,34 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
                                 (needsContractor && !draft['Контрагент']);
 
                               return (
-                            <select
-                              value={String(draft[col] ?? '')}
-                              onChange={(event) => updateDraft(col, event.target.value)}
-                              disabled={disabled}
-                            >
-                              <option value="">
-                                {needsDepartment && !draft['Подразделение']
-                                  ? 'Сначала выберите Подразделение'
-                                  : needsContractor && !draft['Контрагент']
-                                    ? 'Сначала выберите Контрагента'
-                                    : 'Выберите значение'}
-                              </option>
-                              {options.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
+                                <select
+                                  value={String(draft[col] ?? '')}
+                                  onChange={(event) => updateDraft(col, event.target.value)}
+                                  disabled={disabled}
+                                >
+                                  <option value="">
+                                    {needsDepartment && !draft['Подразделение']
+                                      ? 'Сначала выберите Подразделение'
+                                      : needsContractor && !draft['Контрагент']
+                                        ? 'Сначала выберите Контрагента'
+                                        : 'Выберите значение'}
+                                  </option>
+                                  {options.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
                               );
                             })()
+                          ) : isEditing && col !== 'GN_bdr_ID' && EXTRA_NUMERIC_COLUMNS.has(col) ? (
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={String(draft[col] ?? '')}
+                              onChange={(event) => updateDraft(col, event.target.value)}
+                              placeholder="необязательно"
+                            />
                           ) : isEditing && col !== 'GN_bdr_ID' ? (
                             <input
                               value={String(draft[col] ?? '')}
@@ -648,7 +687,7 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
                               {String(row[col] ?? '')}
                             </button>
                           ) : (
-                            String((isEditing ? draft[col] : row[col]) ?? '')
+                            formatCellValue(col, isEditing ? draft[col] : row[col])
                           )}
                         </td>
                       ))}
@@ -668,12 +707,6 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
               </tbody>
             </table>
             {saveError && <p className="hint hint--error">Ошибка редактирования: {saveError}</p>}
-          </div>
-
-          <div className="budget-actions">
-            <button type="button" className="page-action-btn" onClick={onAddRow}>
-              Добавить строку
-            </button>
           </div>
         </>
       )}

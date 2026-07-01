@@ -15,6 +15,9 @@ type ContractRow = {
   GN_contract_state: string
   GN_contract_status_updated_at: string
   GN_contract_approval_status?: string
+  GN_contract_date?: string
+  GN_contract_term_from?: string
+  GN_contract_term_to?: string
 }
 
 type ContractAgreement = {
@@ -30,6 +33,9 @@ type ContractAgreement = {
 const COLUMNS = [
   { key: 'GN_contract_contractor_FK', label: 'контрагент', kind: 'lookup' as const },
   { key: 'GN_contract_dogovor_FK', label: 'договор', kind: 'lookup' as const },
+  { key: 'GN_contract_date', label: 'дата договора', kind: 'date' as const },
+  { key: 'GN_contract_term_from', label: 'срок дейстивия С', kind: 'date' as const },
+  { key: 'GN_contract_term_to', label: 'срок действия ПО', kind: 'date' as const },
   { key: 'GN_contract_sed_launch_date', label: 'дата запуска в СЭД', kind: 'date' as const },
   { key: 'GN_contract_asez_load_date', label: 'дата загрузки в АСЭЗ', kind: 'date' as const },
   { key: 'GN_contract_state', label: 'состояние', kind: 'text' as const },
@@ -55,6 +61,9 @@ function toRow(data: Row): ContractRow {
     GN_contract_state: String(data.GN_contract_state ?? ''),
     GN_contract_status_updated_at: normalizeDateValue(data.GN_contract_status_updated_at),
     GN_contract_approval_status: String(data.GN_contract_approval_status ?? 'действующий'),
+    GN_contract_date: normalizeDateValue(data.GN_contract_date),
+    GN_contract_term_from: normalizeDateValue(data.GN_contract_term_from),
+    GN_contract_term_to: normalizeDateValue(data.GN_contract_term_to),
   }
 }
 
@@ -428,7 +437,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                 className="page-action-btn page-action-btn--success"
                 onClick={() => setShowAddContractForm((prev) => !prev)}
               >
-                {showAddContractForm ? 'Отмена' : 'Добавить договор'}
+                {showAddContractForm ? 'Отмена' : 'Добавить договор на контроль'}
               </button>
             </div>
             {showAddContractForm && (
@@ -554,7 +563,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <thead>
                 <tr>
                   <th>№</th>
-                  {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date' && c.kind !== 'status').map((column) => (
+                  {COLUMNS.filter(c => c.kind !== 'status').map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
                   <th>ДС</th>
@@ -566,7 +575,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                     <Fragment key={`contract-block-${row.GN_contract_id}`}>
                       <tr key={`contract-${row.GN_contract_id}`}>
                     <td className="invest-program-row-number">{rowIndex + 1}</td>
-                    {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date' && c.kind !== 'status').map((column) => {
+                    {COLUMNS.filter((c) => c.kind !== 'status').map((column) => {
                         if (column.kind === 'lookup') {
                           const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
                           const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
@@ -789,7 +798,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <thead>
                 <tr>
                   <th>№</th>
-                  {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date' && c.kind !== 'status').map((column) => (
+                  {COLUMNS.filter((c) => c.kind !== 'status').map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
                   <th>Действия</th>
@@ -802,7 +811,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                     <Fragment key={`archive-contract-block-${row.GN_contract_id}`}>
                       <tr key={`archive-contract-${row.GN_contract_id}`}>
                         <td className="invest-program-row-number">{rowIndex + 1}</td>
-                        {COLUMNS.filter(c => c.key !== 'GN_contract_sed_launch_date' && c.key !== 'GN_contract_asez_load_date' && c.kind !== 'status').map((column) => {
+                        {COLUMNS.filter((c) => c.kind !== 'status').map((column) => {
                           if (column.kind === 'lookup') {
                             const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
                             const label = displayLookupLabel(options, row[column.key as keyof ContractRow])

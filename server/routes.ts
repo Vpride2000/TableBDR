@@ -325,6 +325,9 @@ export function setupRoutes(app: Express): void {
       GN_contract_state?: string;
       GN_contract_status_updated_at?: string;
       GN_contract_approval_status?: string;
+      GN_contract_date?: string;
+      GN_contract_term_from?: string;
+      GN_contract_term_to?: string;
     };
 
     if (!payload || !payload.GN_contract_dogovor_FK) {
@@ -345,8 +348,11 @@ export function setupRoutes(app: Express): void {
            "GN_contract_asez_load_date",
            "GN_contract_state",
            "GN_contract_status_updated_at",
-           "GN_contract_approval_status"
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+           "GN_contract_approval_status",
+           "GN_contract_date",
+           "GN_contract_term_from",
+           "GN_contract_term_to"
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          RETURNING *,
            (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name"`,
         [
@@ -357,6 +363,9 @@ export function setupRoutes(app: Express): void {
           payload.GN_contract_state || '',
           statusUpdatedAt,
           approvalStatus,
+          payload.GN_contract_date ?? null,
+          payload.GN_contract_term_from ?? null,
+          payload.GN_contract_term_to ?? null,
         ]
       );
 
@@ -379,6 +388,9 @@ export function setupRoutes(app: Express): void {
       GN_contract_state: string;
       GN_contract_status_updated_at?: string;
       GN_contract_approval_status?: string;
+      GN_contract_date?: string;
+      GN_contract_term_from?: string;
+      GN_contract_term_to?: string;
     };
 
     if (!Number.isFinite(id)
@@ -406,8 +418,11 @@ export function setupRoutes(app: Express): void {
            "GN_contract_asez_load_date" = $4,
            "GN_contract_state" = $5,
            "GN_contract_status_updated_at" = $6,
-           "GN_contract_approval_status" = $7
-         WHERE "GN_contract_id" = $8
+           "GN_contract_approval_status" = $7,
+           "GN_contract_date" = $8,
+           "GN_contract_term_from" = $9,
+           "GN_contract_term_to" = $10
+         WHERE "GN_contract_id" = $11
          RETURNING *,
            (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name"`,
         [
@@ -418,6 +433,9 @@ export function setupRoutes(app: Express): void {
           payload.GN_contract_state,
           statusUpdatedAt,
           approvalStatus,
+          payload.GN_contract_date ?? null,
+          payload.GN_contract_term_from ?? null,
+          payload.GN_contract_term_to ?? null,
           id,
         ]
       );
@@ -659,74 +677,6 @@ export function setupRoutes(app: Express): void {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to fetch GN_equipment_model' });
-    } finally {
-      await client.end();
-    }
-  });
-
-  app.get('/api/gn/equipment-purchases', async (req: Request, res: Response): Promise<void> => {
-    const client = await createDbClient();
-    try {
-      const result = await client.query(`
-        SELECT
-          ep."GN_equipment_purchase_id",
-          em."GN_equipment_model" AS equipment_model,
-          mf."GN_equipment_manufacturer" AS manufacturer,
-          et."GN_equipment_type" AS equipment_type,
-          dep."GN_department" AS department,
-          bni."GN_budget_network_item" AS budget_item,
-          obj."GN_departament_object" AS object,
-          ep."GN_purchase_status" AS purchase_status,
-          ep."GN_purchase_quantity" AS purchase_quantity,
-          ep."GN_equipment_model_FK",
-          ep."GN_department_FK",
-          ep."GN_budget_network_item_FK",
-          ep."GN_departament_object_FK"
-        FROM "GN_equipment_purchase" ep
-        JOIN "GN_equipment_model" em ON ep."GN_equipment_model_FK" = em."GN_equipment_model_id"
-        JOIN "GN_equipment_manufacturer" mf ON em."GN_equipment_manufacturer_FK" = mf."GN_equipment_manufacturer_id"
-        JOIN "GN_equipment_type" et ON em."GN_equipment_type_FK" = et."GN_equipment_type_id"
-        JOIN "GN_department" dep ON ep."GN_department_FK" = dep."GN_Dep_id"
-        JOIN "GN_budget_network_item" bni ON ep."GN_budget_network_item_FK" = bni."GN_b_id"
-        JOIN "GN_departament_object" obj ON ep."GN_departament_object_FK" = obj."GN_do_id"
-        ORDER BY ep."GN_equipment_purchase_id" ASC
-      `);
-      res.json(result.rows);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Failed to fetch GN_equipment_purchase' });
-    } finally {
-      await client.end();
-    }
-  });
-
-  app.get('/api/gn/equipment-lookups', async (req: Request, res: Response): Promise<void> => {
-    const client = await createDbClient();
-    try {
-      const [manufacturers, types, departments, budgetItems, objects] = await Promise.all([
-        client.query('SELECT "GN_equipment_manufacturer_id" as id, "GN_equipment_manufacturer" as name FROM "GN_equipment_manufacturer" ORDER BY "GN_equipment_manufacturer" ASC'),
-        client.query('SELECT "GN_equipment_type_id" as id, "GN_equipment_type" as name FROM "GN_equipment_type" ORDER BY "GN_equipment_type" ASC'),
-        client.query('SELECT "GN_Dep_id" as id, "GN_department" as name FROM "GN_department" ORDER BY "GN_department" ASC'),
-        client.query('SELECT "GN_b_id" as id, "GN_budget_network_item" as name FROM "GN_budget_network_item" ORDER BY "GN_budget_network_item" ASC'),
-        client.query('SELECT "GN_do_id" as id, "GN_departament_object" as name FROM "GN_departament_object" ORDER BY "GN_departament_object" ASC'),
-      ]);
-      
-      res.json({
-        manufacturers: manufacturers.rows,
-        types: types.rows,
-        departments: departments.rows,
-        budgetItems: budgetItems.rows,
-        objects: objects.rows,
-        statuses: [
-          { id: 'готово к закупке', name: 'готово к закупке' },
-          { id: 'в закупе', name: 'в закупе' },
-          { id: 'поставка', name: 'поставка' },
-          { id: 'поставленно', name: 'поставленно' }
-        ]
-      });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Failed to fetch lookup data' });
     } finally {
       await client.end();
     }
@@ -1110,6 +1060,30 @@ export function setupRoutes(app: Express): void {
         updates.push({ column: 'GN_bdr_limit', value });
       }
 
+      if (payload['БДР25корр'] !== undefined) {
+        const value = payload['БДР25корр'] === '' ? null : Number(payload['БДР25корр']);
+        if (value !== null && Number.isNaN(value)) {
+          throw new Error('Invalid БДР25корр');
+        }
+        updates.push({ column: 'GN_bdr_bdr25_corr', value });
+      }
+
+      if (payload['БДР26'] !== undefined) {
+        const value = payload['БДР26'] === '' ? null : Number(payload['БДР26']);
+        if (value !== null && Number.isNaN(value)) {
+          throw new Error('Invalid БДР26');
+        }
+        updates.push({ column: 'GN_bdr_bdr26', value });
+      }
+
+      if (payload['БДР26корр'] !== undefined) {
+        const value = payload['БДР26корр'] === '' ? null : Number(payload['БДР26корр']);
+        if (value !== null && Number.isNaN(value)) {
+          throw new Error('Invalid БДР26корр');
+        }
+        updates.push({ column: 'GN_bdr_bdr26_corr', value });
+      }
+
       if (payload['Един. лимит'] !== undefined) {
         const value = Number(payload['Един. лимит']);
         if (Number.isNaN(value)) {
@@ -1337,6 +1311,9 @@ export function setupRoutes(app: Express): void {
       ed_izm,
       kol_vo,
       limit,
+      bdr25_corr,
+      bdr26,
+      bdr26_corr,
       edin_limit,
       comments,
     } = req.body;
@@ -1360,11 +1337,17 @@ export function setupRoutes(app: Express): void {
 
     const kolVoNumber = Number(kol_vo);
     const limitNumber = Number(limit);
+    const bdr25CorrNumber = bdr25_corr == null || bdr25_corr === '' ? null : Number(bdr25_corr);
+    const bdr26Number = bdr26 == null || bdr26 === '' ? null : Number(bdr26);
+    const bdr26CorrNumber = bdr26_corr == null || bdr26_corr === '' ? null : Number(bdr26_corr);
     const edinLimitNumber = Number(edin_limit);
 
     if (
       Number.isNaN(kolVoNumber) ||
       Number.isNaN(limitNumber) ||
+      (bdr25CorrNumber !== null && Number.isNaN(bdr25CorrNumber)) ||
+      (bdr26Number !== null && Number.isNaN(bdr26Number)) ||
+      (bdr26CorrNumber !== null && Number.isNaN(bdr26CorrNumber)) ||
       Number.isNaN(edinLimitNumber)
     ) {
       res.status(400).json({ error: 'Numeric fields are invalid' });
@@ -1436,9 +1419,12 @@ export function setupRoutes(app: Express): void {
            "GN_bdr_ed.izm",
            "GN_bdr_kol-vo",
            "GN_bdr_limit",
+           "GN_bdr_bdr25_corr",
+           "GN_bdr_bdr26",
+           "GN_bdr_bdr26_corr",
            "GN_bdr_edin.limit",
            "GN_bdr_comments"
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING "GN_bdr_ID" AS id`,
         [
           paoId,
@@ -1451,6 +1437,9 @@ export function setupRoutes(app: Express): void {
           ed_izm,
           kolVoNumber,
           limitNumber,
+          bdr25CorrNumber,
+          bdr26Number,
+          bdr26CorrNumber,
           edinLimitNumber,
           comments ?? '',
         ]

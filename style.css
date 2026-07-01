@@ -169,6 +169,11 @@ p {
   margin: 8px 0 16px;
 }
 
+.budget-actions--top-right {
+  justify-content: flex-end;
+  margin: 0 0 16px;
+}
+
 .page-action-btn {
   cursor: pointer;
   border: 1px solid #1d4ed8;
@@ -340,6 +345,14 @@ p {
 .object-summary-table td {
   white-space: nowrap;
 }
+
+
+.contract-details-contract-meta
+{
+  text-align: left;
+}
+
+
 
 .contract-details-header {
   display: flex;
@@ -520,20 +533,6 @@ p {
   background: #f0f9ff;
   min-height: 100%;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 .budget-summary-wrap {
   margin-bottom: 14px;

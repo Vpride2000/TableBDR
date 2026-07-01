@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils'
-import { EquipmentPurchaseTable } from './EquipmentPurchaseTable'
 
 // Страница инвестпрограммы.
 // Генерирует демонстрационную таблицу с инвестиционными позициями,
@@ -27,6 +26,8 @@ const SUPPLIER_COLUMN = 'поставщик'
 const PF_NPF_COLUMN = 'ПФ/НПФ'
 const NAME_COLUMN = 'Наименование'
 const MAIN_TEXT_EDIT_COLUMNS = new Set(['Кол-во', 'Статус', 'оплата', 'в бюджете'])
+
+const STATUS_OPTIONS = ['готово к заккупке', 'в закупе', 'поставка', 'поставленно']
 
 type LookupOption = { value: string; label: string }
 type InvestRow = Record<string, string>
@@ -66,6 +67,11 @@ export default function InvestProgramTablePage() {
   const [ogruzOptions, setOgruzOptions] = useState<LookupOption[]>([])
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([])
   const [departmentOptions, setDepartmentOptions] = useState<LookupOption[]>([])
+  const [budgetOptions, setBudgetOptions] = useState<LookupOption[]>([])
+  const [objectOptions, setObjectOptions] = useState<LookupOption[]>([])
+  const [equipmentRows, setEquipmentRows] = useState<InvestRow[]>([])
+  const [loadingEquipment, setLoadingEquipment] = useState(true)
+  const [equipmentError, setEquipmentError] = useState<string | null>(null)
   // Статусы загрузки и ошибки для основной таблицы и для справочников.
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -154,6 +160,18 @@ export default function InvestProgramTablePage() {
         const contractorRows = (await contractorRes.json()) as Array<Record<string, unknown>>
         const departmentRows = (await departmentRes.json()) as Array<Record<string, unknown>>
 
+        // Доп. справочники для таблицы моделей оборудования
+        const [budgetRes, objectsRes] = await Promise.all([
+          fetch('/api/gn/budget-items'),
+          fetch('/api/gn/objects'),
+        ])
+
+        if (!budgetRes.ok) throw new Error(formatHttpError(budgetRes.status))
+        if (!objectsRes.ok) throw new Error(formatHttpError(objectsRes.status))
+
+        const budgetRows = (await budgetRes.json()) as Array<Record<string, unknown>>
+        const objectsRows = (await objectsRes.json()) as Array<Record<string, unknown>>
+
         const nextOkdpOptions = mapLookupOptions(
           okdpRows,
           'GN_invest_okdp_tko_is_prit_id',
@@ -178,10 +196,15 @@ export default function InvestProgramTablePage() {
           'GN_department'
         )
 
+        const nextBudgetOptions = mapLookupOptions(budgetRows, 'GN_b_id', 'GN_budget_network_item')
+        const nextObjectOptions = mapLookupOptions(objectsRows, 'GN_do_id', 'GN_departament_object')
+
         setOkdpOptions(nextOkdpOptions)
         setOgruzOptions(nextOgruzOptions)
         setContractorOptions(nextContractorOptions)
         setDepartmentOptions(nextDepartmentOptions)
+        setBudgetOptions(nextBudgetOptions)
+        setObjectOptions(nextObjectOptions)
 
         setRows((prevRows) =>
           prevRows.map((row, index) => ({
@@ -200,6 +223,52 @@ export default function InvestProgramTablePage() {
     }
 
     void loadLookups()
+  }, [])
+
+  useEffect(() => {
+    // Загружаем модели оборудования для второй сводной таблицы
+    async function loadEquipmentModels(): Promise<void> {
+      setLoadingEquipment(true)
+      setEquipmentError(null)
+
+      try {
+        const [modelsRes, manuRes, typeRes] = await Promise.all([
+          fetch('/api/gn/equipment-models'),
+          fetch('/api/gn/equipment-manufacturers'),
+          fetch('/api/gn/equipment-types'),
+        ])
+
+        if (!modelsRes.ok) throw new Error(formatHttpError(modelsRes.status))
+        if (!manuRes.ok) throw new Error(formatHttpError(manuRes.status))
+        if (!typeRes.ok) throw new Error(formatHttpError(typeRes.status))
+
+        const models = (await modelsRes.json()) as Array<Record<string, unknown>>
+        const manu = (await manuRes.json()) as Array<Record<string, unknown>>
+        const types = (await typeRes.json()) as Array<Record<string, unknown>>
+
+        const manuMap = new Map(manu.map((r) => [String(r.GN_equipment_manufacturer_id), String(r.GN_equipment_manufacturer || '')]))
+        const typeMap = new Map(types.map((r) => [String(r.GN_equipment_type_id), String(r.GN_equipment_type || '')]))
+
+        const mapped = models.map((row) => ({
+          'Модель': String(row.GN_equipment_model ?? ''),
+          'Производитель': manuMap.get(String(row.GN_equipment_manufacturer_FK ?? '')) ?? '',
+          'Тип': typeMap.get(String(row.GN_equipment_type_FK ?? '')) ?? '',
+          'Подразделение': '',
+          'Статья бюджета': '',
+          'Объект': '',
+          'Статус': 'готово к заккупке',
+          'id': String(row.GN_equipment_model_id ?? ''),
+        }))
+
+        setEquipmentRows(mapped)
+      } catch (err) {
+        setEquipmentError(err instanceof Error ? err.message : 'Не удалось загрузить модели оборудования')
+      } finally {
+        setLoadingEquipment(false)
+      }
+    }
+
+    void loadEquipmentModels()
   }, [])
 
   /**
@@ -258,17 +327,16 @@ export default function InvestProgramTablePage() {
   const popupRow = activePopupRow()
 
   return (
-    <>
-      <section className="guide invest-program">
-        <div className="guide-section">
-          <h2>Инвест.программа: таблица</h2>
-          {loading && <p className="hint">Загрузка данных...</p>}
-          {error && <p className="hint hint--error">Ошибка: {error}</p>}
-          {loadingLookups && <p className="hint">Загрузка справочников...</p>}
-          {lookupError && <p className="hint hint--error">Ошибка: {lookupError}</p>}
+    <section className="guide invest-program">
+      <div className="guide-section">
+        <h2>Инвест.программа: таблица</h2>
+        {loading && <p className="hint">Загрузка данных...</p>}
+        {error && <p className="hint hint--error">Ошибка: {error}</p>}
+        {loadingLookups && <p className="hint">Загрузка справочников...</p>}
+        {lookupError && <p className="hint hint--error">Ошибка: {lookupError}</p>}
 
-          {!loading && !error && (
-            <div className="guide-table-wrap">
+        {!loading && !error && (
+          <div className="guide-table-wrap">
             <table className="guide-table table-compact">
               <thead>
                 <tr>
@@ -474,6 +542,77 @@ export default function InvestProgramTablePage() {
         </div>
         )}
 
+        <div className="guide-section">
+          <h2>Модели оборудования: сводная таблица</h2>
+          {loadingEquipment && <p className="hint">Загрузка моделей...</p>}
+          {equipmentError && <p className="hint hint--error">Ошибка: {equipmentError}</p>}
+          {!loadingEquipment && !equipmentError && (
+            <div className="guide-table-wrap">
+              <table className="guide-table table-compact">
+                <thead>
+                  <tr>
+                    <th>№</th>
+                    <th>Модель</th>
+                    <th>Производитель</th>
+                    <th>Тип</th>
+                    <th>Подразделение</th>
+                    <th>Статья бюджета</th>
+                    <th>Объект</th>
+                    <th>Статус</th>
+                    <th>Действия</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {equipmentRows.map((er, idx) => (
+                    <tr key={`eq-${er.id || idx}`}>
+                      <td>{idx + 1}</td>
+                      <td>{er['Модель']}</td>
+                      <td>{er['Производитель']}</td>
+                      <td>{er['Тип']}</td>
+                      <td>
+                        <select value={er['Подразделение']} onChange={(e) => setEquipmentRows((prev) => prev.map((r, i) => i === idx ? {...r, 'Подразделение': e.target.value} : r))} disabled={loadingLookups}>
+                          <option value="">-</option>
+                          {departmentOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <select value={er['Статья бюджета']} onChange={(e) => setEquipmentRows((prev) => prev.map((r, i) => i === idx ? {...r, 'Статья бюджета': e.target.value} : r))} disabled={loadingLookups}>
+                          <option value="">-</option>
+                          {budgetOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <select value={er['Объект']} onChange={(e) => setEquipmentRows((prev) => prev.map((r, i) => i === idx ? {...r, 'Объект': e.target.value} : r))} disabled={loadingLookups}>
+                          <option value="">-</option>
+                          {objectOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <select value={er['Статус']} onChange={(e) => setEquipmentRows((prev) => prev.map((r, i) => i === idx ? {...r, 'Статус': e.target.value} : r))}>
+                          {STATUS_OPTIONS.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <button type="button" className="invest-program-row-action-button" onClick={() => { /* persist if needed */ }}>
+                          ИЗМ
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
         {popupRow && activePopupRowIndex != null && (
           <div className="invest-popup-backdrop" onClick={() => setActivePopupRowIndex(null)}>
             <div className="invest-popup-card" onClick={(event) => event.stopPropagation()}>
@@ -532,8 +671,8 @@ export default function InvestProgramTablePage() {
               </div>
             </div>
           </div>
-        </section>
-        <EquipmentPurchaseTable />
-      </>
-    )
-  }
+        )}
+      </div>
+    </section>
+  )
+}

@@ -82,6 +82,9 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
       'GN_contract_state',
       'GN_contract_status_updated_at',
       'GN_contract_approval_status',
+      'GN_contract_date',
+      'GN_contract_term_from',
+      'GN_contract_term_to',
     ],
   },
   'invest-okdp-tko-is-prit': {
@@ -111,18 +114,6 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
       'GN_equipment_model',
       'GN_equipment_manufacturer_FK',
       'GN_equipment_type_FK',
-    ],
-  },
-  'equipment-purchases': {
-    tableName: 'GN_equipment_purchase',
-    idColumn: 'GN_equipment_purchase_id',
-    editableColumns: [
-      'GN_equipment_model_FK',
-      'GN_department_FK',
-      'GN_budget_network_item_FK',
-      'GN_departament_object_FK',
-      'GN_purchase_status',
-      'GN_purchase_quantity',
     ],
   },
   'invest-program': {
@@ -179,6 +170,9 @@ export const BDR_SELECT_FIELDS = `SELECT
   b."GN_bdr_ed.izm"                 AS "Ед. изм.",
   b."GN_bdr_kol-vo"                 AS "Кол-во",
   b."GN_bdr_limit"                  AS "Лимит",
+  b."GN_bdr_bdr25_corr"             AS "БДР25корр",
+  b."GN_bdr_bdr26"                  AS "БДР26",
+  b."GN_bdr_bdr26_corr"             AS "БДР26корр",
   b."GN_bdr_edin.limit"             AS "Един. лимит",
   b."GN_bdr_comments"               AS "Примечания"
 FROM "GN_bdr" b
