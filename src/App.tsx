@@ -267,9 +267,9 @@ export default function App() {
   const limitPopupMatch = window.location.hash.match(/^#limit-window-(\d+)$/)
   const limitPopupRowId = limitPopupMatch ? Number(limitPopupMatch[1]) : null
   const isLimitPopup = limitPopupRowId != null && !Number.isNaN(limitPopupRowId)
-  const contractPopupMatch = window.location.hash.match(/^#contract-window-(.+)$/)
-  const contractPopupName = contractPopupMatch ? decodeURIComponent(contractPopupMatch[1]) : null
-  const isContractPopup = contractPopupName != null && contractPopupName !== ''
+  const contractPopupMatch = window.location.hash.match(/^#contract-window-(\d+)$/)
+  const contractPopupId = contractPopupMatch ? Number(contractPopupMatch[1]) : null
+  const isContractPopup = contractPopupId != null && !Number.isNaN(contractPopupId)
   const objectPopupMatch = window.location.hash.match(/^#object-window-(\d+)$/)
   const objectPopupRowId = objectPopupMatch ? Number(objectPopupMatch[1]) : null
   const isObjectPopup = objectPopupRowId != null && !Number.isNaN(objectPopupRowId)
@@ -350,13 +350,12 @@ export default function App() {
     }
   }
 
-  // Открывает окно просмотра деталей по договору, передавая его имя через хэш.
-  function openContractWindow(contractName: string): void {
-    const encodedName = encodeURIComponent(contractName)
-    const popupUrl = `${window.location.pathname}#contract-window-${encodedName}`
+  // Открывает окно просмотра деталей по договору, передавая его ID через хэш.
+  function openContractWindow(contractId: number): void {
+    const popupUrl = `${window.location.pathname}#contract-window-${contractId}`
     const popup = window.open(
       popupUrl,
-      `contract-window-${encodedName}`,
+      `contract-window-${contractId}`,
       'popup=yes,width=900,height=700,resizable=yes,scrollbars=yes'
     )
 
@@ -423,10 +422,10 @@ export default function App() {
     )
   }
 
-  if (isContractPopup && contractPopupName) {
+  if (isContractPopup && contractPopupId) {
     return (
       <main>
-        <ContractDetailsPage contractName={contractPopupName} onBack={() => window.close()} />
+        <ContractDetailsPage contractId={contractPopupId} onBack={() => window.close()} />
       </main>
     )
   }

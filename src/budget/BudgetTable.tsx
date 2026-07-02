@@ -12,7 +12,7 @@ type Row = Record<string, unknown>;
 interface BudgetTableProps {
   onAddRow: () => void;
   onOpenLimit: (rowId: number) => void;
-  onOpenContract: (contractName: string) => void;
+  onOpenContract: (contractId: number) => void;
   onOpenObject: (rowId: number) => void;
   onOpenDepartment: (rowId: number) => void;
   onOpenContractor: (rowId: number) => void;
@@ -88,7 +88,7 @@ function formatFinancialValue(value: unknown): string {
 interface BudgetTableProps {
   onAddRow: () => void;
   onOpenLimit: (rowId: number) => void;
-  onOpenContract: (contractName: string) => void;
+  onOpenContract: (contractId: number) => void;
   onOpenObject: (rowId: number) => void;
 }
 
@@ -109,6 +109,7 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
   const [isDepartmentSummaryExpanded, setIsDepartmentSummaryExpanded] = useState(false);
   const [isPaoSummaryExpanded, setIsPaoSummaryExpanded] = useState(false);
   const [isBudgetItemDepartmentSummaryExpanded, setIsBudgetItemDepartmentSummaryExpanded] = useState(false);
+  const [contractsLookup, setContractsLookup] = useState<Record<string, number>>({});
 
   function setFilter(column: string, value: string): void {
     setFilters((prev) => ({ ...prev, [column]: value }));
@@ -155,6 +156,25 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
       );
 
       setLookupRows(Object.fromEntries(loaded));
+      
+      // Load contracts mapping
+      try {
+        const contractsRes = await fetch('/api/gn/contracts');
+        if (contractsRes.ok) {
+          const contracts = (await contractsRes.json()) as Row[];
+          const lookup: Record<string, number> = {};
+          contracts.forEach((contract) => {
+            const contractName = String(contract.GN_contract_name ?? '');
+            const contractId = Number(contract.GN_contract_id ?? 0);
+            if (contractName && contractId > 0) {
+              lookup[contractName] = contractId;
+            }
+          });
+          setContractsLookup(lookup);
+        }
+      } catch (err) {
+        console.error('Failed to load contracts:', err);
+      }
     }
 
     void loadSelectOptions();
@@ -682,7 +702,13 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
                             <button
                               type="button"
                               className="contract-cell-button"
-                              onClick={() => onOpenContract(String(row[col] ?? ''))}
+                              onClick={() => {
+                                const contractName = String(row[col] ?? '');
+                                const contractId = contractsLookup[contractName];
+                                if (contractId) {
+                                  onOpenContract(contractId);
+                                }
+                              }}
                             >
                               {String(row[col] ?? '')}
                             </button>

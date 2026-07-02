@@ -81,6 +81,8 @@ export default function InvestProgramTablePage() {
   const [activePopupRowIndex, setActivePopupRowIndex] = useState<number | null>(null)
   const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null)
   const [editingRowDraft, setEditingRowDraft] = useState<InvestRow | null>(null)
+  const [editingEquipmentRowIndex, setEditingEquipmentRowIndex] = useState<number | null>(null)
+  const [editingEquipmentDraft, setEditingEquipmentDraft] = useState<InvestRow | null>(null)
 
   useEffect(() => {
     /**
@@ -253,10 +255,10 @@ export default function InvestProgramTablePage() {
           'Модель': String(row.GN_equipment_model ?? ''),
           'Производитель': manuMap.get(String(row.GN_equipment_manufacturer_FK ?? '')) ?? '',
           'Тип': typeMap.get(String(row.GN_equipment_type_FK ?? '')) ?? '',
-          'Подразделение': '',
-          'Статья бюджета': '',
-          'Объект': '',
-          'Статус': 'готово к заккупке',
+          'Подразделение': String(row.GN_equipment_department_FK ?? ''),
+          'Статья бюджета': String(row.GN_equipment_budget_item_FK ?? ''),
+          'Объект': String(row.GN_equipment_object_FK ?? ''),
+          'Статус': String(row.GN_equipment_status ?? 'готово к заккупке'),
           'id': String(row.GN_equipment_model_id ?? ''),
         }))
 
@@ -563,50 +565,102 @@ export default function InvestProgramTablePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {equipmentRows.map((er, idx) => (
+                  {equipmentRows.map((er, idx) => {
+                    const isEditingEq = editingEquipmentRowIndex === idx && editingEquipmentDraft != null
+                    const draft = isEditingEq ? editingEquipmentDraft : er
+                    return (
                     <tr key={`eq-${er.id || idx}`}>
                       <td>{idx + 1}</td>
                       <td>{er['Модель']}</td>
                       <td>{er['Производитель']}</td>
                       <td>{er['Тип']}</td>
                       <td>
-                        <select value={er['Подразделение']} onChange={(e) => setEquipmentRows((prev) => prev.map((r, i) => i === idx ? {...r, 'Подразделение': e.target.value} : r))} disabled={loadingLookups}>
-                          <option value="">-</option>
-                          {departmentOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
+                        {isEditingEq ? (
+                          <select className="invest-program-field" value={draft['Подразделение']} onChange={(e) => setEditingEquipmentDraft((prev) => prev ? {...prev, 'Подразделение': e.target.value} : prev)} disabled={loadingLookups}>
+                            <option value="">-</option>
+                            {departmentOptions.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="invest-program-cell-text">{getLookupLabel(departmentOptions, er['Подразделение'])}</span>
+                        )}
                       </td>
                       <td>
-                        <select value={er['Статья бюджета']} onChange={(e) => setEquipmentRows((prev) => prev.map((r, i) => i === idx ? {...r, 'Статья бюджета': e.target.value} : r))} disabled={loadingLookups}>
-                          <option value="">-</option>
-                          {budgetOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
+                        {isEditingEq ? (
+                          <select className="invest-program-field" value={draft['Статья бюджета']} onChange={(e) => setEditingEquipmentDraft((prev) => prev ? {...prev, 'Статья бюджета': e.target.value} : prev)} disabled={loadingLookups}>
+                            <option value="">-</option>
+                            {budgetOptions.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="invest-program-cell-text">{getLookupLabel(budgetOptions, er['Статья бюджета'])}</span>
+                        )}
                       </td>
                       <td>
-                        <select value={er['Объект']} onChange={(e) => setEquipmentRows((prev) => prev.map((r, i) => i === idx ? {...r, 'Объект': e.target.value} : r))} disabled={loadingLookups}>
-                          <option value="">-</option>
-                          {objectOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
+                        {isEditingEq ? (
+                          <select className="invest-program-field" value={draft['Объект']} onChange={(e) => setEditingEquipmentDraft((prev) => prev ? {...prev, 'Объект': e.target.value} : prev)} disabled={loadingLookups}>
+                            <option value="">-</option>
+                            {objectOptions.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="invest-program-cell-text">{getLookupLabel(objectOptions, er['Объект'])}</span>
+                        )}
                       </td>
                       <td>
-                        <select value={er['Статус']} onChange={(e) => setEquipmentRows((prev) => prev.map((r, i) => i === idx ? {...r, 'Статус': e.target.value} : r))}>
-                          {STATUS_OPTIONS.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
+                        {isEditingEq ? (
+                          <select className="invest-program-field" value={draft['Статус']} onChange={(e) => setEditingEquipmentDraft((prev) => prev ? {...prev, 'Статус': e.target.value} : prev)}>
+                            {STATUS_OPTIONS.map((s) => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="invest-program-cell-text">{er['Статус']}</span>
+                        )}
                       </td>
-                      <td>
-                        <button type="button" className="invest-program-row-action-button" onClick={() => { /* persist if needed */ }}>
-                          ИЗМ
-                        </button>
+                      <td className="invest-program-actions-cell">
+                        {isEditingEq ? (
+                          <>
+                            <button type="button" className="invest-program-row-action-button" onClick={async () => {
+                              const d = editingEquipmentDraft!
+                              setEquipmentRows((prev) => prev.map((r, i) => i === idx ? { ...d } : r))
+                              setEditingEquipmentRowIndex(null)
+                              setEditingEquipmentDraft(null)
+                              await fetch(`/api/gn/equipment-models/${d['id']}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  department_fk: d['Подразделение'] ? Number(d['Подразделение']) : null,
+                                  budget_item_fk: d['Статья бюджета'] ? Number(d['Статья бюджета']) : null,
+                                  object_fk: d['Объект'] ? Number(d['Объект']) : null,
+                                  status: d['Статус'],
+                                }),
+                              })
+                            }}>
+                              СОХР
+                            </button>
+                            <button type="button" className="invest-program-row-action-button invest-program-row-action-button--secondary" onClick={() => {
+                              setEditingEquipmentRowIndex(null)
+                              setEditingEquipmentDraft(null)
+                            }}>
+                              ОТМ
+                            </button>
+                          </>
+                        ) : (
+                          <button type="button" className="invest-program-row-action-button" onClick={() => {
+                            setEditingEquipmentRowIndex(idx)
+                            setEditingEquipmentDraft({ ...er })
+                          }}>
+                            ИЗМ
+                          </button>
+                        )}
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

@@ -682,6 +682,34 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.patch('/api/gn/equipment-models/:id', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    const id = Number(req.params.id);
+    const { department_fk, budget_item_fk, object_fk, status } = req.body as {
+      department_fk: number | null;
+      budget_item_fk: number | null;
+      object_fk: number | null;
+      status: string;
+    };
+    try {
+      await client.query(
+        `UPDATE "GN_equipment_model"
+         SET "GN_equipment_department_FK" = $1,
+             "GN_equipment_budget_item_FK" = $2,
+             "GN_equipment_object_FK" = $3,
+             "GN_equipment_status" = $4
+         WHERE "GN_equipment_model_id" = $5`,
+        [department_fk || null, budget_item_fk || null, object_fk || null, status, id]
+      );
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to update GN_equipment_model' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.get('/api/gn/invest-program', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {

@@ -18,6 +18,7 @@ type ContractRow = {
   GN_contract_date?: string
   GN_contract_term_from?: string
   GN_contract_term_to?: string
+  GN_contract_department?: string
 }
 
 type ContractAgreement = {
@@ -32,12 +33,11 @@ type ContractAgreement = {
 
 const COLUMNS = [
   { key: 'GN_contract_contractor_FK', label: 'контрагент', kind: 'lookup' as const },
+  { key: 'GN_contract_department', label: 'подразделение', kind: 'text' as const },
   { key: 'GN_contract_dogovor_FK', label: 'договор', kind: 'lookup' as const },
   { key: 'GN_contract_date', label: 'дата договора', kind: 'date' as const },
   { key: 'GN_contract_term_from', label: 'срок дейстивия С', kind: 'date' as const },
   { key: 'GN_contract_term_to', label: 'срок действия ПО', kind: 'date' as const },
-  { key: 'GN_contract_sed_launch_date', label: 'дата запуска в СЭД', kind: 'date' as const },
-  { key: 'GN_contract_asez_load_date', label: 'дата загрузки в АСЭЗ', kind: 'date' as const },
   { key: 'GN_contract_state', label: 'состояние', kind: 'text' as const },
   { key: 'GN_contract_status_updated_at', label: 'дата обновления статуса', kind: 'date' as const },
   { key: 'GN_contract_approval_status', label: 'статус', kind: 'status' as const },
@@ -64,6 +64,7 @@ function toRow(data: Row): ContractRow {
     GN_contract_date: normalizeDateValue(data.GN_contract_date),
     GN_contract_term_from: normalizeDateValue(data.GN_contract_term_from),
     GN_contract_term_to: normalizeDateValue(data.GN_contract_term_to),
+    GN_contract_department: String(data.GN_contract_department ?? ''),
   }
 }
 
@@ -82,7 +83,17 @@ function normalizeDateValue(value: unknown): string {
   return normalizedValue.length >= 10 ? normalizedValue.slice(0, 10) : normalizedValue
 }
 
-export default function ContractsPage({ onOpenContract }: { onOpenContract: (contractName: string) => void }) {
+function formatDateDisplay(value: string): string {
+  if (!value) return value
+  // Получаем только часть с датой (YYYY-MM-DD)
+  const dateOnly = value.slice(0, 10)
+  if (dateOnly.length < 10) return value
+  const [year, month, day] = dateOnly.split('-')
+  const shortYear = year.slice(-2)
+  return `${day}.${month}.${shortYear}`
+}
+
+export default function ContractsPage({ onOpenContract }: { onOpenContract: (contractId: number) => void }) {
   const [rows, setRows] = useState<ContractRow[]>([])
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([])
   const [dogovorOptions, setDogovorOptions] = useState<LookupOption[]>([])
@@ -102,6 +113,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     description: string
     amount?: number
     contractName?: string
+    department?: string
   } | null>(null)
   const [pendingDocuments, setPendingDocuments] = useState<Array<{
     id: string
@@ -111,6 +123,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     description: string
     amount?: number
     contractName?: string
+    department?: string
   }>>([])
 
   useEffect(() => {
@@ -119,22 +132,56 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
       setError(null)
 
       try {
-        const [rowsRes, contractorRes, dogovorRes, agreementsRes] = await Promise.all([
+        const [rowsRes, contractorRes, dogovorRes, agreementsRes, bdrRes] = await Promise.all([
           fetch('/api/gn/contracts'),
           fetch('/api/gn/contractors'),
           fetch('/api/gn/dogovors'),
           fetch('/api/gn/contract-additional-agreements'),
+          fetch('/api/gn/bdr'),
         ])
 
         if (!rowsRes.ok) throw new Error(formatHttpError(rowsRes.status))
         if (!contractorRes.ok) throw new Error(formatHttpError(contractorRes.status))
         if (!dogovorRes.ok) throw new Error(formatHttpError(dogovorRes.status))
         if (!agreementsRes.ok) throw new Error(formatHttpError(agreementsRes.status))
+        if (!bdrRes.ok) throw new Error(formatHttpError(bdrRes.status))
 
         const nextRows = (await rowsRes.json()) as Row[]
         const contractors = (await contractorRes.json()) as Row[]
         const dogovors = (await dogovorRes.json()) as Row[]
         const agreements = (await agreementsRes.json()) as ContractAgreement[]
+        const bdrData = (await bdrRes.json()) as Row[]
+
+        // Build a map of contract name to contract id (use first occurrence only)
+        const contractNameToId: Record<string, number> = {}
+        nextRows.forEach((contract) => {
+          const contractName = String(contract.GN_contract_name ?? '').trim()
+          if (contractName && !contractNameToId[contractName]) {
+            contractNameToId[contractName] = Number(contract.GN_contract_id ?? 0)
+          }
+        })
+        
+        // Build a map of contract_id to all departments (comma-separated)
+        const departmentsByContract: Record<number, string> = {}
+        const departmentSets: Record<number, Set<string>> = {}
+        
+        bdrData.forEach((bdrRow) => {
+          const contractName = String(bdrRow['Договор'] ?? '').trim()
+          const contractId = contractNameToId[contractName] ?? 0
+          const department = String(bdrRow['Подразделение'] ?? '').trim()
+          
+          if (contractId > 0 && department) {
+            if (!departmentSets[contractId]) {
+              departmentSets[contractId] = new Set()
+            }
+            departmentSets[contractId].add(department)
+          }
+        })
+        
+        // Convert sets to comma-separated strings
+        Object.entries(departmentSets).forEach(([contractId, depts]) => {
+          departmentsByContract[Number(contractId)] = Array.from(depts).join(', ')
+        })
 
         const groupedAgreements: Record<number, ContractAgreement[]> = {}
         agreements.forEach((agreement) => {
@@ -152,12 +199,15 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           description: string
           amount?: number
           contractName?: string
+          contractId?: number
+          department?: string
         }> = []
 
         // Add contracts pending approval
         nextRows.forEach((contract) => {
           if (contract.GN_contract_approval_status === 'на согласовании') {
             const contractName = String(dogovors.find(d => d.GN_dgv_id === contract.GN_contract_dogovor_FK)?.GN_dogovor || '')
+            const contractId = Number(contract.GN_contract_id)
             pendingDocs.push({
               id: `contract-${contract.GN_contract_id}`,
               type: 'contract',
@@ -165,6 +215,8 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               date: String(contract.GN_contract_sed_launch_date || ''),
               description: `Договор: ${contractName}`,
               contractName,
+              contractId: contract.GN_contract_id,
+              department: departmentsByContract[contractId] || '',
             })
           }
         })
@@ -174,6 +226,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           if (agreement.GN_additional_agreement_status === 'на согласовании') {
             const contract = nextRows.find(c => c.GN_contract_id === agreement.GN_contract_id_FK)
             const contractName = String(dogovors.find(d => d.GN_dgv_id === contract?.GN_contract_dogovor_FK)?.GN_dogovor || '')
+            const contractId = Number(contract?.GN_contract_id ?? 0)
             pendingDocs.push({
               id: `agreement-${agreement.GN_additional_agreement_id}`,
               type: 'agreement',
@@ -182,11 +235,17 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               description: agreement.GN_additional_agreement_description,
               amount: agreement.GN_additional_agreement_amount,
               contractName,
+              department: departmentsByContract[contractId] || '',
             })
           }
         })
 
-        setRows(nextRows.map(toRow))
+        const converted = nextRows.map((row) => {
+          const converted = toRow(row)
+          converted.GN_contract_department = departmentsByContract[converted.GN_contract_id] || ''
+          return converted
+        })
+        setRows(converted)
         setContractorOptions(mapLookupOptions(contractors, 'GN_c_id', 'GN_contarctor'))
         setDogovorOptions(mapLookupOptions(dogovors, 'GN_dgv_id', 'GN_dogovor'))
         setAgreementsByContract(groupedAgreements)
@@ -224,6 +283,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           date: contract.GN_contract_sed_launch_date,
           description: `Договор: ${contractName}`,
           contractName,
+          contractId: contract.GN_contract_id,
         })
       }
     })
@@ -241,6 +301,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           description: agreement.GN_additional_agreement_description,
           amount: agreement.GN_additional_agreement_amount,
           contractName,
+          contractId: contract?.GN_contract_id,
         })
       }
     })
@@ -471,7 +532,10 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <table className="guide-table table-compact invest-program-table-min">
                   <thead>
                     <tr>
+                      <th>№</th>
                       <th>Тип</th>
+                      <th>Подразделение</th>
+                      <th>ID договора</th>
                       <th>Номер</th>
                       <th>Дата</th>
                       <th>Описание</th>
@@ -480,15 +544,20 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                     </tr>
                   </thead>
                   <tbody>
-                    {pendingDocuments.map((doc) => {
+                    {pendingDocuments.map((doc, rowIndex) => {
                       const isEditingDoc = editingPendingDocId === doc.id && draftPendingDoc != null
                       return (
                         <tr key={doc.id}>
+                          <td className="invest-program-row-number">{rowIndex + 1}</td>
                           <td>
                             <span className={`doc-type-badge ${doc.type === 'contract' ? 'doc-type-badge--contract' : 'doc-type-badge--agreement'}`}>
                               {doc.type === 'contract' ? 'Договор' : 'Доп. соглашение'}
                             </span>
                           </td>
+                          <td>
+                            <span className="invest-program-cell-text">{doc.department || ''}</span>
+                          </td>
+                          <td className="invest-program-row-number">{doc.contractId || doc.id}</td>
                           <td>
                             {isEditingDoc ? (
                               <input
@@ -510,7 +579,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                 className="guide-input"
                               />
                             ) : (
-                              doc.date ? new Date(doc.date).toLocaleDateString('ru-RU') : ''
+                              doc.date ? formatDateDisplay(doc.date) : ''
                             )}
                           </td>
                           <td>
@@ -544,8 +613,8 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                             <button
                               type="button"
                               className="contract-cell-button"
-                              disabled={!doc.contractName}
-                              onClick={() => doc.contractName && onOpenContract(doc.contractName)}
+                              disabled={!doc.contractId}
+                              onClick={() => doc.contractId && onOpenContract(doc.contractId)}
                             >
                               {doc.contractName || '-'}
                             </button>
@@ -563,6 +632,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <thead>
                 <tr>
                   <th>№</th>
+                  <th>ID договора</th>
                   {COLUMNS.filter(c => c.kind !== 'status').map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
@@ -570,11 +640,13 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                 </tr>
               </thead>
               <tbody>
-                {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'действующий').map((row, rowIndex) => {
-                  return (
+                {(() => {
+                  const activeRows = rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'действующий')
+                  return activeRows.map((row, rowIndex) => (
                     <Fragment key={`contract-block-${row.GN_contract_id}`}>
                       <tr key={`contract-${row.GN_contract_id}`}>
                     <td className="invest-program-row-number">{rowIndex + 1}</td>
+                    <td className="invest-program-row-number">{row.GN_contract_id}</td>
                     {COLUMNS.filter((c) => c.kind !== 'status').map((column) => {
                         if (column.kind === 'lookup') {
                           const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
@@ -585,7 +657,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                 <button
                                   type="button"
                                   className="contract-cell-button"
-                                  onClick={() => onOpenContract(label)}
+                                  onClick={() => onOpenContract(row.GN_contract_id)}
                                 >
                                   {label}
                                 </button>
@@ -600,7 +672,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                           const value = String(row[column.key as keyof ContractRow] ?? '')
                           return (
                             <td key={column.key}>
-                              <span className="invest-program-cell-text">{value}</span>
+                              <span className="invest-program-cell-text">{formatDateDisplay(value)}</span>
                             </td>
                           )
                         }
@@ -635,17 +707,27 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                           const hasAgreements = agreementCount > 0
                           const isExpanded = expandedContracts.has(row.GN_contract_id)
 
-                          return hasAgreements ? (
-                            <button
-                              type="button"
-                              className="invest-program-row-action-button invest-program-row-action-button--secondary"
-                              onClick={() => toggleContractAgreements(row.GN_contract_id)}
-                              aria-label={isExpanded ? `Скрыть ${agreementCount} дополнительных соглашений` : `Показать ${agreementCount} дополнительных соглашений`}
-                            >
-                              {isExpanded ? `− ${agreementCount}` : `+ ${agreementCount}`}
-                            </button>
-                          ) : (
-                            <span className="invest-program-row-action-button invest-program-row-action-button--disabled">-</span>
+                          return (
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <button
+                                type="button"
+                                className="contract-cell-button"
+                                onClick={() => onOpenContract(row.GN_contract_id)}
+                                title="Открыть контракт"
+                              >
+                                Открыть
+                              </button>
+                              {hasAgreements ? (
+                                <button
+                                  type="button"
+                                  className="invest-program-row-action-button invest-program-row-action-button--secondary"
+                                  onClick={() => toggleContractAgreements(row.GN_contract_id)}
+                                  aria-label={isExpanded ? `Скрыть ${agreementCount} дополнительных соглашений` : `Показать ${agreementCount} дополнительных соглашений`}
+                                >
+                                  {isExpanded ? `− ${agreementCount}` : `+ ${agreementCount}`}
+                                </button>
+                              ) : null}
+                            </div>
                           )
                         })()}
                       </td>
@@ -698,7 +780,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                               onChange={(event) => updateAgreementDraft('GN_additional_agreement_date', event.target.value)}
                                             />
                                           ) : (
-                                            agreement.GN_additional_agreement_date
+                                            formatDateDisplay(agreement.GN_additional_agreement_date)
                                           )}
                                         </td>
                                         <td>
@@ -783,21 +865,25 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                       )
                     })()}
                     </Fragment>
-                  )
-                })}
+                  ))
+                })()}
               </tbody>
             </table>
           </div>
           </div>
         )}
         {/* Archive table for inactive contracts */}
-        {!loading && !error && rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий').length > 0 && (
+        {!loading && !error && (() => {
+          const inactiveForVisibility = rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий')
+          return inactiveForVisibility.length > 0
+        })() && (
           <div className="guide-table-wrap invest-program-table-wrap section-top-space">
             <h3 className="section-title section-title--danger">Архив (не действующие договора)</h3>
             <table className="guide-table table-compact invest-program-table-min">
               <thead>
                 <tr>
                   <th>№</th>
+                  <th>ID договора</th>
                   {COLUMNS.filter((c) => c.kind !== 'status').map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
@@ -805,12 +891,13 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                 </tr>
               </thead>
               <tbody>
-                {rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий').map((row, rowIndex) => {
-
-                  return (
+                {(() => {
+                  const inactiveRows = rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий')
+                  return inactiveRows.map((row, rowIndex) => (
                     <Fragment key={`archive-contract-block-${row.GN_contract_id}`}>
                       <tr key={`archive-contract-${row.GN_contract_id}`}>
                         <td className="invest-program-row-number">{rowIndex + 1}</td>
+                        <td className="invest-program-row-number">{row.GN_contract_id}</td>
                         {COLUMNS.filter((c) => c.kind !== 'status').map((column) => {
                           if (column.kind === 'lookup') {
                             const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
@@ -821,7 +908,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                   <button
                                     type="button"
                                     className="contract-cell-button"
-                                    onClick={() => onOpenContract(label)}
+                                    onClick={() => onOpenContract(row.GN_contract_id)}
                                   >
                                     {label}
                                   </button>
@@ -836,7 +923,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                             const value = String(row[column.key as keyof ContractRow] ?? '')
                             return (
                               <td key={column.key}>
-                                <span className="invest-program-cell-text">{value}</span>
+                                <span className="invest-program-cell-text">{formatDateDisplay(value)}</span>
                               </td>
                             )
                           }
@@ -868,8 +955,8 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                         </td>
                       </tr>
                     </Fragment>
-                  )
-                })}
+                  ))
+                })()}
               </tbody>
             </table>
           </div>

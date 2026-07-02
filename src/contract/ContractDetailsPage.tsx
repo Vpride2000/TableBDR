@@ -23,18 +23,17 @@ type ContractInfo = {
 }
 
 interface ContractDetailsPageProps {
-  contractName: string;
+  contractId: number;
   onBack: () => void;
 }
 
-export default function ContractDetailsPage({ contractName, onBack }: ContractDetailsPageProps) {
+export default function ContractDetailsPage({ contractId, onBack }: ContractDetailsPageProps) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [agreements, setAgreements] = useState<ContractAdditionalAgreement[]>([]);
   const [agreementsLoading, setAgreementsLoading] = useState(true);
   const [agreementsError, setAgreementsError] = useState<string | null>(null);
-  const [contractId, setContractId] = useState<number | null>(null);
   const [contractInfo, setContractInfo] = useState<ContractInfo | null>(null);
   const [contractLoading, setContractLoading] = useState(true);
   const [contractError, setContractError] = useState<string | null>(null);
@@ -75,10 +74,8 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
 
         const allRows = (await response.json()) as Row[];
         
-        // Filter rows by contract name
-        const contractRows = allRows.filter((row) => String(row['Договор'] ?? '') === contractName);
-        
-        setRows(contractRows);
+        // Rows are loaded but filtered by contract name from contractInfo later
+        setRows(allRows);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Ошибка при загрузке данных');
       } finally {
@@ -87,7 +84,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
     }
 
     void loadContractRows();
-  }, [contractName]);
+  }, []);
 
   useEffect(() => {
     async function loadContractMetadata(): Promise<void> {
@@ -114,12 +111,12 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
         const dogovors = (await dogovorsResponse.json()) as Row[];
         const allAgreements = (await agreementsResponse.json()) as ContractAdditionalAgreement[];
 
-        const contract = contracts.find(c => String(c.GN_contract_name ?? '') === contractName);
+        const contract = contracts.find(c => c.GN_contract_id === contractId);
+        
         if (!contract) {
           throw new Error('Contract not found');
         }
 
-        setContractId(contract.GN_contract_id);
         setContractInfo(contract);
         setContractDraft(contract);
         setContractorOptions(mapLookupOptions(contractors, 'GN_c_id', 'GN_contarctor'));
@@ -131,7 +128,6 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
         const message = err instanceof Error ? err.message : 'Ошибка при загрузке данных';
         setAgreementsError(message);
         setContractError(message);
-        setContractId(null);
         setContractInfo(null);
         setContractDraft(null);
       } finally {
@@ -141,7 +137,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
     }
 
     void loadContractMetadata();
-  }, [contractName]);
+  }, [contractId]);
 
   function mapLookupOptions(rows: Row[], valueKey: string, labelKey: string): LookupOption[] {
     return rows.map((row) => ({
@@ -155,9 +151,45 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
     return options.find((option) => option.value === normalizedValue)?.label ?? normalizedValue
   }
 
+  function normalizeDateValue(value: unknown): string {
+    if (value instanceof Date) {
+      return value.toISOString().slice(0, 10)
+    }
+
+    const normalizedValue = String(value ?? '')
+    if (normalizedValue === '') return ''
+    return normalizedValue.length >= 10 ? normalizedValue.slice(0, 10) : normalizedValue
+  }
+
+  function normalizeDateValueWithFallback(value: unknown): string {
+    const normalized = normalizeDateValue(value)
+    if (normalized === '') {
+      // Если дата пуста, заполняем текущей датой
+      return new Date().toISOString().slice(0, 10)
+    }
+    return normalized
+  }
+
+  function formatDateDisplay(value: string): string {
+    if (!value) return value
+    // Получаем только часть с датой (YYYY-MM-DD)
+    const dateOnly = value.slice(0, 10)
+    if (dateOnly.length < 10) return value
+    const [year, month, day] = dateOnly.split('-')
+    const shortYear = year.slice(-2)
+    return `${day}.${month}.${shortYear}`
+  }
+
   function startEditContract(): void {
     if (!contractInfo) return
-    setContractDraft({ ...contractInfo })
+    setContractDraft({
+      ...contractInfo,
+      GN_contract_date: normalizeDateValueWithFallback(contractInfo.GN_contract_date),
+      GN_contract_term_from: normalizeDateValueWithFallback(contractInfo.GN_contract_term_from),
+      GN_contract_term_to: normalizeDateValueWithFallback(contractInfo.GN_contract_term_to),
+      GN_contract_sed_launch_date: normalizeDateValue(contractInfo.GN_contract_sed_launch_date),
+      GN_contract_asez_load_date: normalizeDateValue(contractInfo.GN_contract_asez_load_date),
+    })
     setIsEditingContract(true)
     setContractSaveError(null)
   }
@@ -188,10 +220,14 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
     setContractSaveError(null);
 
     try {
+      // Обновляем дату последнего обновления статуса
+      const currentDate = new Date().toISOString().slice(0, 10);
+      const updatedDraft = { ...contractDraft, GN_contract_status_updated_at: currentDate };
+
       const response = await fetch(`/api/gn/contracts/${contractInfo.GN_contract_id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(contractDraft),
+        body: JSON.stringify(updatedDraft),
       });
 
       if (!response.ok) {
@@ -200,6 +236,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
       }
 
       const updatedContract = (await response.json()) as ContractInfo;
+      
       setContractInfo(updatedContract);
       setContractDraft(updatedContract);
       setIsEditingContract(false);
@@ -256,6 +293,22 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
       setNewAgreementDescription('');
       setNewAgreementAmount('0');
       setNewAgreementStatus('действующий');
+      
+      // Обновляем дату последнего обновления статуса контракта
+      if (contractInfo) {
+        const currentDate = new Date().toISOString().slice(0, 10);
+        const updatedContract = { ...contractInfo, GN_contract_status_updated_at: currentDate };
+        const updateResponse = await fetch(`/api/gn/contracts/${contractInfo.GN_contract_id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedContract),
+        });
+        
+        if (updateResponse.ok) {
+          const refreshedContract = (await updateResponse.json()) as ContractInfo;
+          setContractInfo(refreshedContract);
+        }
+      }
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Ошибка при создании соглашения');
     } finally {
@@ -325,6 +378,23 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
           ? updatedAgreement
           : item
       ));
+      
+      // Обновляем дату последнего обновления статуса контракта
+      if (contractInfo) {
+        const currentDate = new Date().toISOString().slice(0, 10);
+        const updatedContract = { ...contractInfo, GN_contract_status_updated_at: currentDate };
+        const updateResponse = await fetch(`/api/gn/contracts/${contractInfo.GN_contract_id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedContract),
+        });
+        
+        if (updateResponse.ok) {
+          const refreshedContract = (await updateResponse.json()) as ContractInfo;
+          setContractInfo(refreshedContract);
+        }
+      }
+      
       cancelEditAgreement();
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Ошибка при обновлении соглашения');
@@ -338,7 +408,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
   return (
     <section className="contract-details">
       <div className="contract-details-header">
-        <h2>Договор: {contractName}</h2>
+        <h2>Договор: {contractInfo?.GN_contract_name || 'Загрузка...'}</h2>
         <button type="button" className="contract-close-btn" onClick={onBack}>
           Закрыть
         </button>
@@ -346,9 +416,9 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
 
       {loading && <p className="hint">Загрузка данных...</p>}
       {error && <p className="hint hint--error">Ошибка: {error}</p>}
-      {!loading && !error && rows.length === 0 && <p className="hint">Нет строк для этого договора.</p>}
+      {!loading && !error && rows.filter((row) => !contractInfo?.GN_contract_name || String(row['Договор'] ?? '') === contractInfo.GN_contract_name).length === 0 && <p className="hint">Нет строк для этого договора.</p>}
 
-      {!loading && !error && rows.length > 0 && (
+      {!loading && !error && rows.filter((row) => !contractInfo?.GN_contract_name || String(row['Договор'] ?? '') === contractInfo.GN_contract_name).length > 0 && (
         <div className="guide-table-wrap">
           <table className="guide-table table-compact contract-details-table">
             <thead>
@@ -359,16 +429,21 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, i) => (
-                <tr key={i}>
-                  {columns.map((col) => (
-                    <td key={col}>{String(row[col] ?? '')}</td>
-                  ))}
-                </tr>
-              ))}
+              {rows
+                .filter((row) => {
+                  if (!contractInfo?.GN_contract_name) return true;
+                  return String(row['Договор'] ?? '') === contractInfo.GN_contract_name;
+                })
+                .map((row, i) => (
+                  <tr key={i}>
+                    {columns.map((col) => (
+                      <td key={col}>{String(row[col] ?? '')}</td>
+                    ))}
+                  </tr>
+                ))}
             </tbody>
           </table>
-          <p className="contract-details-count">Всего строк: {rows.length}</p>
+          <p className="contract-details-count">Всего строк: {rows.filter((row) => !contractInfo?.GN_contract_name || String(row['Договор'] ?? '') === contractInfo.GN_contract_name).length}</p>
         </div>
       )}
 
@@ -391,21 +466,21 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
               </div>
 
               <div className="contract-details-meta-row">
-                <strong>Дата договора:</strong> {contractInfo.GN_contract_date}
+                <strong>Дата договора:</strong> {contractInfo.GN_contract_date ? formatDateDisplay(contractInfo.GN_contract_date) : ''}
               </div> 
 
               <div className="contract-details-meta-row">
-                <strong>Дата начала действия</strong> {contractInfo.GN_contract_term_from}
+                <strong>Дата начала действия</strong> {contractInfo.GN_contract_term_from ? formatDateDisplay(contractInfo.GN_contract_term_from) : ''}
               </div> 
               <div className="contract-details-meta-row">
-                <strong>Дата окончания действия:</strong> {contractInfo.GN_contract_term_to}
+                <strong>Дата окончания действия:</strong> {contractInfo.GN_contract_term_to ? formatDateDisplay(contractInfo.GN_contract_term_to) : ''}
               </div>
 
               <div className="contract-details-meta-row">
-                <strong>Дата запуска в СЭД:</strong> {contractInfo.GN_contract_sed_launch_date}
+                <strong>Дата запуска в СЭД:</strong> {contractInfo.GN_contract_sed_launch_date ? formatDateDisplay(contractInfo.GN_contract_sed_launch_date) : ''}
               </div>
               <div className="contract-details-meta-row">
-                <strong>Дата загрузки в АСЭЗ:</strong> {contractInfo.GN_contract_asez_load_date}
+                <strong>Дата загрузки в АСЭЗ:</strong> {contractInfo.GN_contract_asez_load_date ? formatDateDisplay(contractInfo.GN_contract_asez_load_date) : ''}
               </div>
               <button
                 type="button"
@@ -422,8 +497,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
                 <input
                   id="contract-dogovor"
                   type="text"
-                  value={contractInfo.GN_contract_name ?? contractName}
-                  disabled
+                  value={contractInfo?.GN_contract_name ?? ''}
                 />
               </div>
               <div className="form-field form-field-compact">
@@ -458,6 +532,33 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
                   type="text"
                   value={contractDraft?.GN_contract_state ?? ''}
                   onChange={(event) => updateContractDraft('GN_contract_state', event.target.value)}
+                />
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-date">Дата договора</label>
+                <input
+                  id="contract-date"
+                  type="date"
+                  value={contractDraft?.GN_contract_date ?? ''}
+                  onChange={(event) => updateContractDraft('GN_contract_date', event.target.value)}
+                />
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-term-from">Дата начала действия</label>
+                <input
+                  id="contract-term-from"
+                  type="date"
+                  value={contractDraft?.GN_contract_term_from ?? ''}
+                  onChange={(event) => updateContractDraft('GN_contract_term_from', event.target.value)}
+                />
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-term-to">Дата окончания действия</label>
+                <input
+                  id="contract-term-to"
+                  type="date"
+                  value={contractDraft?.GN_contract_term_to ?? ''}
+                  onChange={(event) => updateContractDraft('GN_contract_term_to', event.target.value)}
                 />
               </div>
               <div className="form-field form-field-compact">
@@ -669,7 +770,7 @@ export default function ContractDetailsPage({ contractName, onBack }: ContractDe
               {agreements.map((agreement) => (
                 <tr key={agreement.GN_additional_agreement_id}>
                   <td>{agreement.GN_additional_agreement_number}</td>
-                  <td>{new Date(agreement.GN_additional_agreement_date).toLocaleDateString('ru-RU')}</td>
+                  <td>{formatDateDisplay(agreement.GN_additional_agreement_date)}</td>
                   <td>{agreement.GN_additional_agreement_description}</td>
                   <td>{agreement.GN_additional_agreement_amount.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' })}</td>
                   <td>
