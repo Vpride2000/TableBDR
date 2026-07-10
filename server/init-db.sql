@@ -197,6 +197,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS "GN_bdr_monthly_forecast_row_month_uniq"
   ON "GN_bdr_monthly_forecast" ("GN_bdr_ID_FK", "month_index")
   WHERE "GN_bdr_ID_FK" IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS "GN_satellites" (
+  "GN_satellite_id" SERIAL NOT NULL UNIQUE,
+  "GN_satellite_mac" TEXT NOT NULL,
+  "GN_satellite_direction_name" TEXT NOT NULL,
+  "GN_department_FK" INTEGER NOT NULL REFERENCES "GN_department"("GN_Dep_id") ON DELETE NO ACTION,
+  PRIMARY KEY("GN_satellite_id")
+);
+
+COMMENT ON TABLE "GN_satellites" IS 'Спутниковые услуги - управление направлениями';
+
 ALTER TABLE "GN_dogovor"
   ADD FOREIGN KEY("GN_contarctor_FK") REFERENCES "GN_contractor"("GN_c_id")
   ON UPDATE NO ACTION ON DELETE NO ACTION;
@@ -395,3 +405,16 @@ INSERT INTO "GN_bdr" (
   (3, 4, 3, 1, 1, 3, 'Международный роуминг',               'мес.',    3,  35640,  990,  'Командировки руководства'),
   (4, 5, 4, 4, 4, 4, 'SMS-пакет 500',                       'пакет',   5,   7200,  120,  'Уведомления клиентов'),
   (5, 3, 5, 5, 5, 5, 'Резервный канал связи',               'канал',   2,  84000, 3500,  'Резервирование основного канала');
+
+-- Satellite control data
+INSERT INTO "GN_satellites" ("GN_satellite_mac", "GN_satellite_direction_name", "GN_department_FK") VALUES
+  ('AA:BB:CC:DD:EE:01', 'Москва-Санкт-Петербург', 1),
+  ('AA:BB:CC:DD:EE:02', 'Москва-Казань', 2),
+  ('AA:BB:CC:DD:EE:03', 'Санкт-Петербург-Новосибирск', 1),
+  ('AA:BB:CC:DD:EE:04', 'Казань-Уфа', 3),
+  ('AA:BB:CC:DD:EE:05', 'Москва-Тверь', 4),
+  ('AA:BB:CC:DD:EE:06', 'Екатеринбург-Челябинск', 5),
+  ('AA:BB:CC:DD:EE:07', 'Новосибирск-Красноярск', 2),
+  ('AA:BB:CC:DD:EE:08', 'Санкт-Петербург-Псков', 1),
+  ('AA:BB:CC:DD:EE:09', 'Волгоград-Астрахань', 3),
+  ('AA:BB:CC:DD:EE:10', 'Москва-Орел', 4);

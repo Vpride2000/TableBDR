@@ -12,6 +12,38 @@ export function setupRoutes(app: Express): void {
     res.json({ status: 'ok' });
   });
 
+  // Satellites control route
+  // Получение данных о спутниковых услугах с информацией о подразделениях
+  app.get('/api/satellites', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query<{
+        GN_satellite_id: number;
+        GN_satellite_mac: string;
+        GN_satellite_direction_name: string;
+        GN_Dep_id: number;
+        GN_department: string;
+      }>(
+        `SELECT
+           s."GN_satellite_id",
+           s."GN_satellite_mac",
+           s."GN_satellite_direction_name",
+           d."GN_Dep_id",
+           d."GN_department"
+         FROM "GN_satellites" s
+         LEFT JOIN "GN_department" d ON s."GN_department_FK" = d."GN_Dep_id"
+         ORDER BY s."GN_satellite_id" ASC`
+      );
+
+      res.json({ satellites: result.rows });
+    } catch (err) {
+      console.error('Failed to fetch satellites', err);
+      res.status(500).json({ error: 'Failed to fetch satellites' });
+    } finally {
+      await client.end();
+    }
+  });
+
   // Forecast monthly routes
   // Работа с таблицей ежемесячного прогноза: чтение и сохранение данных.
   app.get('/api/gn/forecast-monthly', async (req: Request, res: Response): Promise<void> => {

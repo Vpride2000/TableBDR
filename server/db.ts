@@ -22,6 +22,7 @@ export async function ensureDatabaseTables(client: Client): Promise<void> {
     'GN_contract_additional_agreements',
     'GN_bdr_limit_calculation',
     'GN_bdr_monthly_forecast',
+    'GN_satellites',
   ];
 
   const result = await client.query<{ table_name: string }>(

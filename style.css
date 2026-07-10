@@ -174,6 +174,11 @@ p {
   margin: 0 0 16px;
 }
 
+.budget-actions--center {
+  justify-content: center;
+  margin: 0 0 16px;
+}
+
 .page-action-btn {
   cursor: pointer;
   border: 1px solid #1d4ed8;
@@ -1319,6 +1324,145 @@ p {
   color: #1d4ed8;
 }
 
+.satellites-section {
+  padding-top: 0;
+}
+
+.satellites-content {
+  padding: 14px;
+}
+
+.satellites-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.satellites-control-action {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 12px;
+}
+
+.satellites-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.satellites-file-input-label {
+  display: inline-block;
+  cursor: pointer;
+}
+
+.satellites-file-input-label .page-action-btn {
+  margin: 0;
+}
+
+.satellites-subnav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 12px;
+}
+
+.satellites-subnav-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  text-decoration: none;
+  color: #0f172a;
+  background: #fff;
+}
+
+.satellites-subnav-item--button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.satellites-subnav-item--active {
+  background: #eff6ff;
+  border-color: #60a5fa;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.satellites-layout--left {
+  justify-items: start;
+}
+
+.satellites-stack {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.satellites-table-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.satellites-summary-card {
+  width: fit-content;
+  min-width: 320px;
+}
+
+.satellites-subtitle {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.satellites-table-wrap {
+  margin-top: 0;
+  overflow-x: auto;
+}
+
+.satellites-table {
+  width: auto;
+  min-width: 0;
+  margin: 0 auto;
+  font-size: 0.64rem;
+}
+
+.satellites-table th,
+.satellites-table td {
+  white-space: nowrap;
+  padding: 3px 4px;
+  line-height: 1.05;
+}
+
+.satellites-summary-table {
+  width: 100%;
+}
+
+@media (max-width: 960px) {
+  .satellites-table-card {
+    width: 100%;
+  }
+
+  .satellites-summary-card {
+    min-width: 0;
+  }
+
+  .satellites-page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .invest-popup-backdrop {
   position: fixed;
   inset: 0;
@@ -1380,6 +1524,55 @@ p {
 .contracts-agreements-row td {
   padding: 0;
   border-top: none;
+}
+
+.contracts-term-visual {
+  min-width: 220px;
+}
+
+.contracts-term-range {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.6rem;
+  color: #64748b;
+  margin-bottom: 3px;
+}
+
+.contracts-term-track {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 10px;
+  margin-bottom: 2px;
+}
+
+.contracts-term-segment {
+  display: inline-block;
+  width: 7px;
+  height: 10px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+}
+
+.contracts-term-gap {
+  font-size: 0.58rem;
+  color: #334155;
+  background: #e2e8f0;
+  border-radius: 3px;
+  padding: 0 3px;
+  line-height: 1.2;
+}
+
+.contracts-term-meta {
+  font-size: 0.6rem;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.contracts-term-empty {
+  color: #94a3b8;
+  font-size: 0.62rem;
 }
 
 .contracts-agreements-cell {

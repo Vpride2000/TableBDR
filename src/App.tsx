@@ -9,6 +9,9 @@ import ContractorDetailsPage from './budget/ContractorDetailsPage'
 import ContractDetailsPage from './contract/ContractDetailsPage'
 import ContractsPage from './contract/ContractsPage'
 import InvestProgramTablePage from './Purchase/InvestProgramTablePage'
+import SatellitesPage from './satellites/SatellitesPage'
+import SatellitesControlPage from './satellites/SatellitesControlPage'
+import SatellitesDetailsPage from './satellites/SatellitesDetailsPage'
 import { Page } from './types/forecast'
 import { pageFromHash } from './utils/forecastUtils'
 
@@ -264,6 +267,7 @@ function StartDashboard() {
 
 export default function App() {
   const isAddRowPopup = window.location.hash === '#add-row-window'
+  const isSatellitesDetailsPopup = window.location.hash === '#satellites-window'
   const limitPopupMatch = window.location.hash.match(/^#limit-window-(\d+)$/)
   const limitPopupRowId = limitPopupMatch ? Number(limitPopupMatch[1]) : null
   const isLimitPopup = limitPopupRowId != null && !Number.isNaN(limitPopupRowId)
@@ -284,6 +288,7 @@ export default function App() {
   useEffect(() => {
     const onHashChange = () => {
       if (window.location.hash === '#add-row-window') return
+      if (window.location.hash === '#satellites-window') return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
       if (/^#object-window-\d+$/.test(window.location.hash)) return
@@ -315,6 +320,14 @@ export default function App() {
       window.location.hash = '#invest-program-table'
       return
     }
+    if (nextPage === 'satellites') {
+      window.location.hash = '#satellites'
+      return
+    }
+    if (nextPage === 'satellites-control') {
+      window.location.hash = '#satellites-control'
+      return
+    }
     if (nextPage === 'guide') {
       window.location.hash = '#guide'
       return
@@ -329,6 +342,20 @@ export default function App() {
       popupUrl,
       'add-row-window',
       'popup=yes,width=980,height=900,resizable=yes,scrollbars=yes'
+    )
+
+    if (popup) {
+      popup.focus()
+    }
+  }
+
+  // Открывает подраздел "Детализация" (спутники) в отдельном окне.
+  function openSatellitesDetailsWindow(): void {
+    const popupUrl = `${window.location.pathname}#satellites-window`
+    const popup = window.open(
+      popupUrl,
+      'satellites-details-window',
+      'popup=yes,width=1300,height=850,resizable=yes,scrollbars=yes'
     )
 
     if (popup) {
@@ -414,6 +441,14 @@ export default function App() {
     )
   }
 
+  if (isSatellitesDetailsPopup) {
+    return (
+      <main>
+        <SatellitesDetailsPage />
+      </main>
+    )
+  }
+
   if (isLimitPopup && limitPopupRowId != null) {
     return (
       <main>
@@ -454,6 +489,16 @@ export default function App() {
     )
   }
 
+  const isStandaloneSatellitesControl = page === 'satellites-control'
+
+  if (isStandaloneSatellitesControl) {
+    return (
+      <main>
+        <SatellitesControlPage />
+      </main>
+    )
+  }
+
   return (
     <main>
       <nav className="app-nav">
@@ -470,7 +515,10 @@ export default function App() {
           <a href="#invest-program-table" onClick={(event) => { event.preventDefault(); goTo('invest-program-table') }}>
             Закупки
           </a>
-        </div>
+          <a href="#satellites" onClick={(event) => { event.preventDefault(); goTo('satellites') }}>
+            Спутники
+          </a>
+        </div>        
         <div className="app-nav-guide">
           <a href="#guide" onClick={(event) => { event.preventDefault(); goTo('guide') }}>
             Справочник
@@ -488,6 +536,11 @@ export default function App() {
       )}
       {page === 'budget' && (
         <div>
+          <div className="budget-actions budget-actions--center">
+            <button className="page-action-btn page-action-btn--secondary" type="button" onClick={openSatellitesDetailsWindow}>
+              Спутники: Детализация
+            </button>
+          </div>
           <BudgetTable
             onAddRow={openAddRowWindow}
             onOpenLimit={openLimitWindow}
@@ -499,6 +552,8 @@ export default function App() {
           />
         </div>
       )}
+      {page === 'satellites' && <SatellitesPage />}
+      {page === 'satellites-control' && <SatellitesControlPage onBack={() => goTo('satellites')} />}
       {page === 'contracts' && <ContractsPage onOpenContract={openContractWindow} />}
       {page === 'invest-program-table' && <InvestProgramTablePage />}
     </main>

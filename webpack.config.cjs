@@ -52,6 +52,11 @@ module.exports = {
           to: path.resolve(__dirname, 'dist'),
           noErrorOnMissing: true,
         },
+        {
+          from: path.resolve(__dirname, 'месяц.xml'),
+          to: path.resolve(__dirname, 'dist', 'месяц.xml'),
+          noErrorOnMissing: true,
+        },
       ],
     }),
   ],

@@ -31,6 +31,14 @@ type ContractAgreement = {
   GN_additional_agreement_status?: string
 }
 
+type ContractTermVisual = {
+  fromLabel: string
+  toLabel: string
+  monthsTotal: number
+  visibleMonthLabels: string[]
+  hiddenMonths: number
+}
+
 const COLUMNS = [
   { key: 'GN_contract_contractor_FK', label: 'контрагент', kind: 'lookup' as const },
   { key: 'GN_contract_department', label: 'подразделение', kind: 'text' as const },
@@ -42,6 +50,11 @@ const COLUMNS = [
   { key: 'GN_contract_status_updated_at', label: 'дата обновления статуса', kind: 'date' as const },
   { key: 'GN_contract_approval_status', label: 'статус', kind: 'status' as const },
 ]
+
+const DISPLAY_COLUMNS = COLUMNS.filter((column) => column.kind !== 'status')
+const ACTIVE_TABLE_COLSPAN = DISPLAY_COLUMNS.length + 4
+
+const MONTHS_SHORT_RU = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 
 function mapLookupOptions(rows: Row[], valueKey: string, labelKey: string): LookupOption[] {
   return rows.map((row) => ({
@@ -91,6 +104,79 @@ function formatDateDisplay(value: string): string {
   const [year, month, day] = dateOnly.split('-')
   const shortYear = year.slice(-2)
   return `${day}.${month}.${shortYear}`
+}
+
+function parseIsoDate(value: string): Date | null {
+  if (!value) return null
+
+  const dateOnly = value.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return null
+
+  const [yearRaw, monthRaw, dayRaw] = dateOnly.split('-')
+  const year = Number(yearRaw)
+  const month = Number(monthRaw)
+  const day = Number(dayRaw)
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null
+
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (
+    parsed.getUTCFullYear() !== year
+    || parsed.getUTCMonth() !== month - 1
+    || parsed.getUTCDate() !== day
+  ) {
+    return null
+  }
+
+  return parsed
+}
+
+function formatMonthLabel(date: Date): string {
+  return `${MONTHS_SHORT_RU[date.getUTCMonth()]} ${String(date.getUTCFullYear()).slice(-2)}`
+}
+
+function shiftMonth(date: Date, monthOffset: number): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + monthOffset, 1))
+}
+
+function buildContractTermVisual(fromValue: string, toValue: string): ContractTermVisual | null {
+  const fromDate = parseIsoDate(fromValue)
+  const toDate = parseIsoDate(toValue)
+  if (!fromDate || !toDate) return null
+
+  const startDate = fromDate.getTime() <= toDate.getTime() ? fromDate : toDate
+  const endDate = fromDate.getTime() <= toDate.getTime() ? toDate : fromDate
+
+  const monthsTotal = (endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12 + (endDate.getUTCMonth() - startDate.getUTCMonth()) + 1
+  if (monthsTotal <= 0) return null
+
+  const maxVisibleSegments = 24
+  const visibleMonthLabels: string[] = []
+  let hiddenMonths = 0
+
+  if (monthsTotal <= maxVisibleSegments) {
+    for (let index = 0; index < monthsTotal; index += 1) {
+      visibleMonthLabels.push(formatMonthLabel(shiftMonth(startDate, index)))
+    }
+  } else {
+    const edgeMonths = 12
+    for (let index = 0; index < edgeMonths; index += 1) {
+      visibleMonthLabels.push(formatMonthLabel(shiftMonth(startDate, index)))
+    }
+
+    hiddenMonths = monthsTotal - edgeMonths * 2
+
+    for (let index = edgeMonths; index > 0; index -= 1) {
+      visibleMonthLabels.push(formatMonthLabel(shiftMonth(endDate, -index + 1)))
+    }
+  }
+
+  return {
+    fromLabel: formatMonthLabel(startDate),
+    toLabel: formatMonthLabel(endDate),
+    monthsTotal,
+    visibleMonthLabels,
+    hiddenMonths,
+  }
 }
 
 export default function ContractsPage({ onOpenContract }: { onOpenContract: (contractId: number) => void }) {
@@ -633,9 +719,10 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                 <tr>
                   <th>№</th>
                   <th>ID договора</th>
-                  {COLUMNS.filter(c => c.kind !== 'status').map((column) => (
+                  {DISPLAY_COLUMNS.map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
+                  <th>Срок по месяцам</th>
                   <th>ДС</th>
                 </tr>
               </thead>
@@ -647,7 +734,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                       <tr key={`contract-${row.GN_contract_id}`}>
                     <td className="invest-program-row-number">{rowIndex + 1}</td>
                     <td className="invest-program-row-number">{row.GN_contract_id}</td>
-                    {COLUMNS.filter((c) => c.kind !== 'status').map((column) => {
+                    {DISPLAY_COLUMNS.map((column) => {
                         if (column.kind === 'lookup') {
                           const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
                           const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
@@ -700,6 +787,42 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                           </td>
                         )
                       })}
+                      <td>
+                        {(() => {
+                          const termVisual = buildContractTermVisual(
+                            String(row.GN_contract_term_from ?? ''),
+                            String(row.GN_contract_term_to ?? ''),
+                          )
+
+                          if (!termVisual) {
+                            return <span className="contracts-term-empty">нет данных</span>
+                          }
+
+                          return (
+                            <div className="contracts-term-visual" title={`${termVisual.fromLabel} - ${termVisual.toLabel}, ${termVisual.monthsTotal} мес.`}>
+                              <div className="contracts-term-range">
+                                <span>{termVisual.fromLabel}</span>
+                                <span>{termVisual.toLabel}</span>
+                              </div>
+                              <div className="contracts-term-track" aria-label={`Срок договора ${termVisual.monthsTotal} месяцев`}>
+                                {termVisual.visibleMonthLabels.map((monthLabel, monthIndex) => (
+                                  <span
+                                    key={`${row.GN_contract_id}-${monthLabel}-${monthIndex}`}
+                                    className="contracts-term-segment"
+                                    title={monthLabel}
+                                  />
+                                ))}
+                                {termVisual.hiddenMonths > 0 ? (
+                                  <span className="contracts-term-gap" title={`Скрыто ${termVisual.hiddenMonths} мес.`}>
+                                    +{termVisual.hiddenMonths}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="contracts-term-meta">{termVisual.monthsTotal} мес.</div>
+                            </div>
+                          )
+                        })()}
+                      </td>
                       <td className="invest-program-actions-cell">
                         {(() => {
                           const contractAgreements = agreementsByContract[row.GN_contract_id] ?? []
@@ -740,7 +863,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
 
                       return (
                         <tr key={`agreements-${row.GN_contract_id}`} className="contracts-agreements-row">
-                          <td colSpan={9} className="contracts-agreements-cell">
+                          <td colSpan={ACTIVE_TABLE_COLSPAN} className="contracts-agreements-cell">
                             <div className="contracts-agreements-nested">
                               <div className="contracts-agreements-title">Дополнительные соглашения</div>
                               <table className="guide-table table-compact contracts-agreements-table">
@@ -884,7 +1007,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                 <tr>
                   <th>№</th>
                   <th>ID договора</th>
-                  {COLUMNS.filter((c) => c.kind !== 'status').map((column) => (
+                  {DISPLAY_COLUMNS.map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
                   <th>Действия</th>
@@ -898,7 +1021,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                       <tr key={`archive-contract-${row.GN_contract_id}`}>
                         <td className="invest-program-row-number">{rowIndex + 1}</td>
                         <td className="invest-program-row-number">{row.GN_contract_id}</td>
-                        {COLUMNS.filter((c) => c.kind !== 'status').map((column) => {
+                        {DISPLAY_COLUMNS.map((column) => {
                           if (column.kind === 'lookup') {
                             const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
                             const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
