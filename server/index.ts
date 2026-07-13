@@ -1,7 +1,7 @@
 ﻿import 'dotenv/config';
 import express from 'express';
 import { setupRoutes } from './routes.js';
-import { createDbClient, ensureDatabaseTables, ensureContractColumns } from './db.js';
+import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureSatellitesXmlTable } from './db.js';
 
 // Точка входа backend-приложения.
 // Загружает переменные окружения, создает Express-приложение,
@@ -51,6 +51,7 @@ async function start(): Promise<void> {
     // Проверяем и создаем обязательные таблицы, если они отсутствуют.
     await ensureDatabaseTables(client);
     await ensureContractColumns(client);
+    await ensureSatellitesXmlTable(client);
   } finally {
     await client.end();
   }

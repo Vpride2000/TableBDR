@@ -1,4 +1,5 @@
 import { Express, Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { createDbClient, toFiniteNumber, buildFallbackCalculationLine } from './db.js';
 import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS, ForecastMonthlyApiRowInput, ForecastMonthlyDbRow, LimitCalculationLineInput, LimitCalculationLineRow, LimitCalculationResponseLine } from './config.js';
 
@@ -6,17 +7,91 @@ import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS, ForecastMonthlyApiRowInput, Foreca
 // Этот модуль регистрирует HTTP endpoints для получения и сохранения данных
 // по прогнозам, всем сущностям GN и расчету лимитов.
 export function setupRoutes(app: Express): void {
+  const satellitesControlUsers: Record<string, string> = {
+    ADM: process.env.SAT_CTRL_PASS_ADM ?? '',
+    'ВГГФ': process.env.SAT_CTRL_PASS_VGGF ?? '',
+    'СГГФ': process.env.SAT_CTRL_PASS_SGGF ?? '',
+    'ТГГФ': process.env.SAT_CTRL_PASS_TGGF ?? '',
+  };
+  const satellitesControlSessions = new Map<string, { user: string; expiresAt: number }>();
+  const satellitesSessionTtlMs = 8 * 60 * 60 * 1000;
+
+  function getSatellitesUserByToken(req: Request): string | null {
+    const authHeader = String(req.headers.authorization ?? '').trim();
+    if (!authHeader.toLowerCase().startsWith('bearer ')) return null;
+
+    const token = authHeader.slice(7).trim();
+    if (!token) return null;
+
+    const session = satellitesControlSessions.get(token);
+    if (!session) return null;
+
+    if (session.expiresAt < Date.now()) {
+      satellitesControlSessions.delete(token);
+      return null;
+    }
+
+    return session.user;
+  }
+
+  function normalizeMacKey(value: string): string {
+    return String(value ?? '').replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+  }
+
+  function parseAmount(value: unknown): number {
+    const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.');
+    const numeric = Number(normalized);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
   // Health check
   // Простой endpoint для проверки, что сервер доступен.
   app.get('/api/health', (req: Request, res: Response): void => {
     res.json({ status: 'ok' });
   });
 
+  app.post('/api/satellites/auth', (req: Request, res: Response): void => {
+    const payload = req.body as { username?: string; password?: string };
+    const username = String(payload?.username ?? '').trim();
+    const password = String(payload?.password ?? '');
+
+    if (!username || !password) {
+      res.status(400).json({ error: 'Требуются логин и пароль' });
+      return;
+    }
+
+    const expectedPassword = satellitesControlUsers[username];
+    if (!expectedPassword) {
+      res.status(401).json({ error: 'Неверный логин или пароль' });
+      return;
+    }
+
+    if (password !== expectedPassword) {
+      res.status(401).json({ error: 'Неверный логин или пароль' });
+      return;
+    }
+
+    const token = randomUUID();
+    satellitesControlSessions.set(token, {
+      user: username,
+      expiresAt: Date.now() + satellitesSessionTtlMs,
+    });
+
+    res.json({ ok: true, user: username, token });
+  });
+
   // Satellites control route
   // Получение данных о спутниковых услугах с информацией о подразделениях
   app.get('/api/satellites', async (req: Request, res: Response): Promise<void> => {
+    const authUser = getSatellitesUserByToken(req);
+    if (!authUser) {
+      res.status(401).json({ error: 'Требуется авторизация' });
+      return;
+    }
+
     const client = await createDbClient();
     try {
+      const branchFilter = authUser === 'ADM' ? null : `%${authUser}%`;
       const result = await client.query<{
         GN_satellite_id: number;
         GN_satellite_mac: string;
@@ -32,13 +107,260 @@ export function setupRoutes(app: Express): void {
            d."GN_department"
          FROM "GN_satellites" s
          LEFT JOIN "GN_department" d ON s."GN_department_FK" = d."GN_Dep_id"
+         WHERE ($1::text IS NULL OR COALESCE(d."GN_department", '') ILIKE $1)
          ORDER BY s."GN_satellite_id" ASC`
+        ,
+        [branchFilter]
       );
 
       res.json({ satellites: result.rows });
     } catch (err) {
       console.error('Failed to fetch satellites', err);
       res.status(500).json({ error: 'Failed to fetch satellites' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.put('/api/satellites/:id', async (req: Request, res: Response): Promise<void> => {
+    const authUser = getSatellitesUserByToken(req);
+    if (!authUser) {
+      res.status(401).json({ error: 'Требуется авторизация' });
+      return;
+    }
+
+    if (authUser !== 'ADM') {
+      res.status(403).json({ error: 'Изменение доступно только пользователю АДМ' });
+      return;
+    }
+
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: 'Некорректный id' });
+      return;
+    }
+
+    const payload = req.body as {
+      mac?: string;
+      directionName?: string;
+      departmentId?: number | null;
+    };
+
+    const mac = String(payload.mac ?? '').trim();
+    const directionName = String(payload.directionName ?? '').trim();
+    const departmentIdRaw = payload.departmentId;
+    const departmentId = departmentIdRaw == null || departmentIdRaw === ''
+      ? null
+      : Number(departmentIdRaw);
+
+    if (!mac || !directionName) {
+      res.status(400).json({ error: 'MAC и имя направления обязательны' });
+      return;
+    }
+
+    if (departmentId !== null && (!Number.isFinite(departmentId) || departmentId <= 0)) {
+      res.status(400).json({ error: 'Некорректное подразделение' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const updated = await client.query<{
+        GN_satellite_id: number;
+        GN_satellite_mac: string;
+        GN_satellite_direction_name: string;
+        GN_Dep_id: number | null;
+        GN_department: string | null;
+      }>(
+        `UPDATE "GN_satellites" s
+         SET
+           "GN_satellite_mac" = $1,
+           "GN_satellite_direction_name" = $2,
+           "GN_department_FK" = $3
+         WHERE s."GN_satellite_id" = $4
+         RETURNING
+           s."GN_satellite_id",
+           s."GN_satellite_mac",
+           s."GN_satellite_direction_name",
+           s."GN_department_FK"`,
+        [mac, directionName, departmentId, id]
+      );
+
+      if (updated.rowCount === 0) {
+        res.status(404).json({ error: 'Спутник не найден' });
+        return;
+      }
+
+      const row = updated.rows[0];
+      const dep = await client.query<{ GN_department: string | null }>(
+        `SELECT "GN_department" FROM "GN_department" WHERE "GN_Dep_id" = $1 LIMIT 1`,
+        [row.GN_department_FK]
+      );
+
+      res.json({
+        GN_satellite_id: row.GN_satellite_id,
+        GN_satellite_mac: row.GN_satellite_mac,
+        GN_satellite_direction_name: row.GN_satellite_direction_name,
+        GN_Dep_id: row.GN_department_FK,
+        GN_department: dep.rows[0]?.GN_department ?? null,
+      });
+    } catch (err) {
+      console.error('Failed to update satellite', err);
+      res.status(500).json({ error: 'Failed to update satellite' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/satellites/xml-monthly', async (req: Request, res: Response): Promise<void> => {
+    const authUser = getSatellitesUserByToken(req);
+    if (!authUser) {
+      res.status(401).json({ error: 'Требуется авторизация' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const branchFilter = authUser === 'ADM' ? null : `%${authUser}%`;
+      const result = await client.query<{
+        mac_norm: string;
+        month_name: string;
+        branch: string | null;
+        tariff: string | null;
+        status: string;
+        amount_without_vat: string | number;
+      }>(
+        `SELECT
+           x."mac_norm" AS mac_norm,
+           x."month_name" AS month_name,
+           x."branch" AS branch,
+           x."tariff" AS tariff,
+           x."status" AS status,
+           x."amount_without_vat" AS amount_without_vat
+         FROM "GN_satellite_xml_monthly" x
+         LEFT JOIN "GN_satellites" s ON REPLACE(UPPER(COALESCE(s."GN_satellite_mac", '')), ':', '') = x."mac_norm"
+         LEFT JOIN "GN_department" d ON s."GN_department_FK" = d."GN_Dep_id"
+         WHERE ($1::text IS NULL OR COALESCE(d."GN_department", '') ILIKE $1)
+         ORDER BY x."month_name" ASC, x."mac_norm" ASC`,
+        [branchFilter]
+      );
+
+      res.json({ rows: result.rows });
+    } catch (err) {
+      console.error('Failed to fetch satellites xml monthly', err);
+      res.status(500).json({ error: 'Failed to fetch satellites xml monthly' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.post('/api/satellites/xml-monthly', async (req: Request, res: Response): Promise<void> => {
+    const authUser = getSatellitesUserByToken(req);
+    if (!authUser) {
+      res.status(401).json({ error: 'Требуется авторизация' });
+      return;
+    }
+
+    const payload = req.body as {
+      rows?: Array<{
+        macAddress?: string;
+        month?: string;
+        branch?: string;
+        tariff?: string;
+        status?: string;
+        amountWithoutVat?: string | number;
+      }>;
+    };
+
+    if (!Array.isArray(payload.rows) || payload.rows.length === 0) {
+      res.status(400).json({ error: 'rows are required' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+
+      for (const row of payload.rows) {
+        const macNorm = normalizeMacKey(row.macAddress ?? '');
+        const monthName = String(row.month ?? '').trim();
+        if (!macNorm || !monthName) {
+          continue;
+        }
+
+        await client.query(
+          `INSERT INTO "GN_satellite_xml_monthly" (
+             "mac_norm",
+             "month_name",
+             "branch",
+             "tariff",
+             "status",
+             "amount_without_vat",
+             "uploaded_by"
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT ("mac_norm", "month_name")
+           DO UPDATE SET
+             "branch" = EXCLUDED."branch",
+             "tariff" = EXCLUDED."tariff",
+             "status" = EXCLUDED."status",
+             "amount_without_vat" = EXCLUDED."amount_without_vat",
+             "uploaded_by" = EXCLUDED."uploaded_by",
+             "uploaded_at" = NOW()`,
+          [
+            macNorm,
+            monthName,
+            String(row.branch ?? '').trim() || null,
+            String(row.tariff ?? '').trim() || null,
+            ['сломан', 'склад', 'в работе', 'отключен', 'ошибка'].includes(String(row.status ?? '').trim().toLowerCase())
+              ? String(row.status ?? '').trim().toLowerCase()
+              : 'склад',
+            parseAmount(row.amountWithoutVat),
+            authUser,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      res.json({ ok: true });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to save satellites xml monthly', err);
+      res.status(500).json({ error: 'Failed to save satellites xml monthly' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.delete('/api/satellites/xml-monthly/:month', async (req: Request, res: Response): Promise<void> => {
+    const authUser = getSatellitesUserByToken(req);
+    if (!authUser) {
+      res.status(401).json({ error: 'Требуется авторизация' });
+      return;
+    }
+
+    if (authUser !== 'ADM') {
+      res.status(403).json({ error: 'Очистка доступна только пользователю АДМ' });
+      return;
+    }
+
+    const month = decodeURIComponent(String(req.params.month ?? '')).trim();
+    if (!month) {
+      res.status(400).json({ error: 'month is required' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const deleted = await client.query(
+        `DELETE FROM "GN_satellite_xml_monthly"
+         WHERE "month_name" = $1`,
+        [month]
+      );
+
+      res.json({ ok: true, deletedRows: deleted.rowCount ?? 0 });
+    } catch (err) {
+      console.error('Failed to clear satellites xml month', err);
+      res.status(500).json({ error: 'Failed to clear satellites xml month' });
     } finally {
       await client.end();
     }

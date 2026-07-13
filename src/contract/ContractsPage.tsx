@@ -31,23 +31,25 @@ type ContractAgreement = {
   GN_additional_agreement_status?: string
 }
 
+type ContractTermSegment = { label: string; color: 'blue' | 'yellow' | 'red' }
+
 type ContractTermVisual = {
   fromLabel: string
   toLabel: string
   monthsTotal: number
-  visibleMonthLabels: string[]
-  hiddenMonths: number
+  segments: ContractTermSegment[]
+  visualStartLabel: string
 }
 
 const COLUMNS = [
-  { key: 'GN_contract_contractor_FK', label: 'контрагент', kind: 'lookup' as const },
-  { key: 'GN_contract_department', label: 'подразделение', kind: 'text' as const },
-  { key: 'GN_contract_dogovor_FK', label: 'договор', kind: 'lookup' as const },
-  { key: 'GN_contract_date', label: 'дата договора', kind: 'date' as const },
-  { key: 'GN_contract_term_from', label: 'срок дейстивия С', kind: 'date' as const },
-  { key: 'GN_contract_term_to', label: 'срок действия ПО', kind: 'date' as const },
-  { key: 'GN_contract_state', label: 'состояние', kind: 'text' as const },
-  { key: 'GN_contract_status_updated_at', label: 'дата обновления статуса', kind: 'date' as const },
+  { key: 'GN_contract_contractor_FK', label: 'контрагент', kind: 'lookup' as const, narrow: true },
+  { key: 'GN_contract_department', label: 'подразделение', kind: 'text' as const, narrow: true },
+  { key: 'GN_contract_dogovor_FK', label: 'договор', kind: 'lookup' as const, narrow: true },
+  { key: 'GN_contract_date', label: 'дата', kind: 'date' as const },
+  { key: 'GN_contract_term_from', label: 'срок С', kind: 'date' as const },
+  { key: 'GN_contract_term_to', label: 'срок ПО', kind: 'date' as const },
+  { key: 'GN_contract_state', label: 'состояние', kind: 'text' as const, narrow: true },
+  { key: 'GN_contract_status_updated_at', label: 'обновлён', kind: 'date' as const },
   { key: 'GN_contract_approval_status', label: 'статус', kind: 'status' as const },
 ]
 
@@ -146,36 +148,48 @@ function buildContractTermVisual(fromValue: string, toValue: string): ContractTe
   const startDate = fromDate.getTime() <= toDate.getTime() ? fromDate : toDate
   const endDate = fromDate.getTime() <= toDate.getTime() ? toDate : fromDate
 
-  const monthsTotal = (endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12 + (endDate.getUTCMonth() - startDate.getUTCMonth()) + 1
+  const now = new Date()
+  const currentYearStart = new Date(Date.UTC(now.getFullYear(), 0, 1))
+
+  const monthsTotal = (endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12
+    + (endDate.getUTCMonth() - startDate.getUTCMonth()) + 1
   if (monthsTotal <= 0) return null
 
-  const maxVisibleSegments = 24
-  const visibleMonthLabels: string[] = []
-  let hiddenMonths = 0
-
-  if (monthsTotal <= maxVisibleSegments) {
-    for (let index = 0; index < monthsTotal; index += 1) {
-      visibleMonthLabels.push(formatMonthLabel(shiftMonth(startDate, index)))
+  // Для завершившихся до текущего года оставляем строку, но без цветовой индикации.
+  if (endDate.getTime() < currentYearStart.getTime()) {
+    return {
+      fromLabel: formatMonthLabel(startDate),
+      toLabel: formatMonthLabel(endDate),
+      monthsTotal,
+      segments: [],
+      visualStartLabel: formatMonthLabel(startDate),
     }
-  } else {
-    const edgeMonths = 12
-    for (let index = 0; index < edgeMonths; index += 1) {
-      visibleMonthLabels.push(formatMonthLabel(shiftMonth(startDate, index)))
-    }
+  }
 
-    hiddenMonths = monthsTotal - edgeMonths * 2
+  // Визуал начинается с начала текущего года (или с даты начала договора, если она позже)
+  const visualStart = startDate.getTime() > currentYearStart.getTime() ? startDate : currentYearStart
 
-    for (let index = edgeMonths; index > 0; index -= 1) {
-      visibleMonthLabels.push(formatMonthLabel(shiftMonth(endDate, -index + 1)))
-    }
+  const visualMonths = (endDate.getUTCFullYear() - visualStart.getUTCFullYear()) * 12
+    + (endDate.getUTCMonth() - visualStart.getUTCMonth()) + 1
+  if (visualMonths <= 0) return null
+
+  const segments: ContractTermSegment[] = []
+  for (let i = 0; i < visualMonths; i += 1) {
+    const segDate = shiftMonth(visualStart, i)
+    const monthsToEnd = (endDate.getUTCFullYear() - segDate.getUTCFullYear()) * 12
+      + (endDate.getUTCMonth() - segDate.getUTCMonth())
+    let color: ContractTermSegment['color'] = 'blue'
+    if (monthsToEnd < 3) color = 'red'
+    else if (monthsToEnd < 6) color = 'yellow'
+    segments.push({ label: formatMonthLabel(segDate), color })
   }
 
   return {
     fromLabel: formatMonthLabel(startDate),
     toLabel: formatMonthLabel(endDate),
     monthsTotal,
-    visibleMonthLabels,
-    hiddenMonths,
+    segments,
+    visualStartLabel: formatMonthLabel(visualStart),
   }
 }
 
@@ -714,7 +728,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
        <h3 className="section-title section-title--success">Действующие договора</h3>
             {/* Main contracts table */}
             <div className="guide-table-wrap invest-program-table-wrap">
-              <table className="guide-table table-compact invest-program-table-min">
+              <table className="guide-table table-compact invest-program-table-min contracts-active-table">
               <thead>
                 <tr>
                   <th>№</th>
@@ -738,18 +752,20 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                         if (column.kind === 'lookup') {
                           const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
                           const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
+                          const narrowClass = column.narrow ? 'contracts-cell-narrow' : ''
                           return (
-                            <td key={column.key}>
+                            <td key={column.key} className={narrowClass}>
                               {column.key === 'GN_contract_dogovor_FK' ? (
                                 <button
                                   type="button"
-                                  className="contract-cell-button"
+                                  className="contract-cell-button contracts-cell-truncate"
                                   onClick={() => onOpenContract(row.GN_contract_id)}
+                                  title={label}
                                 >
                                   {label}
                                 </button>
                               ) : (
-                                <span className="invest-program-cell-text">{label}</span>
+                                <span className="invest-program-cell-text contracts-cell-truncate" title={label}>{label}</span>
                               )}
                             </td>
                           )
@@ -781,9 +797,10 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                         }
 
                         const value = String(row[column.key as keyof ContractRow] ?? '')
+                        const narrowClass = column.narrow ? 'contracts-cell-narrow' : ''
                         return (
-                          <td key={column.key}>
-                            <span className="invest-program-cell-text">{value}</span>
+                          <td key={column.key} className={narrowClass}>
+                            <span className="invest-program-cell-text contracts-cell-truncate" title={value}>{value}</span>
                           </td>
                         )
                       })}
@@ -799,26 +816,21 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                           }
 
                           return (
-                            <div className="contracts-term-visual" title={`${termVisual.fromLabel} - ${termVisual.toLabel}, ${termVisual.monthsTotal} мес.`}>
+                            <div className="contracts-term-visual" title={`${termVisual.fromLabel} – ${termVisual.toLabel}, всего ${termVisual.monthsTotal} мес.`}>
                               <div className="contracts-term-range">
-                                <span>{termVisual.fromLabel}</span>
+                                <span>{termVisual.segments.length > 0 ? termVisual.visualStartLabel : termVisual.fromLabel}</span>
                                 <span>{termVisual.toLabel}</span>
                               </div>
                               <div className="contracts-term-track" aria-label={`Срок договора ${termVisual.monthsTotal} месяцев`}>
-                                {termVisual.visibleMonthLabels.map((monthLabel, monthIndex) => (
+                                {termVisual.segments.map((seg, monthIndex) => (
                                   <span
-                                    key={`${row.GN_contract_id}-${monthLabel}-${monthIndex}`}
-                                    className="contracts-term-segment"
-                                    title={monthLabel}
+                                    key={`${row.GN_contract_id}-${seg.label}-${monthIndex}`}
+                                    className={`contracts-term-segment contracts-term-segment--${seg.color}`}
+                                    title={seg.label}
                                   />
                                 ))}
-                                {termVisual.hiddenMonths > 0 ? (
-                                  <span className="contracts-term-gap" title={`Скрыто ${termVisual.hiddenMonths} мес.`}>
-                                    +{termVisual.hiddenMonths}
-                                  </span>
-                                ) : null}
                               </div>
-                              <div className="contracts-term-meta">{termVisual.monthsTotal} мес.</div>
+                              <div className="contracts-term-meta">{termVisual.monthsTotal} мес. — до {termVisual.toLabel}</div>
                             </div>
                           )
                         })()}

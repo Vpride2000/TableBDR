@@ -1448,6 +1448,18 @@ p {
   width: 100%;
 }
 
+.satellite-amount--yellow {
+  background: #fef3c7;
+}
+
+.satellite-amount--green {
+  background: #dcfce7;
+}
+
+.satellite-amount--red {
+  background: #fee2e2;
+}
+
 @media (max-width: 960px) {
   .satellites-table-card {
     width: 100%;
@@ -1555,6 +1567,18 @@ p {
   background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
 }
 
+.contracts-term-segment--blue {
+  background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+}
+
+.contracts-term-segment--yellow {
+  background: linear-gradient(180deg, #fde68a 0%, #f59e0b 100%);
+}
+
+.contracts-term-segment--red {
+  background: linear-gradient(180deg, #fca5a5 0%, #ef4444 100%);
+}
+
 .contracts-term-gap {
   font-size: 0.58rem;
   color: #334155;
@@ -1573,6 +1597,19 @@ p {
 .contracts-term-empty {
   color: #94a3b8;
   font-size: 0.62rem;
+}
+
+.contracts-active-table .contracts-cell-narrow {
+  max-width: 110px;
+  overflow: hidden;
+}
+
+.contracts-active-table .contracts-cell-truncate {
+  display: block;
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .contracts-agreements-cell {

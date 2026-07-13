@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import {
+  aggregateSatelliteRowsByMac,
   buildSatelliteBranchSummary,
   parseSatelliteAmount,
   parseSatelliteRowsFromBuffer,
@@ -42,7 +43,7 @@ export default function SatellitesDetailsPage() {
         if (!(buffer instanceof ArrayBuffer)) throw new Error('Некорректный формат файла')
 
         const parsedRows = parseSatelliteRowsFromBuffer(buffer)
-        setRows(parsedRows)
+        setRows(aggregateSatelliteRowsByMac(parsedRows))
         setError(null)
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Не удалось загрузить XML'

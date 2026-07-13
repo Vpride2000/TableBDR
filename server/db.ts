@@ -86,3 +86,25 @@ export function buildFallbackCalculationLine(quantity: number, limit: number, un
     note: '',
   };
 }
+
+export async function ensureSatellitesXmlTable(client: Client): Promise<void> {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS "GN_satellite_xml_monthly" (
+       "id" SERIAL PRIMARY KEY,
+       "mac_norm" TEXT NOT NULL,
+       "month_name" TEXT NOT NULL,
+       "branch" TEXT,
+       "tariff" TEXT,
+       "status" TEXT NOT NULL DEFAULT 'склад',
+       "amount_without_vat" NUMERIC(18,2) NOT NULL DEFAULT 0,
+       "uploaded_by" TEXT NOT NULL,
+       "uploaded_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       UNIQUE ("mac_norm", "month_name")
+     )`
+  );
+
+  await client.query(
+    `ALTER TABLE "GN_satellite_xml_monthly"
+     ADD COLUMN IF NOT EXISTS "status" TEXT NOT NULL DEFAULT 'склад'`
+  );
+}

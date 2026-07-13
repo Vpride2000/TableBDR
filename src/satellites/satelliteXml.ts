@@ -32,6 +32,27 @@ function normalizeMacText(value: string): string {
     .replace(/е/g, 'e')
 }
 
+function normalizeMonthName(value: string): string {
+  const source = (value ?? '').trim().toLowerCase()
+
+  const monthMap: Record<string, string> = {
+    январе: 'январь',
+    феврале: 'февраль',
+    марте: 'март',
+    апреле: 'апрель',
+    мае: 'май',
+    июне: 'июнь',
+    июле: 'июль',
+    августе: 'август',
+    сентябре: 'сентябрь',
+    октябре: 'октябрь',
+    ноябре: 'ноябрь',
+    декабре: 'декабрь',
+  }
+
+  return monthMap[source] ?? source
+}
+
 function parseNameFields(sourceName: string): {
   cleanedDescription: string
   objectName: string
@@ -57,7 +78,7 @@ function parseNameFields(sourceName: string): {
     objectName: normalizeCellText(objectMatch?.[1] ?? null),
     macAddress: normalizeCellText(macMatch?.[1] ?? null),
     tariff: normalizeCellText(tariffMatch?.[1] ?? null),
-    month: normalizeCellText(monthMatch?.[1] ?? null),
+    month: normalizeMonthName(normalizeCellText(monthMatch?.[1] ?? null)),
   }
 }
 
@@ -76,6 +97,67 @@ export function parseSatelliteAmount(value: string): number {
   const normalized = value.replace(/\s+/g, '').replace(',', '.')
   const result = Number(normalized)
   return Number.isFinite(result) ? result : 0
+}
+
+function normalizeMacKey(value: string): string {
+  return normalizeMacText(value).replace(/[^0-9a-fA-F]/g, '').toUpperCase()
+}
+
+function formatAmountForCell(value: number): string {
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
+}
+
+export function aggregateSatelliteRowsByMac(rows: SatelliteRow[]): SatelliteRow[] {
+  type Bucket = {
+    row: SatelliteRow
+    total: number
+    count: number
+    order: number
+  }
+
+  const byKey = new Map<string, Bucket>()
+
+  rows.forEach((row, index) => {
+    const macKey = normalizeMacKey(row.macAddress)
+    const key = macKey || `__row_${index}`
+    const amount = parseSatelliteAmount(row.amountWithoutVat)
+    const existing = byKey.get(key)
+
+    if (!existing) {
+      byKey.set(key, {
+        row: { ...row },
+        total: amount,
+        count: 1,
+        order: index,
+      })
+      return
+    }
+
+    existing.total += amount
+    existing.count += 1
+    if (!existing.row.branch && row.branch) existing.row.branch = row.branch
+    if (!existing.row.tariff && row.tariff) existing.row.tariff = row.tariff
+    if (!existing.row.month && row.month) existing.row.month = row.month
+  })
+
+  return [...byKey.values()]
+    .sort((a, b) => a.order - b.order)
+    .map(({ row, total, count }) => {
+      const nextRow: SatelliteRow = {
+        ...row,
+        amountWithoutVat: formatAmountForCell(total),
+      }
+
+      if (count > 1) {
+        const branchLabel = (nextRow.branch || '-').trim()
+        nextRow.branch = branchLabel.endsWith('(сумма)') ? branchLabel : `${branchLabel} (сумма)`
+      }
+
+      return nextRow
+    })
 }
 
 export function parseSatelliteRowsFromBuffer(buffer: ArrayBuffer): SatelliteRow[] {
