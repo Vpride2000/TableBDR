@@ -96,6 +96,7 @@ export function setupRoutes(app: Express): void {
         GN_satellite_id: number;
         GN_satellite_mac: string;
         GN_satellite_direction_name: string;
+        GN_satellite_description: string | null;
         GN_Dep_id: number;
         GN_department: string;
       }>(
@@ -103,6 +104,7 @@ export function setupRoutes(app: Express): void {
            s."GN_satellite_id",
            s."GN_satellite_mac",
            s."GN_satellite_direction_name",
+           s."GN_satellite_description",
            d."GN_Dep_id",
            d."GN_department"
          FROM "GN_satellites" s
@@ -129,11 +131,6 @@ export function setupRoutes(app: Express): void {
       return;
     }
 
-    if (authUser !== 'ADM') {
-      res.status(403).json({ error: 'Изменение доступно только пользователю АДМ' });
-      return;
-    }
-
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
       res.status(400).json({ error: 'Некорректный id' });
@@ -143,11 +140,13 @@ export function setupRoutes(app: Express): void {
     const payload = req.body as {
       mac?: string;
       directionName?: string;
+      description?: string;
       departmentId?: number | null;
     };
 
     const mac = String(payload.mac ?? '').trim();
     const directionName = String(payload.directionName ?? '').trim();
+    const description = String(payload.description ?? '').trim();
     const departmentIdRaw = payload.departmentId;
     const departmentId = departmentIdRaw == null || departmentIdRaw === ''
       ? null
@@ -169,6 +168,7 @@ export function setupRoutes(app: Express): void {
         GN_satellite_id: number;
         GN_satellite_mac: string;
         GN_satellite_direction_name: string;
+        GN_satellite_description: string | null;
         GN_Dep_id: number | null;
         GN_department: string | null;
       }>(
@@ -176,14 +176,16 @@ export function setupRoutes(app: Express): void {
          SET
            "GN_satellite_mac" = $1,
            "GN_satellite_direction_name" = $2,
-           "GN_department_FK" = $3
-         WHERE s."GN_satellite_id" = $4
+           "GN_satellite_description" = $3,
+           "GN_department_FK" = $4
+         WHERE s."GN_satellite_id" = $5
          RETURNING
            s."GN_satellite_id",
            s."GN_satellite_mac",
            s."GN_satellite_direction_name",
+           s."GN_satellite_description",
            s."GN_department_FK"`,
-        [mac, directionName, departmentId, id]
+        [mac, directionName, description || null, departmentId, id]
       );
 
       if (updated.rowCount === 0) {
@@ -201,6 +203,7 @@ export function setupRoutes(app: Express): void {
         GN_satellite_id: row.GN_satellite_id,
         GN_satellite_mac: row.GN_satellite_mac,
         GN_satellite_direction_name: row.GN_satellite_direction_name,
+        GN_satellite_description: row.GN_satellite_description,
         GN_Dep_id: row.GN_department_FK,
         GN_department: dep.rows[0]?.GN_department ?? null,
       });
@@ -229,6 +232,7 @@ export function setupRoutes(app: Express): void {
         tariff: string | null;
         status: string;
         amount_without_vat: string | number;
+        uploaded_at: string;
       }>(
         `SELECT
            x."mac_norm" AS mac_norm,
@@ -236,7 +240,8 @@ export function setupRoutes(app: Express): void {
            x."branch" AS branch,
            x."tariff" AS tariff,
            x."status" AS status,
-           x."amount_without_vat" AS amount_without_vat
+           x."amount_without_vat" AS amount_without_vat,
+           x."uploaded_at" AS uploaded_at
          FROM "GN_satellite_xml_monthly" x
          LEFT JOIN "GN_satellites" s ON REPLACE(UPPER(COALESCE(s."GN_satellite_mac", '')), ':', '') = x."mac_norm"
          LEFT JOIN "GN_department" d ON s."GN_department_FK" = d."GN_Dep_id"

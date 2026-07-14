@@ -108,3 +108,10 @@ export async function ensureSatellitesXmlTable(client: Client): Promise<void> {
      ADD COLUMN IF NOT EXISTS "status" TEXT NOT NULL DEFAULT 'склад'`
   );
 }
+
+export async function ensureSatelliteColumns(client: Client): Promise<void> {
+  await client.query(
+    `ALTER TABLE "GN_satellites"
+     ADD COLUMN IF NOT EXISTS "GN_satellite_description" TEXT`
+  );
+}

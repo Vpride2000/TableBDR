@@ -99,6 +99,12 @@ export function parseSatelliteAmount(value: string): number {
   return Number.isFinite(result) ? result : 0
 }
 
+function parseSatelliteQuantity(value: string): number {
+  const normalized = value.replace(/\s+/g, '').replace(',', '.')
+  const result = Number(normalized)
+  return Number.isFinite(result) ? result : 0
+}
+
 function normalizeMacKey(value: string): string {
   return normalizeMacText(value).replace(/[^0-9a-fA-F]/g, '').toUpperCase()
 }
@@ -114,7 +120,7 @@ export function aggregateSatelliteRowsByMac(rows: SatelliteRow[]): SatelliteRow[
   type Bucket = {
     row: SatelliteRow
     total: number
-    count: number
+    quantityTotal: number
     order: number
   }
 
@@ -130,14 +136,14 @@ export function aggregateSatelliteRowsByMac(rows: SatelliteRow[]): SatelliteRow[
       byKey.set(key, {
         row: { ...row },
         total: amount,
-        count: 1,
+        quantityTotal: parseSatelliteQuantity(row.quantity),
         order: index,
       })
       return
     }
 
     existing.total += amount
-    existing.count += 1
+    existing.quantityTotal += parseSatelliteQuantity(row.quantity)
     if (!existing.row.branch && row.branch) existing.row.branch = row.branch
     if (!existing.row.tariff && row.tariff) existing.row.tariff = row.tariff
     if (!existing.row.month && row.month) existing.row.month = row.month
@@ -145,15 +151,13 @@ export function aggregateSatelliteRowsByMac(rows: SatelliteRow[]): SatelliteRow[
 
   return [...byKey.values()]
     .sort((a, b) => a.order - b.order)
-    .map(({ row, total, count }) => {
+    .map(({ row, total, quantityTotal }) => {
       const nextRow: SatelliteRow = {
         ...row,
         amountWithoutVat: formatAmountForCell(total),
-      }
-
-      if (count > 1) {
-        const branchLabel = (nextRow.branch || '-').trim()
-        nextRow.branch = branchLabel.endsWith('(сумма)') ? branchLabel : `${branchLabel} (сумма)`
+        quantity: Number.isInteger(quantityTotal)
+          ? String(quantityTotal)
+          : String(quantityTotal).replace('.', ','),
       }
 
       return nextRow
