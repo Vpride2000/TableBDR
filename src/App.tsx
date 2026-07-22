@@ -1,5 +1,6 @@
 import { useRef, useState, useMemo, useEffect } from 'react'
 import BudgetTable from './budget/BudgetTable'
+import BudgetSummaryPopup from './budget/BudgetSummaryPopup'
 import Guide from './Guide'
 import AddBudgetRowPage from './budget/AddBudgetRowPage'
 import LimitDetailsPage from './budget/LimitDetailsPage'
@@ -12,6 +13,8 @@ import InvestProgramTablePage from './Purchase/InvestProgramTablePage'
 import SatellitesPage from './satellites/SatellitesPage'
 import SatellitesControlPage from './satellites/SatellitesControlPage'
 import SatellitesDetailsPage from './satellites/SatellitesDetailsPage'
+import CellularPage from './cellular/CellularPage'
+import CellularTariffGuidePopup from './cellular/CellularTariffGuidePopup'
 import { Page } from './types/forecast'
 import { pageFromHash } from './utils/forecastUtils'
 
@@ -265,9 +268,78 @@ function StartDashboard() {
   )
 }
 
+// Компонент подраздела страницы «Услуги_связи».
+// Содержит две вкладки: «Бюджет» с 4 попап-ссылками и «Детализации».
+function BudgetSectionPage({
+  onOpenBudgetDept,
+  onOpenBudgetPao,
+  onOpenBudgetMatrix,
+  onOpenBudgetMain,
+  onOpenSatellitesDetails,
+}: {
+  onOpenBudgetDept: () => void
+  onOpenBudgetPao: () => void
+  onOpenBudgetMatrix: () => void
+  onOpenBudgetMain: () => void
+  onOpenSatellitesDetails: () => void
+}) {
+  const [activeTab, setActiveTab] = useState<'budget' | 'details'>('budget')
+
+  return (
+    <div>
+      <div className="budget-subnav">
+        <button
+          type="button"
+          className={`budget-subnav-tab${activeTab === 'budget' ? ' budget-subnav-tab--active' : ''}`}
+          onClick={() => setActiveTab('budget')}
+        >
+          Бюджет
+        </button>
+        <button
+          type="button"
+          className={`budget-subnav-tab${activeTab === 'details' ? ' budget-subnav-tab--active' : ''}`}
+          onClick={() => setActiveTab('details')}
+        >
+          Детализации
+        </button>
+      </div>
+
+      {activeTab === 'budget' && (
+        <div className="budget-popup-links">
+          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetDept}>
+            Свод по лимитам по подразделениям
+          </button>
+          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetPao}>
+            Свод по лимитам по статьям бюджета УС
+          </button>
+          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetMatrix}>
+            Свод лимитов: подразделения × статьи бюджета
+          </button>
+          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetMain}>
+            Таблица лимитов по услугам связи
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'details' && (
+        <div className="budget-popup-links">
+          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenSatellitesDetails}>
+            Спутники: Детализация
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   const isAddRowPopup = window.location.hash === '#add-row-window'
   const isSatellitesDetailsPopup = window.location.hash === '#satellites-window'
+  const isBudgetDeptPopup = window.location.hash === '#budget-dept-window'
+  const isBudgetPaoPopup = window.location.hash === '#budget-pao-window'
+  const isBudgetMatrixPopup = window.location.hash === '#budget-matrix-window'
+  const isBudgetMainPopup = window.location.hash === '#budget-main-window'
+  const isCellularTariffGuidePopup = window.location.hash === '#cellular-tariff-guide-window'
   const limitPopupMatch = window.location.hash.match(/^#limit-window-(\d+)$/)
   const limitPopupRowId = limitPopupMatch ? Number(limitPopupMatch[1]) : null
   const isLimitPopup = limitPopupRowId != null && !Number.isNaN(limitPopupRowId)
@@ -289,6 +361,11 @@ export default function App() {
     const onHashChange = () => {
       if (window.location.hash === '#add-row-window') return
       if (window.location.hash === '#satellites-window') return
+      if (window.location.hash === '#budget-dept-window') return
+      if (window.location.hash === '#budget-pao-window') return
+      if (window.location.hash === '#budget-matrix-window') return
+      if (window.location.hash === '#budget-main-window') return
+      if (window.location.hash === '#cellular-tariff-guide-window') return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
       if (/^#object-window-\d+$/.test(window.location.hash)) return
@@ -326,6 +403,10 @@ export default function App() {
     }
     if (nextPage === 'satellites-control') {
       window.location.hash = '#satellites-control'
+      return
+    }
+    if (nextPage === 'cellular') {
+      window.location.hash = '#cellular'
       return
     }
     if (nextPage === 'guide') {
@@ -433,6 +514,86 @@ export default function App() {
     }
   }
 
+  // Открывает попап-окно сводной таблицы по подразделениям.
+  function openBudgetDeptWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#budget-dept-window`,
+      'budget-dept-window',
+      'popup=yes,width=900,height=800,resizable=yes,scrollbars=yes'
+    )
+    if (popup) popup.focus()
+  }
+
+  // Открывает попап-окно сводной таблицы по статьям бюджета УС.
+  function openBudgetPaoWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#budget-pao-window`,
+      'budget-pao-window',
+      'popup=yes,width=800,height=700,resizable=yes,scrollbars=yes'
+    )
+    if (popup) popup.focus()
+  }
+
+  // Открывает попап-окно матрицы подразделения × статьи бюджета.
+  function openBudgetMatrixWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#budget-matrix-window`,
+      'budget-matrix-window',
+      'popup=yes,width=1200,height=800,resizable=yes,scrollbars=yes'
+    )
+    if (popup) popup.focus()
+  }
+
+  // Открывает попап-окно основной таблицы лимитов.
+  function openBudgetMainWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#budget-main-window`,
+      'budget-main-window',
+      'popup=yes,width=1400,height=900,resizable=yes,scrollbars=yes'
+    )
+    if (popup) popup.focus()
+  }
+
+  if (isBudgetDeptPopup) {
+    return (
+      <main>
+        <BudgetSummaryPopup view="dept" />
+      </main>
+    )
+  }
+
+  if (isBudgetPaoPopup) {
+    return (
+      <main>
+        <BudgetSummaryPopup view="pao" />
+      </main>
+    )
+  }
+
+  if (isBudgetMatrixPopup) {
+    return (
+      <main>
+        <BudgetSummaryPopup view="matrix" />
+      </main>
+    )
+  }
+
+  if (isBudgetMainPopup) {
+    return (
+      <main>
+        <BudgetTable
+          onAddRow={openAddRowWindow}
+          onOpenLimit={openLimitWindow}
+          onOpenContract={openContractWindow}
+          onOpenObject={openObjectWindow}
+          onOpenDepartment={openDepartmentWindow}
+          onOpenContractor={openContractorWindow}
+          showMainTable
+        />
+      </main>
+    )
+  }
+
   if (isAddRowPopup) {
     return (
       <main>
@@ -445,6 +606,14 @@ export default function App() {
     return (
       <main>
         <SatellitesDetailsPage />
+      </main>
+    )
+  }
+
+  if (isCellularTariffGuidePopup) {
+    return (
+      <main>
+        <CellularTariffGuidePopup />
       </main>
     )
   }
@@ -518,6 +687,9 @@ export default function App() {
           <a href="#satellites" onClick={(event) => { event.preventDefault(); goTo('satellites') }}>
             Спутники
           </a>
+          <a href="#cellular" onClick={(event) => { event.preventDefault(); goTo('cellular') }}>
+            Сотовая
+          </a>
         </div>        
         <div className="app-nav-guide">
           <a href="#guide" onClick={(event) => { event.preventDefault(); goTo('guide') }}>
@@ -534,23 +706,15 @@ export default function App() {
          
         </div>
       )}
+      {page === 'cellular' && <CellularPage />}
       {page === 'budget' && (
-        <div>
-          <div className="budget-actions budget-actions--center">
-            <button className="page-action-btn page-action-btn--secondary" type="button" onClick={openSatellitesDetailsWindow}>
-              Спутники: Детализация
-            </button>
-          </div>
-          <BudgetTable
-            onAddRow={openAddRowWindow}
-            onOpenLimit={openLimitWindow}
-            onOpenContract={openContractWindow}
-            onOpenObject={openObjectWindow}
-            onOpenDepartment={openDepartmentWindow}
-            onOpenContractor={openContractorWindow}
-            showMainTable
-          />
-        </div>
+        <BudgetSectionPage
+          onOpenBudgetDept={openBudgetDeptWindow}
+          onOpenBudgetPao={openBudgetPaoWindow}
+          onOpenBudgetMatrix={openBudgetMatrixWindow}
+          onOpenBudgetMain={openBudgetMainWindow}
+          onOpenSatellitesDetails={openSatellitesDetailsWindow}
+        />
       )}
       {page === 'satellites' && <SatellitesPage />}
       {page === 'satellites-control' && <SatellitesControlPage onBack={() => goTo('satellites')} />}

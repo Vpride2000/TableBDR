@@ -116,6 +116,21 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
       'GN_equipment_type_FK',
     ],
   },
+  'satellite-gt-numbers': {
+    tableName: 'GN_satellite_gt_numbers',
+    idColumn: 'GN_satellite_gt_numbers_id',
+    editableColumns: ['GN_satellite_gt_number'],
+  },
+  'cellular-identifiers': {
+    tableName: 'GN_cellular_identifier',
+    idColumn: 'GN_cellular_identifier_id',
+    editableColumns: ['GN_cellular_identifier', 'GN_cellular_identifier_fio'],
+  },
+  'cellular-tariff-plans': {
+    tableName: 'GN_cellular_tariff_plan',
+    idColumn: 'GN_cellular_tariff_plan_id',
+    editableColumns: ['GN_cellular_tariff_plan', 'GN_cellular_tariff_plan_details'],
+  },
   'invest-program': {
     tableName: 'GN_invest_program',
     idColumn: 'GN_invest_program_id',

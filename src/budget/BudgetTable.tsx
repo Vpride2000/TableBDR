@@ -1,12 +1,9 @@
-﻿import { Suspense, useEffect, useMemo, useState, lazy } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils';
+import MainBudgetTableContent from './MainBudgetTableContent';
 
-// Компонент страницы бюджета.
-// Загружает список BDR-строк, поддерживает сортировку, фильтрацию,
-// редактирование строк и отображение сводных матриц.
-const DepartmentSummaryTable = lazy(() => import('./BudgetSummaryByDepartment'));
-const PaoItemSummaryTable = lazy(() => import('./BudgetSummaryByPaoItem'));
-const BudgetItemDepartmentSummaryTable = lazy(() => import('./BudgetSummaryByBudgetItemDepartment'));
+// Компонент таблицы лимитов по услугам связи.
+// Загружает список BDR-строк, поддерживает сортировку, фильтрацию и редактирование строк.
 
 type Row = Record<string, unknown>;
 interface BudgetTableProps {
@@ -90,9 +87,13 @@ interface BudgetTableProps {
   onOpenLimit: (rowId: number) => void;
   onOpenContract: (contractId: number) => void;
   onOpenObject: (rowId: number) => void;
+  onOpenDepartment: (rowId: number) => void;
+  onOpenContractor: (rowId: number) => void;
+  showMainTable?: boolean;
+  isMainTableCollapsibleByDefault?: boolean;
 }
 
-export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onOpenObject, onOpenDepartment, onOpenContractor, showMainTable = true }: BudgetTableProps) {
+export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpenContract, onOpenObject, onOpenDepartment, onOpenContractor, showMainTable = true, isMainTableCollapsibleByDefault = false }: BudgetTableProps) {
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -106,9 +107,6 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lookupRows, setLookupRows] = useState<Record<string, Row[]>>({});
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const [isDepartmentSummaryExpanded, setIsDepartmentSummaryExpanded] = useState(false);
-  const [isPaoSummaryExpanded, setIsPaoSummaryExpanded] = useState(false);
-  const [isBudgetItemDepartmentSummaryExpanded, setIsBudgetItemDepartmentSummaryExpanded] = useState(false);
   const [contractsLookup, setContractsLookup] = useState<Record<string, number>>({});
 
   function setFilter(column: string, value: string): void {
@@ -244,110 +242,6 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
     [filteredData]
   );
 
-  const summaryByDepartment = useMemo(() => {
-    const totals = new Map<string, { total: number; byPaoItem: Map<string, number> }>();
-
-    data.forEach((row) => {
-      const department = String(row['Подразделение'] ?? '').trim() || 'Без подразделения';
-      const paoItem = String(row['Статья бюджета УС'] ?? '').trim() || 'Без статьи бюджета УС';
-      const limit = parseNumericValue(row['Лимит']);
-
-      const current = totals.get(department) ?? {
-        total: 0,
-        byPaoItem: new Map<string, number>(),
-      };
-
-      current.total += limit;
-      current.byPaoItem.set(paoItem, (current.byPaoItem.get(paoItem) ?? 0) + limit);
-      totals.set(department, current);
-    });
-
-    return [...totals.entries()]
-      .map(([department, value]) => ({
-        department,
-        totalLimit: value.total,
-        paoItems: [...value.byPaoItem.entries()]
-          .map(([paoItem, totalLimit]) => ({ paoItem, totalLimit }))
-          .sort((a, b) => a.paoItem.localeCompare(b.paoItem, 'ru')),
-      }))
-      .sort((a, b) => a.department.localeCompare(b.department, 'ru'));
-  }, [data]);
-
-  const summaryTotalLimit = useMemo(
-    () => summaryByDepartment.reduce((acc, item) => acc + item.totalLimit, 0),
-    [summaryByDepartment]
-  );
-
-  const summaryByPaoItem = useMemo(() => {
-    const totals = new Map<string, number>();
-
-    data.forEach((row) => {
-      const paoItem = String(row['Статья бюджета УС'] ?? '').trim() || 'Без статьи бюджета УС';
-      const limit = parseNumericValue(row['Лимит']);
-      totals.set(paoItem, (totals.get(paoItem) ?? 0) + limit);
-    });
-
-    return [...totals.entries()]
-      .map(([paoItem, totalLimit]) => ({ paoItem, totalLimit }))
-      .sort((a, b) => a.paoItem.localeCompare(b.paoItem, 'ru'));
-  }, [data]);
-
-  const summaryPaoTotalLimit = useMemo(
-    () => summaryByPaoItem.reduce((acc, item) => acc + item.totalLimit, 0),
-    [summaryByPaoItem]
-  );
-
-  const summaryByBudgetItemDepartment = useMemo(() => {
-    const departmentsSet = new Set<string>();
-    const byBudgetItem = new Map<string, Map<string, number>>();
-
-    data.forEach((row) => {
-      const budgetItem = String(row['Статья бюджета'] ?? '').trim() || 'Без статьи бюджета';
-      const department = String(row['Подразделение'] ?? '').trim() || 'Без подразделения';
-      const limit = parseNumericValue(row['Лимит']);
-
-      departmentsSet.add(department);
-
-      const budgetItemRow = byBudgetItem.get(budgetItem) ?? new Map<string, number>();
-      budgetItemRow.set(department, (budgetItemRow.get(department) ?? 0) + limit);
-      byBudgetItem.set(budgetItem, budgetItemRow);
-    });
-
-    const departments = [...departmentsSet].sort((a, b) => a.localeCompare(b, 'ru'));
-    const budgetItems = [...byBudgetItem.keys()].sort((a, b) => a.localeCompare(b, 'ru'));
-
-    const rows = budgetItems.map((budgetItem) => {
-      const source = byBudgetItem.get(budgetItem) ?? new Map<string, number>();
-      const byDepartment: Record<string, number> = {};
-
-      departments.forEach((department) => {
-        byDepartment[department] = source.get(department) ?? 0;
-      });
-
-      const total = departments.reduce((sum, department) => sum + byDepartment[department], 0);
-
-      return {
-        budgetItem,
-        byDepartment,
-        total,
-      };
-    });
-
-    const totalsByDepartment: Record<string, number> = {};
-    departments.forEach((department) => {
-      totalsByDepartment[department] = rows.reduce((sum, row) => sum + (row.byDepartment[department] ?? 0), 0);
-    });
-
-    const total = rows.reduce((sum, row) => sum + row.total, 0);
-
-    return {
-      departments,
-      rows,
-      totalsByDepartment,
-      total,
-    };
-  }, [data]);
-
   function toggleSort(column: string): void {
     setSort((prev) => {
       if (!prev || prev.key !== column) {
@@ -359,11 +253,6 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
         direction: prev.direction === 'asc' ? 'desc' : 'asc',
       };
     });
-  }
-
-  function getSortMarker(column: string): string {
-    if (!sort || sort.key !== column) return '';
-    return sort.direction === 'asc' ? ' ▲' : ' ▼';
   }
 
   function startEdit(row: Row): void {
@@ -494,246 +383,44 @@ export default function BudgetTable({ onAddRow, onOpenLimit, onOpenContract, onO
       {error && <p className="hint hint--error">Ошибка: {error}</p>}
       {!loading && !error && data.length === 0 && <p className="hint">Нет данных.</p>}
 
-      {!loading && !error && summaryByDepartment.length > 0 && (
-        <div className="budget-summary-row">
-          <div className="guide-table-wrap budget-summary-wrap budget-summary-wrap--matrix">
-            <button
-              type="button"
-              className="budget-summary-toggle"
-              onClick={() => setIsDepartmentSummaryExpanded((prev) => !prev)}
-              aria-expanded={isDepartmentSummaryExpanded}
-            >
-              Свод по лимитам по подразделениям {isDepartmentSummaryExpanded ? '▼' : '▶'}
-            </button>
-            {isDepartmentSummaryExpanded && (
-              <Suspense fallback={<p className="hint">Загрузка свода...</p>}>
-                <DepartmentSummaryTable
-                  summaryByDepartment={summaryByDepartment}
-                  summaryTotalLimit={summaryTotalLimit}
-                />
-              </Suspense>
-            )}
-          </div>
-
-          <div className="guide-table-wrap budget-summary-wrap">
-            <button
-              type="button"
-              className="budget-summary-toggle"
-              onClick={() => setIsPaoSummaryExpanded((prev) => !prev)}
-              aria-expanded={isPaoSummaryExpanded}
-            >
-              Свод по лимитам по статьям бюджета УС {isPaoSummaryExpanded ? '▼' : '▶'}
-            </button>
-            {isPaoSummaryExpanded && (
-              <Suspense fallback={<p className="hint">Загрузка свода...</p>}>
-                <PaoItemSummaryTable
-                  summaryByPaoItem={summaryByPaoItem}
-                  summaryPaoTotalLimit={summaryPaoTotalLimit}
-                />
-              </Suspense>
-            )}
-          </div>
-
-          <div className="guide-table-wrap budget-summary-wrap">
-            <button
-              type="button"
-              className="budget-summary-toggle"
-              onClick={() => setIsBudgetItemDepartmentSummaryExpanded((prev) => !prev)}
-              aria-expanded={isBudgetItemDepartmentSummaryExpanded}
-            >
-              Свод лимитов: подразделения × статьи бюджета {isBudgetItemDepartmentSummaryExpanded ? '▼' : '▶'}
-            </button>
-            {isBudgetItemDepartmentSummaryExpanded && (
-              <Suspense fallback={<p className="hint">Загрузка свода...</p>}>
-                <BudgetItemDepartmentSummaryTable
-                  departments={summaryByBudgetItemDepartment.departments}
-                  rows={summaryByBudgetItemDepartment.rows}
-                  totalsByDepartment={summaryByBudgetItemDepartment.totalsByDepartment}
-                  total={summaryByBudgetItemDepartment.total}
-                />
-              </Suspense>
-            )}
-          </div>
-        </div>
-      )}
-
       {!loading && !error && data.length > 0 && showMainTable && (
         <>
           <div className="budget-actions budget-actions--top-right">
-            <button type="button" className="page-action-btn" onClick={onAddRow}>
+            <button type="button" className="page-action-btn" onClick={onAddRowProp}>
               Добавить строку
             </button>
           </div>
-
-          <div className="guide-table-wrap">
-            <table className="guide-table table-compact">
-              <thead>
-                <tr>
-                  {visibleMainColumns.map((col) => {
-                    const isLimitColumn = col === 'Лимит';
-                    const displayName = COLUMN_TITLES[col] ?? col;
-
-                    return (
-                      <th key={col}>
-                        <button
-                          type="button"
-                          className="table-sort-button"
-                          onClick={() => toggleSort(col)}
-                        >
-                          <span className={isLimitColumn ? 'budget-limit-header' : undefined}>
-                            {displayName}
-                            {isLimitColumn && (
-                              <span className="budget-limit-header-total">
-                                {FINANCIAL_NUMBER_FORMATTER.format(filteredLimitTotal)}
-                              </span>
-                            )}
-                          </span>
-                          {getSortMarker(col)}
-                        </button>
-                      </th>
-                    );
-                  })}
-                  <th>Действия</th>
-                </tr>
-                <tr className="filter-row">
-                  {visibleMainColumns.map((col) => (
-                    <th key={col}>
-                      {col === 'GN_bdr_ID' ? null : (
-                        <input
-                          className="column-filter-input"
-                          type="text"
-                          value={filters[col] ?? ''}
-                          onChange={(e) => setFilter(col, e.target.value)}
-                          placeholder="Фильтр..."
-                        />
-                      )}
-                    </th>
-                  ))}
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {filteredData.map((row, i) => {
-                  const rowId = Number(row['GN_bdr_ID']);
-                  const isEditing = editingRowId === rowId;
-
-                  return (
-                    <tr key={i} className={isEditing ? 'editing' : ''}>
-                      {visibleMainColumns.map((col) => (
-                        <td key={col}>
-                          {isEditing && col !== 'GN_bdr_ID' && LOCKED_EDIT_COLUMNS.has(col) ? (
-                            String(draft[col] ?? '')
-                          ) : isEditing && col !== 'GN_bdr_ID' && BDR_SELECT_CONFIG[col] ? (
-                            (() => {
-                              const options = getSelectOptionsForColumn(col);
-                              const needsDepartment = col === 'Объект';
-                              const needsContractor = col === 'Договор';
-                              const disabled =
-                                (needsDepartment && !draft['Подразделение']) ||
-                                (needsContractor && !draft['Контрагент']);
-
-                              return (
-                                <select
-                                  value={String(draft[col] ?? '')}
-                                  onChange={(event) => updateDraft(col, event.target.value)}
-                                  disabled={disabled}
-                                >
-                                  <option value="">
-                                    {needsDepartment && !draft['Подразделение']
-                                      ? 'Сначала выберите Подразделение'
-                                      : needsContractor && !draft['Контрагент']
-                                        ? 'Сначала выберите Контрагента'
-                                        : 'Выберите значение'}
-                                  </option>
-                                  {options.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              );
-                            })()
-                          ) : isEditing && col !== 'GN_bdr_ID' && EXTRA_NUMERIC_COLUMNS.has(col) ? (
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={String(draft[col] ?? '')}
-                              onChange={(event) => updateDraft(col, event.target.value)}
-                              placeholder="необязательно"
-                            />
-                          ) : isEditing && col !== 'GN_bdr_ID' ? (
-                            <input
-                              value={String(draft[col] ?? '')}
-                              onChange={(event) => updateDraft(col, event.target.value)}
-                            />
-                          ) : !isEditing && col === 'Лимит' ? (
-                            <button
-                              type="button"
-                              className="limit-cell-button"
-                              onClick={() => onOpenLimit(rowId)}
-                            >
-                              {formatFinancialValue(row[col])}
-                            </button>
-                          ) : !isEditing && col === 'Объект' && String(row[col] ?? '').trim() !== '' ? (
-                            <button
-                              type="button"
-                              className="contract-cell-button"
-                              onClick={() => onOpenObject(rowId)}
-                            >
-                              {String(row[col] ?? '')}
-                            </button>
-                          ) : !isEditing && col === 'Подразделение' && String(row[col] ?? '').trim() !== '' ? (
-                            <button
-                              type="button"
-                              className="contract-cell-button"
-                              onClick={() => onOpenDepartment(rowId)}
-                            >
-                              {String(row[col] ?? '')}
-                            </button>
-                          ) : !isEditing && col === 'Контрагент' && String(row[col] ?? '').trim() !== '' ? (
-                            <button
-                              type="button"
-                              className="contract-cell-button"
-                              onClick={() => onOpenContractor(rowId)}
-                            >
-                              {String(row[col] ?? '')}
-                            </button>
-                          ) : !isEditing && col === 'Договор' && String(row[col] ?? '').trim() !== '' ? (
-                            <button
-                              type="button"
-                              className="contract-cell-button"
-                              onClick={() => {
-                                const contractName = String(row[col] ?? '');
-                                const contractId = contractsLookup[contractName];
-                                if (contractId) {
-                                  onOpenContract(contractId);
-                                }
-                              }}
-                            >
-                              {String(row[col] ?? '')}
-                            </button>
-                          ) : (
-                            formatCellValue(col, isEditing ? draft[col] : row[col])
-                          )}
-                        </td>
-                      ))}
-                      <td>
-                        {!isEditing ? (
-                          <button type="button" onClick={() => startEdit(row)}>испр</button>
-                        ) : (
-                          <>
-                            <button type="button" onClick={() => void saveEdit()} disabled={saving}>сохр</button>
-                            <button type="button" onClick={cancelEdit} disabled={saving}>отм</button>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {saveError && <p className="hint hint--error">Ошибка редактирования: {saveError}</p>}
-          </div>
+          <MainBudgetTableContent
+            visibleMainColumns={visibleMainColumns}
+            filteredData={filteredData}
+            filteredLimitTotal={filteredLimitTotal}
+            sort={sort}
+            editingRowId={editingRowId}
+            draft={draft}
+            saving={saving}
+            saveError={saveError}
+            filters={filters}
+            lookupRows={lookupRows}
+            contractsLookup={contractsLookup}
+            COLUMN_TITLES={COLUMN_TITLES}
+            LOCKED_EDIT_COLUMNS={LOCKED_EDIT_COLUMNS}
+            BDR_SELECT_CONFIG={BDR_SELECT_CONFIG}
+            EXTRA_NUMERIC_COLUMNS={EXTRA_NUMERIC_COLUMNS}
+            FINANCIAL_NUMBER_FORMATTER={FINANCIAL_NUMBER_FORMATTER}
+            onToggleSort={toggleSort}
+            onSetFilter={setFilter}
+            onStartEdit={startEdit}
+            onSaveEdit={saveEdit}
+            onCancelEdit={cancelEdit}
+            onUpdateDraft={updateDraft}
+            onGetSelectOptions={getSelectOptionsForColumn}
+            onFormatCellValue={formatCellValue}
+            onOpenLimit={onOpenLimit}
+            onOpenObject={onOpenObject}
+            onOpenDepartment={onOpenDepartment}
+            onOpenContractor={onOpenContractor}
+            onOpenContract={onOpenContract}
+          />
         </>
       )}
     </section>

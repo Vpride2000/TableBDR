@@ -260,6 +260,10 @@ p {
   color: #92400e;
 }
 
+.cellular-cell-changed {
+  background-color: #fff3bf;
+}
+
 .status-select.status-cell--inactive {
   background-color: #f3e8e8;
   color: #7f1d1d;
@@ -1361,6 +1365,18 @@ p {
   margin: 0;
 }
 
+/* Кнопки внутри таблицы спутников — компактный размер, без рамки */
+.satellites-table .page-action-btn,
+.satellites-control-action .page-action-btn,
+.satellites-actions .page-action-btn,
+.satellites-file-input-label .page-action-btn {
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border-radius: 4px;
+  border-color: transparent;
+}
+
 .satellites-subnav {
   display: flex;
   align-items: center;
@@ -1442,6 +1458,41 @@ p {
   white-space: nowrap;
   padding: 3px 4px;
   line-height: 1.05;
+}
+
+.satellites-sort-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+}
+
+.satellites-header-stack {
+  display: grid;
+  gap: 6px;
+}
+
+.satellites-hide-unused-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.58rem;
+  font-weight: 500;
+}
+
+.satellites-month-header-grid {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  text-align: center;
+}
+
+.satellites-month-title {
+  text-align: center;
 }
 
 .satellites-summary-table {
@@ -1612,6 +1663,53 @@ p {
   white-space: nowrap;
 }
 
+.contracts-page-no-bg {
+  background: transparent;
+}
+
+.contracts-page-no-bg .guide-section,
+.contracts-page-no-bg .invest-program-content {
+  background: transparent;
+}
+
+.contracts-page-no-bg .contracts-active-table {
+  width: auto;
+  min-width: 0;
+  font-size: 0.62rem;
+}
+
+.contracts-page-no-bg .contracts-active-table th,
+.contracts-page-no-bg .contracts-active-table td {
+  padding: 1px 3px;
+  line-height: 1.02;
+}
+
+.contracts-page-no-bg .contracts-active-table .contracts-cell-narrow {
+  max-width: 88px;
+}
+
+.contracts-page-no-bg .contracts-active-table .contracts-cell-truncate {
+  max-width: 86px;
+}
+
+.contract-sort-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.contract-sort-btn:hover,
+.contract-sort-btn:focus-visible {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
 .contracts-agreements-cell {
   padding: 0;
 }
@@ -1665,4 +1763,59 @@ p {
   padding: 5px 10px;
   font-size: 0.78rem;
   cursor: pointer;
+}
+/* ===== ��������� ������� ===== */
+.budget-subnav {
+  display: flex;
+  gap: 4px;
+  padding: 12px 16px 0;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.budget-subnav-tab {
+  padding: 8px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.15s;
+}
+
+.budget-subnav-tab:hover {
+  background: var(--accent-bg);
+}
+
+.budget-subnav-tab--active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: #6b21a8;
+}
+
+.budget-popup-links {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  max-width: 560px;
+}
+
+.budget-popup-link-btn {
+  text-align: left;
+  width: 100%;
+}
+
+/* ===== ������ � ������� ��������� ===== */
+.contract-filter-input {
+  width: 100%;
+  padding: 3px 6px;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  box-sizing: border-box;
 }

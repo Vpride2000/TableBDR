@@ -12,6 +12,7 @@ export default function SatellitesDetailsPage() {
   const [rows, setRows] = useState<SatelliteRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isDetailTableExpanded, setIsDetailTableExpanded] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const totals = useMemo(() => {
@@ -181,38 +182,50 @@ export default function SatellitesDetailsPage() {
                 </table>
               </div>
 
-              <div className="satellites-table-wrap satellites-table-card">
-                <table className="guide-table table-compact satellites-table">
-                  <thead>
-                    <tr>
-                      <th>№</th>
-                      <th>MAC</th>
-                      <th>Объект</th>
-                      <th>ФИЛИАЛ</th>
-                      <th>Тариф</th>
-                      <th>Месяц</th>
-                      <th>Ед. изм.</th>
-                      <th>Кол-во</th>
-                      <th>Сумма без НДС</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr key={`${row.index}-${row.macAddress}-${row.description}`}>
-                        <td>{row.index}</td>
-                        <td>{row.macAddress || '-'}</td>
-                        <td>{row.objectName || '-'}</td>
-                        <td>{row.branch || '-'}</td>
-                        <td>{row.tariff || '-'}</td>
-                        <td>{row.month || '-'}</td>
-                        <td>{row.unit || '-'}</td>
-                        <td className="number-cell">{row.quantity || '-'}</td>
-                        <td className="number-cell" title={row.description || '-'}>{row.amountWithoutVat || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div style={{ marginTop: '12px' }}>
+                <button
+                  type="button"
+                  className="page-action-btn page-action-btn--secondary"
+                  onClick={() => setIsDetailTableExpanded(!isDetailTableExpanded)}
+                >
+                  {isDetailTableExpanded ? '− Скрыть детали' : '+ Показать детали'}
+                </button>
               </div>
+
+              {isDetailTableExpanded && (
+                <div className="satellites-table-wrap satellites-table-card">
+                  <table className="guide-table table-compact satellites-table">
+                    <thead>
+                      <tr>
+                        <th>№</th>
+                        <th>MAC</th>
+                        <th>Объект</th>
+                        <th>ФИЛИАЛ</th>
+                        <th>Тариф</th>
+                        <th>Месяц</th>
+                        <th>Ед. изм.</th>
+                        <th>Кол-во</th>
+                        <th>Сумма без НДС</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <tr key={`${row.index}-${row.macAddress}-${row.description}`}>
+                          <td>{row.index}</td>
+                          <td>{row.macAddress || '-'}</td>
+                          <td>{row.objectName || '-'}</td>
+                          <td>{row.branch || '-'}</td>
+                          <td>{row.tariff || '-'}</td>
+                          <td>{row.month || '-'}</td>
+                          <td>{row.unit || '-'}</td>
+                          <td className="number-cell">{row.quantity || '-'}</td>
+                          <td className="number-cell" title={row.description || '-'}>{row.amountWithoutVat || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </>
         )}

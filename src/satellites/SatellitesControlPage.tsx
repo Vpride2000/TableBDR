@@ -8,6 +8,11 @@ interface Satellite {
   GN_satellite_description: string | null
   GN_Dep_id: number | null
   GN_department: string | null
+  GN_satellite_gt_numbers_FK: number | null
+  GN_satellite_diameter: string | null
+  GN_satellite_power: string | null
+  GN_satellite_model: string | null
+  GN_satellite_modem: string | null
 }
 
 interface DepartmentOption {
@@ -15,10 +20,46 @@ interface DepartmentOption {
   GN_department: string
 }
 
+interface SatelliteGtNumberOption {
+  GN_satellite_gt_numbers_id: number
+  GN_satellite_gt_number: string
+}
+
 type SatelliteMonthStatus = 'сломан' | 'склад' | 'в работе' | 'отключен' | 'ошибка'
+type SortDirection = 'asc' | 'desc'
 
 const SATELLITE_MONTH_STATUSES: SatelliteMonthStatus[] = ['сломан', 'склад', 'в работе', 'отключен', 'ошибка']
 const SATELLITES_AUTH_USERS = ['ADM', 'ВГГФ', 'СГГФ', 'ТГГФ'] as const
+const MONTH_ORDER_TOKENS: Array<{ token: string; order: number }> = [
+  { token: 'январ', order: 0 },
+  { token: 'феврал', order: 1 },
+  { token: 'март', order: 2 },
+  { token: 'апрел', order: 3 },
+  { token: 'ма', order: 4 },
+  { token: 'июн', order: 5 },
+  { token: 'июл', order: 6 },
+  { token: 'август', order: 7 },
+  { token: 'сентябр', order: 8 },
+  { token: 'октябр', order: 9 },
+  { token: 'ноябр', order: 10 },
+  { token: 'декабр', order: 11 },
+]
+
+function extractMonthOrder(value: string): number {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  for (const item of MONTH_ORDER_TOKENS) {
+    if (normalized.includes(item.token)) {
+      return item.order
+    }
+  }
+  return 99
+}
+
+function extractMonthYear(value: string): number {
+  const normalized = String(value ?? '').trim()
+  const found = normalized.match(/\b(19\d{2}|20\d{2})\b/)
+  return found ? Number(found[1]) : 0
+}
 
 export default function SatellitesControlPage() {
   const initialAuthUser = sessionStorage.getItem('satellites-control-user')
@@ -26,6 +67,7 @@ export default function SatellitesControlPage() {
 
   const [satellites, setSatellites] = useState<Satellite[]>([])
   const [departments, setDepartments] = useState<DepartmentOption[]>([])
+  const [gtNumbers, setGtNumbers] = useState<SatelliteGtNumberOption[]>([])
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [authUser, setAuthUser] = useState<string | null>(() => (initialAuthUser && initialAuthToken ? initialAuthUser : null))
@@ -43,7 +85,10 @@ export default function SatellitesControlPage() {
   const [savingMonthCellKey, setSavingMonthCellKey] = useState<string | null>(null)
   const [editingSatelliteId, setEditingSatelliteId] = useState<number | null>(null)
   const [editMode, setEditMode] = useState<'limited' | 'full' | null>(null)
-  const [draftSatellite, setDraftSatellite] = useState<{ mac: string; directionName: string; description: string; departmentId: number | null } | null>(null)
+  const [draftSatellite, setDraftSatellite] = useState<{ mac: string; directionName: string; description: string; departmentId: number | null; gtNumbersFK: number | null; diameter: string; power: string; model: string; modem: string } | null>(null)
+  const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({})
+  const [hideUnusedRows, setHideUnusedRows] = useState(false)
+  const [sortState, setSortState] = useState<{ key: string; direction: SortDirection }>({ key: 'index', direction: 'asc' })
   const [savingRowEdit, setSavingRowEdit] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -221,6 +266,36 @@ export default function SatellitesControlPage() {
     setError(null)
   }
 
+  function toggleMonthExpanded(month: string): void {
+    if (editingMonthCellKey?.endsWith(`-${month}`)) {
+      cancelMonthEdit()
+    }
+    setExpandedMonths((prev) => ({
+      ...prev,
+      [month]: !prev[month],
+    }))
+  }
+
+  function toggleSort(columnKey: string): void {
+    setSortState((prev) => {
+      if (prev.key === columnKey) {
+        return {
+          key: columnKey,
+          direction: prev.direction === 'asc' ? 'desc' : 'asc',
+        }
+      }
+      return {
+        key: columnKey,
+        direction: 'asc',
+      }
+    })
+  }
+
+  function sortMark(columnKey: string): string {
+    if (sortState.key !== columnKey) return '↕'
+    return sortState.direction === 'asc' ? '↑' : '↓'
+  }
+
   function startEditRow(sat: Satellite, mode: 'limited' | 'full'): void {
     if (!authUser) return
     cancelMonthEdit()
@@ -231,6 +306,11 @@ export default function SatellitesControlPage() {
       directionName: sat.GN_satellite_direction_name,
       description: sat.GN_satellite_description ?? '',
       departmentId: sat.GN_Dep_id,
+      gtNumbersFK: sat.GN_satellite_gt_numbers_FK,
+      diameter: sat.GN_satellite_diameter ?? '',
+      power: sat.GN_satellite_power ?? '',
+      model: sat.GN_satellite_model ?? '',
+      modem: sat.GN_satellite_modem ?? '',
     })
   }
 
@@ -258,6 +338,11 @@ export default function SatellitesControlPage() {
           directionName: editMode === 'full' ? draftSatellite.directionName : sat.GN_satellite_direction_name,
           description: draftSatellite.description,
           departmentId: editMode === 'full' ? draftSatellite.departmentId : sat.GN_Dep_id,
+          gtNumbersFK: draftSatellite.gtNumbersFK,
+          diameter: draftSatellite.diameter,
+          power: draftSatellite.power,
+          model: draftSatellite.model,
+          modem: draftSatellite.modem,
         }),
       })
 
@@ -473,6 +558,13 @@ export default function SatellitesControlPage() {
           setDepartments(depRows)
         }
 
+        const gtResponse = await fetch('/api/gn/satellite-gt-numbers')
+        if (gtResponse.ok) {
+          const gtRows = (await gtResponse.json()) as SatelliteGtNumberOption[]
+          if (!isActive) return
+          setGtNumbers(gtRows)
+        }
+
         await loadXmlMonthly()
       } catch (err) {
         if (!isActive) return
@@ -490,6 +582,136 @@ export default function SatellitesControlPage() {
       isActive = false
     }
   }, [authUser, authToken])
+
+  const sortedMonths = useMemo(() => {
+    return [...months].sort((left, right) => {
+      const leftYear = extractMonthYear(left)
+      const rightYear = extractMonthYear(right)
+      if (leftYear !== rightYear) return leftYear - rightYear
+
+      const leftOrder = extractMonthOrder(left)
+      const rightOrder = extractMonthOrder(right)
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder
+
+      return left.localeCompare(right, 'ru')
+    })
+  }, [months])
+
+  useEffect(() => {
+    setExpandedMonths((prev) => {
+      const next: Record<string, boolean> = {}
+      sortedMonths.forEach((month) => {
+        if (prev[month]) {
+          next[month] = true
+        }
+      })
+      return next
+    })
+  }, [sortedMonths])
+
+  const satelliteIndexById = useMemo(() => {
+    const indexMap = new Map<number, number>()
+    satellites.forEach((satellite, index) => {
+      indexMap.set(satellite.GN_satellite_id, index)
+    })
+    return indexMap
+  }, [satellites])
+
+  const preparedSatellites = useMemo(() => {
+    const filtered = satellites.filter((satellite) => {
+      if (!hideUnusedRows) {
+        return true
+      }
+      const macKey = normalizeMacKey(satellite.GN_satellite_mac)
+      return sortedMonths.some((month) => !!xmlRowsByMacMonth[macKey]?.[month])
+    })
+
+    const directionFactor = sortState.direction === 'asc' ? 1 : -1
+    const parseMonthKey = (key: string): { month: string; column: string } | null => {
+      if (!key.startsWith('month:')) return null
+      const parts = key.split(':')
+      if (parts.length !== 3) return null
+      return { month: parts[1], column: parts[2] }
+    }
+
+    const compareValues = (left: string | number | null, right: string | number | null): number => {
+      if (left == null && right == null) return 0
+      if (left == null) return 1
+      if (right == null) return -1
+      if (typeof left === 'number' && typeof right === 'number') return left - right
+      return String(left).localeCompare(String(right), 'ru', { sensitivity: 'base' })
+    }
+
+    return [...filtered].sort((left, right) => {
+      const leftMacKey = normalizeMacKey(left.GN_satellite_mac)
+      const rightMacKey = normalizeMacKey(right.GN_satellite_mac)
+      let baseCompare = 0
+
+      const monthSortKey = parseMonthKey(sortState.key)
+      if (monthSortKey) {
+        const leftCell = xmlRowsByMacMonth[leftMacKey]?.[monthSortKey.month]
+        const rightCell = xmlRowsByMacMonth[rightMacKey]?.[monthSortKey.month]
+
+        if (monthSortKey.column === 'amount') {
+          baseCompare = compareValues(leftCell?.amount ?? null, rightCell?.amount ?? null)
+        } else if (monthSortKey.column === 'tariff') {
+          baseCompare = compareValues(leftCell?.tariff ?? null, rightCell?.tariff ?? null)
+        } else if (monthSortKey.column === 'status') {
+          baseCompare = compareValues(leftCell?.status ?? null, rightCell?.status ?? null)
+        } else if (monthSortKey.column === 'edit') {
+          baseCompare = compareValues(leftCell ? 1 : 0, rightCell ? 1 : 0)
+        }
+      } else {
+        switch (sortState.key) {
+          case 'index':
+            baseCompare = (satelliteIndexById.get(left.GN_satellite_id) ?? 0) - (satelliteIndexById.get(right.GN_satellite_id) ?? 0)
+            break
+          case 'mac':
+            baseCompare = compareValues(left.GN_satellite_mac, right.GN_satellite_mac)
+            break
+          case 'direction':
+            baseCompare = compareValues(left.GN_satellite_direction_name, right.GN_satellite_direction_name)
+            break
+          case 'department':
+            baseCompare = compareValues(left.GN_department ?? null, right.GN_department ?? null)
+            break
+          case 'gtNumbers': {
+            const leftGtNumber = gtNumbers.find((gt) => gt.GN_satellite_gt_numbers_id === left.GN_satellite_gt_numbers_FK)?.GN_satellite_gt_number ?? null
+            const rightGtNumber = gtNumbers.find((gt) => gt.GN_satellite_gt_numbers_id === right.GN_satellite_gt_numbers_FK)?.GN_satellite_gt_number ?? null
+            baseCompare = compareValues(leftGtNumber, rightGtNumber)
+            break
+          }
+          case 'description':
+            baseCompare = compareValues(left.GN_satellite_description ?? null, right.GN_satellite_description ?? null)
+            break
+          case 'diameter':
+            baseCompare = compareValues(left.GN_satellite_diameter ?? null, right.GN_satellite_diameter ?? null)
+            break
+          case 'power':
+            baseCompare = compareValues(left.GN_satellite_power ?? null, right.GN_satellite_power ?? null)
+            break
+          case 'model':
+            baseCompare = compareValues(left.GN_satellite_model ?? null, right.GN_satellite_model ?? null)
+            break
+          case 'modem':
+            baseCompare = compareValues(left.GN_satellite_modem ?? null, right.GN_satellite_modem ?? null)
+            break
+          case 'actions':
+            baseCompare = compareValues(left.GN_satellite_id, right.GN_satellite_id)
+            break
+          default:
+            baseCompare = 0
+            break
+        }
+      }
+
+      if (baseCompare === 0) {
+        baseCompare = (satelliteIndexById.get(left.GN_satellite_id) ?? 0) - (satelliteIndexById.get(right.GN_satellite_id) ?? 0)
+      }
+
+      return baseCompare * directionFactor
+    })
+  }, [satellites, hideUnusedRows, sortedMonths, xmlRowsByMacMonth, sortState, satelliteIndexById])
 
   return (
     <section className="page-section satellites-section">
@@ -578,15 +800,84 @@ export default function SatellitesControlPage() {
             <table className="guide-table table-compact satellites-table">
               <thead>
                 <tr>
-                  <th rowSpan={2}>№</th>
-                  <th rowSpan={2}>MAC адрес</th>
-                  <th rowSpan={2}>Имя направления</th>
-                  <th rowSpan={2}>Подразделение</th>
-                  <th rowSpan={2}>Описание</th>
-                  {months.map((month) => (
-                    <th key={month} colSpan={4}>
-                      <div style={{ display: 'grid', gap: '6px' }}>
-                        <span>{month}</span>
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('index')}>
+                      № {sortMark('index')}
+                    </button>
+                  </th>
+                  <th rowSpan={2}>
+                    <div className="satellites-header-stack">
+                      <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('mac')}>
+                        MAC {sortMark('mac')}
+                      </button>
+                      <label className="satellites-hide-unused-label">
+                        <input
+                          type="checkbox"
+                          checked={hideUnusedRows}
+                          onChange={(event) => setHideUnusedRows(event.target.checked)}
+                        />
+                        скрыть не исп.
+                      </label>
+                    </div>
+                  </th>
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('direction')}>
+                      Имя {sortMark('direction')}
+                    </button>
+                  </th>
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('department')}>
+                      ПФ {sortMark('department')}
+                    </button>
+                  </th>
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('gtNumbers')}>
+                      Номера ГТ {sortMark('gtNumbers')}
+                    </button>
+                  </th>
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('diameter')}>
+                      Диаметр {sortMark('diameter')}
+                    </button>
+                  </th>
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('power')}>
+                      Мощность {sortMark('power')}
+                    </button>
+                  </th>
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('model')}>
+                      Модель {sortMark('model')}
+                    </button>
+                  </th>
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('modem')}>
+                      Модем {sortMark('modem')}
+                    </button>
+                  </th>
+                  {authUser === 'ADM' && (
+                    <th rowSpan={2}>
+                      <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('actions')}>
+                        Действия {sortMark('actions')}
+                      </button>
+                    </th>
+                  )}
+                  <th rowSpan={2}>
+                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('description')}>
+                      Местонахождение {sortMark('description')}
+                    </button>
+                  </th>
+                  {sortedMonths.map((month) => (
+                    <th key={month} colSpan={expandedMonths[month] ? 4 : 1}>
+                      <div className="satellites-month-header-grid">
+                        <span className="satellites-month-title">{month}</span>
+                        <button
+                          className="page-action-btn page-action-btn--secondary"
+                          type="button"
+                          onClick={() => toggleMonthExpanded(month)}
+                        >
+                          {expandedMonths[month] ? '−' : '+'}
+                        </button>
                         {authUser === 'ADM' && (
                           <button
                             className="page-action-btn page-action-btn--danger"
@@ -602,21 +893,40 @@ export default function SatellitesControlPage() {
                       </div>
                     </th>
                   ))}
-                  {authUser === 'ADM' && <th rowSpan={2}>Действия</th>}
                 </tr>
                 <tr>
-                  {months.map((month) => (
+                  {sortedMonths.map((month) => (
                     <Fragment key={`sub-${month}`}>
-                      <th>Сумма</th>
-                      <th>Тариф</th>
-                      <th>Статус</th>
-                      <th>ИЗМ</th>
+                      <th>
+                        <button className="satellites-sort-btn" type="button" onClick={() => toggleSort(`month:${month}:amount`)}>
+                          Сумма {sortMark(`month:${month}:amount`)}
+                        </button>
+                      </th>
+                      {expandedMonths[month] && (
+                        <>
+                          <th>
+                            <button className="satellites-sort-btn" type="button" onClick={() => toggleSort(`month:${month}:tariff`)}>
+                              Тариф {sortMark(`month:${month}:tariff`)}
+                            </button>
+                          </th>
+                          <th>
+                            <button className="satellites-sort-btn" type="button" onClick={() => toggleSort(`month:${month}:status`)}>
+                              Статус {sortMark(`month:${month}:status`)}
+                            </button>
+                          </th>
+                          <th>
+                            <button className="satellites-sort-btn" type="button" onClick={() => toggleSort(`month:${month}:edit`)}>
+                              ИЗМ {sortMark(`month:${month}:edit`)}
+                            </button>
+                          </th>
+                        </>
+                      )}
                     </Fragment>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {satellites.map((sat, index) => {
+                {preparedSatellites.map((sat, index) => {
                   const macKey = normalizeMacKey(sat.GN_satellite_mac)
                   const isEditingRow = !!authUser && editingSatelliteId === sat.GN_satellite_id
                   const isFullEdit = isEditingRow && editMode === 'full'
@@ -666,6 +976,110 @@ export default function SatellitesControlPage() {
                         ) : (sat.GN_department || '-')}
                       </td>
                       <td>
+                        {isFullEdit || (isEditingRow && editMode === 'limited') ? (
+                          <select
+                            className="invest-program-inline-input"
+                            value={draftSatellite?.gtNumbersFK ?? ''}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              setDraftSatellite((prev) => (prev ? { ...prev, gtNumbersFK: value ? Number(value) : null } : prev))
+                            }}
+                          >
+                            <option value="">-</option>
+                            {gtNumbers.map((gt) => (
+                              <option key={gt.GN_satellite_gt_numbers_id} value={gt.GN_satellite_gt_numbers_id}>{gt.GN_satellite_gt_number}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          (() => {
+                            const gtNumber = gtNumbers.find((gt) => gt.GN_satellite_gt_numbers_id === sat.GN_satellite_gt_numbers_FK)
+                            return gtNumber ? gtNumber.GN_satellite_gt_number : '-'
+                          })()
+                        )}
+                      </td>
+                      <td>
+                        {isEditingRow ? (
+                          <input
+                            className="invest-program-inline-input"
+                            value={draftSatellite?.diameter ?? ''}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              setDraftSatellite((prev) => (prev ? { ...prev, diameter: value } : prev))
+                            }}
+                          />
+                        ) : (sat.GN_satellite_diameter || '-')}
+                      </td>
+                      <td>
+                        {isEditingRow ? (
+                          <input
+                            className="invest-program-inline-input"
+                            value={draftSatellite?.power ?? ''}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              setDraftSatellite((prev) => (prev ? { ...prev, power: value } : prev))
+                            }}
+                          />
+                        ) : (sat.GN_satellite_power || '-')}
+                      </td>
+                      <td>
+                        {isEditingRow ? (
+                          <input
+                            className="invest-program-inline-input"
+                            value={draftSatellite?.model ?? ''}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              setDraftSatellite((prev) => (prev ? { ...prev, model: value } : prev))
+                            }}
+                          />
+                        ) : (sat.GN_satellite_model || '-')}
+                      </td>
+                      <td>
+                        {isEditingRow ? (
+                          <input
+                            className="invest-program-inline-input"
+                            value={draftSatellite?.modem ?? ''}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              setDraftSatellite((prev) => (prev ? { ...prev, modem: value } : prev))
+                            }}
+                          />
+                        ) : (sat.GN_satellite_modem || '-')}
+                      </td>
+                      {authUser === 'ADM' && (
+                        <td className="invest-program-actions-cell">
+                          {!isEditingRow || editMode !== 'full' ? (
+                            <button
+                              className="page-action-btn page-action-btn--success"
+                              type="button"
+                              onClick={() => startEditRow(sat, 'full')}
+                            >
+                              правка
+                            </button>
+                          ) : (
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button
+                                className="page-action-btn page-action-btn--success"
+                                type="button"
+                                onClick={() => {
+                                  void saveEditRow(sat)
+                                }}
+                                disabled={savingRowEdit}
+                              >
+                                {savingRowEdit ? 'Сохр...' : 'Сохранить'}
+                              </button>
+                              <button
+                                className="page-action-btn page-action-btn--secondary"
+                                type="button"
+                                onClick={cancelEditRow}
+                                disabled={savingRowEdit}
+                              >
+                                Отмена
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      )}
+                      <td>
                         {isEditingRow && editMode === 'limited' ? (
                           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                             <input
@@ -710,7 +1124,7 @@ export default function SatellitesControlPage() {
                           </div>
                         )}
                       </td>
-                      {months.map((month) => {
+                      {sortedMonths.map((month) => {
                         const cell = xmlRowsByMacMonth[macKey]?.[month]
                         const statusValue = cell?.status ?? 'склад'
                         const tooltip = cell ? `Филиал: ${cell.branch || '-'}\nТариф: ${cell.tariff || '-'}\nСтатус: ${statusValue}` : ''
@@ -731,113 +1145,83 @@ export default function SatellitesControlPage() {
                             <td className={`number-cell ${statusClass}`} title={tooltip}>
                               {cell ? moneyFormatter.format(cell.amount) : '-'}
                             </td>
-                            <td>
-                              {isMonthEditing ? (
-                                <input
-                                  className="invest-program-inline-input"
-                                  value={draftMonthCell?.tariff ?? ''}
-                                  onChange={(event) => {
-                                    const value = event.target.value
-                                    setDraftMonthCell((prev) => (prev ? { ...prev, tariff: value } : prev))
-                                  }}
-                                />
-                              ) : (
-                                <span>{cell?.tariff || '-'}</span>
-                              )}
-                            </td>
-                            <td>
-                              {isMonthEditing ? (
-                                <select
-                                  className="invest-program-inline-input"
-                                  value={draftMonthCell?.status ?? statusValue}
-                                  onChange={(event) => {
-                                    const value = normalizeStatus(event.target.value)
-                                    setDraftMonthCell((prev) => (prev ? { ...prev, status: value } : prev))
-                                  }}
-                                  disabled={savingMonthCellKey === monthCellKey}
-                                >
-                                  {SATELLITE_MONTH_STATUSES.map((status) => (
-                                    <option key={`${sat.GN_satellite_id}-${month}-${status}`} value={status}>{status}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span title={statusTooltip} style={{ display: 'grid', gap: '2px' }}>
-                                  <span>{statusValue}</span>
-                                  <small style={{ color: '#64748b', fontSize: '0.58rem' }}>
-                                    {cell?.savedAt ? cell.savedAt : 'нет данных'}
-                                  </small>
-                                </span>
-                              )}
-                            </td>
-                            <td className="invest-program-actions-cell">
-                              {!isMonthEditing ? (
-                                <button
-                                  className="page-action-btn page-action-btn--secondary"
-                                  type="button"
-                                  onClick={() => startMonthEdit(sat, month)}
-                                >
-                                  ИЗМ
-                                </button>
-                              ) : (
-                                <div style={{ display: 'flex', gap: '6px' }}>
-                                  <button
-                                    className="page-action-btn page-action-btn--success"
-                                    type="button"
-                                    onClick={() => {
-                                      void saveMonthCell(sat, month)
-                                    }}
-                                    disabled={savingMonthCellKey === monthCellKey}
-                                  >
-                                    {savingMonthCellKey === monthCellKey ? 'Сохр...' : 'Сохранить'}
-                                  </button>
-                                  <button
-                                    className="page-action-btn page-action-btn--secondary"
-                                    type="button"
-                                    onClick={cancelMonthEdit}
-                                    disabled={savingMonthCellKey === monthCellKey}
-                                  >
-                                    Отмена
-                                  </button>
-                                </div>
-                              )}
-                            </td>
+                            {expandedMonths[month] && (
+                              <>
+                                <td>
+                                  {isMonthEditing ? (
+                                    <input
+                                      className="invest-program-inline-input"
+                                      value={draftMonthCell?.tariff ?? ''}
+                                      onChange={(event) => {
+                                        const value = event.target.value
+                                        setDraftMonthCell((prev) => (prev ? { ...prev, tariff: value } : prev))
+                                      }}
+                                    />
+                                  ) : (
+                                    <span>{cell?.tariff || '-'}</span>
+                                  )}
+                                </td>
+                                <td>
+                                  {isMonthEditing ? (
+                                    <select
+                                      className="invest-program-inline-input"
+                                      value={draftMonthCell?.status ?? statusValue}
+                                      onChange={(event) => {
+                                        const value = normalizeStatus(event.target.value)
+                                        setDraftMonthCell((prev) => (prev ? { ...prev, status: value } : prev))
+                                      }}
+                                      disabled={savingMonthCellKey === monthCellKey}
+                                    >
+                                      {SATELLITE_MONTH_STATUSES.map((status) => (
+                                        <option key={`${sat.GN_satellite_id}-${month}-${status}`} value={status}>{status}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <span title={statusTooltip} style={{ display: 'grid', gap: '2px' }}>
+                                      <span>{statusValue}</span>
+                                      <small style={{ color: '#64748b', fontSize: '0.58rem' }}>
+                                        {cell?.savedAt ? cell.savedAt : 'нет данных'}
+                                      </small>
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="invest-program-actions-cell">
+                                  {!isMonthEditing ? (
+                                    <button
+                                      className="page-action-btn page-action-btn--secondary"
+                                      type="button"
+                                      onClick={() => startMonthEdit(sat, month)}
+                                    >
+                                      ИЗМ
+                                    </button>
+                                  ) : (
+                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                      <button
+                                        className="page-action-btn page-action-btn--success"
+                                        type="button"
+                                        onClick={() => {
+                                          void saveMonthCell(sat, month)
+                                        }}
+                                        disabled={savingMonthCellKey === monthCellKey}
+                                      >
+                                        {savingMonthCellKey === monthCellKey ? 'Сохр...' : 'Сохранить'}
+                                      </button>
+                                      <button
+                                        className="page-action-btn page-action-btn--secondary"
+                                        type="button"
+                                        onClick={cancelMonthEdit}
+                                        disabled={savingMonthCellKey === monthCellKey}
+                                      >
+                                        Отмена
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </>
+                            )}
                           </Fragment>
                         )
                       })}
-                      {authUser === 'ADM' && (
-                        <td className="invest-program-actions-cell">
-                          {!isEditingRow || editMode !== 'full' ? (
-                            <button
-                              className="page-action-btn page-action-btn--success"
-                              type="button"
-                              onClick={() => startEditRow(sat, 'full')}
-                            >
-                              правка
-                            </button>
-                          ) : (
-                            <div style={{ display: 'flex', gap: '6px' }}>
-                              <button
-                                className="page-action-btn page-action-btn--success"
-                                type="button"
-                                onClick={() => {
-                                  void saveEditRow(sat)
-                                }}
-                                disabled={savingRowEdit}
-                              >
-                                {savingRowEdit ? 'Сохр...' : 'Сохранить'}
-                              </button>
-                              <button
-                                className="page-action-btn page-action-btn--secondary"
-                                type="button"
-                                onClick={cancelEditRow}
-                                disabled={savingRowEdit}
-                              >
-                                Отмена
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                      )}
                     </tr>
                   )
                 })}

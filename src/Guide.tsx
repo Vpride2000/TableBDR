@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatHttpError } from './utils/forecastUtils';
 // Страница справочника GN.
 // Отображает разделы справочных таблиц с возможностью разворачивать
@@ -31,6 +31,21 @@ const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: s
   { title: 'Производители оборудования', endpoint: '/api/gn/equipment-manufacturers', entity: 'equipment-manufacturers', idColumn: 'GN_equipment_manufacturer_id', columns: ['GN_equipment_manufacturer'] },
   { title: 'Типы оборудования', endpoint: '/api/gn/equipment-types', entity: 'equipment-types', idColumn: 'GN_equipment_type_id', columns: ['GN_equipment_type'] },
   { title: 'Модели оборудования', endpoint: '/api/gn/equipment-models', entity: 'equipment-models', idColumn: 'GN_equipment_model_id', columns: ['GN_equipment_model', 'GN_equipment_manufacturer_FK', 'GN_equipment_type_FK'] },
+  { title: 'Номера ГТ для спутника', endpoint: '/api/gn/satellite-gt-numbers', entity: 'satellite-gt-numbers', idColumn: 'GN_satellite_gt_numbers_id', columns: ['GN_satellite_gt_number'] },
+  {
+    title: 'Справочник: Идентификатор',
+    endpoint: '/api/gn/cellular-identifiers',
+    entity: 'cellular-identifiers',
+    idColumn: 'GN_cellular_identifier_id',
+    columns: ['GN_cellular_identifier', 'GN_cellular_identifier_fio'],
+  },
+  {
+    title: 'Справочник: Тарифный план',
+    endpoint: '/api/gn/cellular-tariff-plans',
+    entity: 'cellular-tariff-plans',
+    idColumn: 'GN_cellular_tariff_plan_id',
+    columns: ['GN_cellular_tariff_plan', 'GN_cellular_tariff_plan_details'],
+  },
 ];
 
 const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: string; valueKey: string; labelKey: string }>> = {
@@ -305,17 +320,37 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
   );
 }
 
-export default function Guide() {
+export default function Guide({
+  initialExpandedEntities = [],
+  onlyEntities,
+}: {
+  initialExpandedEntities?: string[]
+  onlyEntities?: string[]
+} = {}) {
+  const defs = onlyEntities && onlyEntities.length > 0
+    ? TABLE_DEFS.filter((def) => onlyEntities.includes(def.entity))
+    : TABLE_DEFS;
+
   const [sections, setSections] = useState<TableSection[]>(
-    TABLE_DEFS.map((def) => ({
+    defs.map((def) => ({
       ...def,
       data: [],
-      expanded: false,
+      expanded: initialExpandedEntities.includes(def.entity),
       loaded: false,
       loading: false,
       error: null,
     }))
   );
+
+  // Загружаем секции, которые должны быть раскрыты сразу при инициализации.
+  useEffect(() => {
+    defs.forEach((def) => {
+      if (initialExpandedEntities.includes(def.entity)) {
+        loadSectionData(def.endpoint);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function onSectionRowsUpdate(endpoint: string, rows: Row[]): void {
     setSections((prev) => prev.map((section) => (section.endpoint === endpoint ? { ...section, data: rows } : section)));

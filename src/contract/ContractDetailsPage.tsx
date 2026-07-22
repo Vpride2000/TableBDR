@@ -59,6 +59,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [isAddingAgreement, setIsAddingAgreement] = useState(false);
+  const [isDeleteAgreement, setIsDeleteAgreement] = useState(false);
 
   useEffect(() => {
     async function loadContractRows(): Promise<void> {
@@ -403,6 +404,53 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
     }
   }
 
+  async function deleteAgreement(): Promise<void> {
+    if (editingAgreementId == null) {
+      setEditError('Не удалось удалить соглашение.');
+      return;
+    }
+
+    setIsDeleteAgreement(true);
+    setEditError(null);
+
+    try {
+      const response = await fetch(`/api/gn/contract-additional-agreements/${editingAgreementId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || 'Не удалось удалить соглашение');
+      }
+
+      setAgreements((prev) => prev.filter((item) =>
+        item.GN_additional_agreement_id !== editingAgreementId
+      ));
+
+      // Обновляем дату последнего обновления статуса контракта
+      if (contractInfo) {
+        const currentDate = new Date().toISOString().slice(0, 10);
+        const updatedContract = { ...contractInfo, GN_contract_status_updated_at: currentDate };
+        const updateResponse = await fetch(`/api/gn/contracts/${contractInfo.GN_contract_id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedContract),
+        });
+
+        if (updateResponse.ok) {
+          const refreshedContract = (await updateResponse.json()) as ContractInfo;
+          setContractInfo(refreshedContract);
+        }
+      }
+
+      cancelEditAgreement();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Ошибка при удалении соглашения');
+    } finally {
+      setIsDeleteAgreement(false);
+    }
+  }
+
     const columns = ['Подразделение', 'Статья бюджета УС', 'Статья бюджета', 'Предмет договора'];
 
   return (
@@ -732,7 +780,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
                 type="button"
                 className="form-submit-btn"
                 onClick={() => void saveAgreementEdit()}
-                disabled={editLoading}
+                disabled={editLoading || isDeleteAgreement}
               >
                 {editLoading ? 'Сохранение...' : 'Сохранить'}
               </button>
@@ -740,9 +788,17 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
                 type="button"
                 className="page-action-btn page-action-btn--secondary"
                 onClick={cancelEditAgreement}
-                disabled={editLoading}
+                disabled={editLoading || isDeleteAgreement}
               >
                 Отмена
+              </button>
+              <button
+                type="button"
+                className="page-action-btn page-action-btn--danger"
+                onClick={() => void deleteAgreement()}
+                disabled={editLoading || isDeleteAgreement}
+              >
+                {isDeleteAgreement ? 'Удаление...' : 'Удалить'}
               </button>
             </div>
           </div>

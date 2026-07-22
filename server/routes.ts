@@ -44,6 +44,15 @@ export function setupRoutes(app: Express): void {
     return Number.isFinite(numeric) ? numeric : 0;
   }
 
+  function toNullableTrimmedText(value: unknown): string | null {
+    const normalized = String(value ?? '').trim();
+    return normalized === '' ? null : normalized;
+  }
+
+  function buildCellularRowKey(account: string | null, identifier: string, icc: string | null): string {
+    return `${account ?? ''}||${identifier}||${icc ?? ''}`;
+  }
+
   // Health check
   // Простой endpoint для проверки, что сервер доступен.
   app.get('/api/health', (req: Request, res: Response): void => {
@@ -99,6 +108,11 @@ export function setupRoutes(app: Express): void {
         GN_satellite_description: string | null;
         GN_Dep_id: number;
         GN_department: string;
+        GN_satellite_gt_numbers_FK: number | null;
+        GN_satellite_diameter: string | null;
+        GN_satellite_power: string | null;
+        GN_satellite_model: string | null;
+        GN_satellite_modem: string | null;
       }>(
         `SELECT
            s."GN_satellite_id",
@@ -106,7 +120,12 @@ export function setupRoutes(app: Express): void {
            s."GN_satellite_direction_name",
            s."GN_satellite_description",
            d."GN_Dep_id",
-           d."GN_department"
+           d."GN_department",
+           s."GN_satellite_gt_numbers_FK",
+           s."GN_satellite_diameter",
+           s."GN_satellite_power",
+           s."GN_satellite_model",
+           s."GN_satellite_modem"
          FROM "GN_satellites" s
          LEFT JOIN "GN_department" d ON s."GN_department_FK" = d."GN_Dep_id"
          WHERE ($1::text IS NULL OR COALESCE(d."GN_department", '') ILIKE $1)
@@ -141,7 +160,12 @@ export function setupRoutes(app: Express): void {
       mac?: string;
       directionName?: string;
       description?: string;
-      departmentId?: number | null;
+      departmentId?: number | string | null;
+      gtNumbersFK?: number | string | null;
+      diameter?: string;
+      power?: string;
+      model?: string;
+      modem?: string;
     };
 
     const mac = String(payload.mac ?? '').trim();
@@ -151,6 +175,14 @@ export function setupRoutes(app: Express): void {
     const departmentId = departmentIdRaw == null || departmentIdRaw === ''
       ? null
       : Number(departmentIdRaw);
+    const gtNumbersFKRaw = payload.gtNumbersFK;
+    const gtNumbersFK = gtNumbersFKRaw == null || gtNumbersFKRaw === ''
+      ? null
+      : Number(gtNumbersFKRaw);
+    const diameter = String(payload.diameter ?? '').trim();
+    const power = String(payload.power ?? '').trim();
+    const model = String(payload.model ?? '').trim();
+    const modem = String(payload.modem ?? '').trim();
 
     if (!mac || !directionName) {
       res.status(400).json({ error: 'MAC и имя направления обязательны' });
@@ -162,6 +194,11 @@ export function setupRoutes(app: Express): void {
       return;
     }
 
+    if (gtNumbersFK !== null && (!Number.isFinite(gtNumbersFK) || gtNumbersFK <= 0)) {
+      res.status(400).json({ error: 'Некорректный номер ГТ' });
+      return;
+    }
+
     const client = await createDbClient();
     try {
       const updated = await client.query<{
@@ -169,23 +206,37 @@ export function setupRoutes(app: Express): void {
         GN_satellite_mac: string;
         GN_satellite_direction_name: string;
         GN_satellite_description: string | null;
-        GN_Dep_id: number | null;
-        GN_department: string | null;
+        GN_department_FK: number | null;
+        GN_satellite_gt_numbers_FK: number | null;
+        GN_satellite_diameter: string | null;
+        GN_satellite_power: string | null;
+        GN_satellite_model: string | null;
+        GN_satellite_modem: string | null;
       }>(
         `UPDATE "GN_satellites" s
          SET
            "GN_satellite_mac" = $1,
            "GN_satellite_direction_name" = $2,
            "GN_satellite_description" = $3,
-           "GN_department_FK" = $4
-         WHERE s."GN_satellite_id" = $5
+           "GN_department_FK" = $4,
+           "GN_satellite_gt_numbers_FK" = $5,
+           "GN_satellite_diameter" = $6,
+           "GN_satellite_power" = $7,
+           "GN_satellite_model" = $8,
+           "GN_satellite_modem" = $9
+         WHERE s."GN_satellite_id" = $10
          RETURNING
            s."GN_satellite_id",
            s."GN_satellite_mac",
            s."GN_satellite_direction_name",
            s."GN_satellite_description",
-           s."GN_department_FK"`,
-        [mac, directionName, description || null, departmentId, id]
+           s."GN_department_FK",
+           s."GN_satellite_gt_numbers_FK",
+           s."GN_satellite_diameter",
+           s."GN_satellite_power",
+           s."GN_satellite_model",
+           s."GN_satellite_modem"`,
+        [mac, directionName, description || null, departmentId, gtNumbersFK, diameter || null, power || null, model || null, modem || null, id]
       );
 
       if (updated.rowCount === 0) {
@@ -206,6 +257,11 @@ export function setupRoutes(app: Express): void {
         GN_satellite_description: row.GN_satellite_description,
         GN_Dep_id: row.GN_department_FK,
         GN_department: dep.rows[0]?.GN_department ?? null,
+        GN_satellite_gt_numbers_FK: row.GN_satellite_gt_numbers_FK,
+        GN_satellite_diameter: row.GN_satellite_diameter,
+        GN_satellite_power: row.GN_satellite_power,
+        GN_satellite_model: row.GN_satellite_model,
+        GN_satellite_modem: row.GN_satellite_modem,
       });
     } catch (err) {
       console.error('Failed to update satellite', err);
@@ -687,6 +743,8 @@ export function setupRoutes(app: Express): void {
       GN_contract_date?: string;
       GN_contract_term_from?: string;
       GN_contract_term_to?: string;
+      GN_contract_side?: string;
+      GN_contract_asez_number?: string;
     };
 
     if (!payload || !payload.GN_contract_dogovor_FK) {
@@ -710,8 +768,10 @@ export function setupRoutes(app: Express): void {
            "GN_contract_approval_status",
            "GN_contract_date",
            "GN_contract_term_from",
-           "GN_contract_term_to"
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           "GN_contract_term_to",
+           "GN_contract_side",
+           "GN_contract_asez_number"
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          RETURNING *,
            (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name"`,
         [
@@ -725,12 +785,14 @@ export function setupRoutes(app: Express): void {
           payload.GN_contract_date ?? null,
           payload.GN_contract_term_from ?? null,
           payload.GN_contract_term_to ?? null,
+          payload.GN_contract_side ?? '',
+          payload.GN_contract_asez_number ?? '',
         ]
       );
 
       res.json(result.rows[0]);
     } catch (err) {
-      console.error(err && (err.stack || err));
+      console.error(err instanceof Error ? (err.stack || err.message) : err);
       res.status(500).json({ error: String(err instanceof Error ? err.message : 'Failed to create GN_contracts') });
     } finally {
       await client.end();
@@ -750,6 +812,8 @@ export function setupRoutes(app: Express): void {
       GN_contract_date?: string;
       GN_contract_term_from?: string;
       GN_contract_term_to?: string;
+      GN_contract_side?: string;
+      GN_contract_asez_number?: string;
     };
 
     if (!Number.isFinite(id)
@@ -780,8 +844,10 @@ export function setupRoutes(app: Express): void {
            "GN_contract_approval_status" = $7,
            "GN_contract_date" = $8,
            "GN_contract_term_from" = $9,
-           "GN_contract_term_to" = $10
-         WHERE "GN_contract_id" = $11
+           "GN_contract_term_to" = $10,
+           "GN_contract_side" = $11,
+           "GN_contract_asez_number" = $12
+         WHERE "GN_contract_id" = $13
          RETURNING *,
            (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name"`,
         [
@@ -795,6 +861,8 @@ export function setupRoutes(app: Express): void {
           payload.GN_contract_date ?? null,
           payload.GN_contract_term_from ?? null,
           payload.GN_contract_term_to ?? null,
+          payload.GN_contract_side ?? '',
+          payload.GN_contract_asez_number ?? '',
           id,
         ]
       );
@@ -1036,6 +1104,304 @@ export function setupRoutes(app: Express): void {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to fetch GN_equipment_model' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/satellite-gt-numbers', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query('SELECT * FROM "GN_satellite_gt_numbers" ORDER BY "GN_satellite_gt_numbers_id" ASC');
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_satellite_gt_numbers' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/cellular', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `SELECT
+           c."GN_cellular_id",
+           c."GN_cellular_account",
+           c."GN_cellular_client",
+           c."GN_cellular_contract_number",
+           c."GN_cellular_identifier_FK",
+           i."GN_cellular_identifier",
+           i."GN_cellular_identifier_fio",
+           c."GN_cellular_icc",
+           c."GN_cellular_status",
+           c."GN_cellular_activation_date",
+           c."GN_cellular_zone",
+           c."GN_cellular_tariff_plan_FK",
+           t."GN_cellular_tariff_plan",
+           t."GN_cellular_tariff_plan_details",
+           c."GN_cellular_tariff_plan_enabled_date"
+         FROM "GN_cellular" c
+         JOIN "GN_cellular_identifier" i ON c."GN_cellular_identifier_FK" = i."GN_cellular_identifier_id"
+         JOIN "GN_cellular_tariff_plan" t ON c."GN_cellular_tariff_plan_FK" = t."GN_cellular_tariff_plan_id"
+         ORDER BY c."GN_cellular_id" ASC`
+      );
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_cellular' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.post('/api/gn/cellular/sync', async (req: Request, res: Response): Promise<void> => {
+    const payload = req.body as {
+      rows?: Array<{
+        account?: unknown;
+        clientName?: unknown;
+        contractNumber?: unknown;
+        identifier?: unknown;
+        icc?: unknown;
+        status?: unknown;
+        activationDate?: unknown;
+        zone?: unknown;
+        tariffPlan?: unknown;
+        tariffPlanEnabledDate?: unknown;
+      }>;
+    };
+
+    if (!Array.isArray(payload.rows) || payload.rows.length === 0) {
+      res.status(400).json({ error: 'rows are required' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+
+      let insertedRows = 0;
+      let updatedRows = 0;
+      let unchangedRows = 0;
+      const changedColumnsByRowKey: Record<string, string[]> = {};
+
+      for (const sourceRow of payload.rows) {
+        const identifier = String(sourceRow.identifier ?? '').trim();
+        const tariffPlan = String(sourceRow.tariffPlan ?? '').trim();
+
+        if (!identifier || !tariffPlan) {
+          continue;
+        }
+
+        const account = toNullableTrimmedText(sourceRow.account);
+        const icc = toNullableTrimmedText(sourceRow.icc);
+        const rowKey = buildCellularRowKey(account, identifier, icc);
+
+        const identifierResult = await client.query<{ id: number }>(
+          `INSERT INTO "GN_cellular_identifier" ("GN_cellular_identifier")
+           VALUES ($1)
+           ON CONFLICT ("GN_cellular_identifier")
+           DO UPDATE SET "GN_cellular_identifier" = EXCLUDED."GN_cellular_identifier"
+           RETURNING "GN_cellular_identifier_id" AS id`,
+          [identifier]
+        );
+        const identifierId = identifierResult.rows[0].id;
+
+        const tariffResult = await client.query<{ id: number }>(
+          `INSERT INTO "GN_cellular_tariff_plan" ("GN_cellular_tariff_plan")
+           VALUES ($1)
+           ON CONFLICT ("GN_cellular_tariff_plan")
+           DO UPDATE SET "GN_cellular_tariff_plan" = EXCLUDED."GN_cellular_tariff_plan"
+           RETURNING "GN_cellular_tariff_plan_id" AS id`,
+          [tariffPlan]
+        );
+        const tariffId = tariffResult.rows[0].id;
+
+        const normalizedRow = {
+          account,
+          client: toNullableTrimmedText(sourceRow.clientName),
+          contractNumber: toNullableTrimmedText(sourceRow.contractNumber),
+          identifierId,
+          identifier,
+          icc,
+          status: toNullableTrimmedText(sourceRow.status),
+          activationDate: toNullableTrimmedText(sourceRow.activationDate),
+          zone: toNullableTrimmedText(sourceRow.zone),
+          tariffId,
+          tariffPlan,
+          tariffPlanEnabledDate: toNullableTrimmedText(sourceRow.tariffPlanEnabledDate),
+        };
+
+        const existingResult = await client.query<{
+          GN_cellular_id: number;
+          GN_cellular_account: string | null;
+          GN_cellular_client: string | null;
+          GN_cellular_contract_number: string | null;
+          GN_cellular_identifier_FK: number;
+          GN_cellular_icc: string | null;
+          GN_cellular_status: string | null;
+          GN_cellular_activation_date: string | null;
+          GN_cellular_zone: string | null;
+          GN_cellular_tariff_plan_FK: number;
+          GN_cellular_tariff_plan_enabled_date: string | null;
+        }>(
+          `SELECT
+             c."GN_cellular_id",
+             c."GN_cellular_account",
+             c."GN_cellular_client",
+             c."GN_cellular_contract_number",
+             c."GN_cellular_identifier_FK",
+             c."GN_cellular_icc",
+             c."GN_cellular_status",
+             c."GN_cellular_activation_date"::text AS "GN_cellular_activation_date",
+             c."GN_cellular_zone",
+             c."GN_cellular_tariff_plan_FK",
+             c."GN_cellular_tariff_plan_enabled_date"::text AS "GN_cellular_tariff_plan_enabled_date"
+           FROM "GN_cellular" c
+           WHERE c."GN_cellular_account" IS NOT DISTINCT FROM $1
+             AND c."GN_cellular_identifier_FK" = $2
+             AND c."GN_cellular_icc" IS NOT DISTINCT FROM $3
+           ORDER BY c."GN_cellular_id" ASC
+           LIMIT 1`,
+          [normalizedRow.account, normalizedRow.identifierId, normalizedRow.icc]
+        );
+
+        if (existingResult.rowCount === 0) {
+          await client.query(
+            `INSERT INTO "GN_cellular" (
+               "GN_cellular_account",
+               "GN_cellular_client",
+               "GN_cellular_contract_number",
+               "GN_cellular_identifier_FK",
+               "GN_cellular_icc",
+               "GN_cellular_status",
+               "GN_cellular_activation_date",
+               "GN_cellular_zone",
+               "GN_cellular_tariff_plan_FK",
+               "GN_cellular_tariff_plan_enabled_date"
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [
+              normalizedRow.account,
+              normalizedRow.client,
+              normalizedRow.contractNumber,
+              normalizedRow.identifierId,
+              normalizedRow.icc,
+              normalizedRow.status,
+              normalizedRow.activationDate,
+              normalizedRow.zone,
+              normalizedRow.tariffId,
+              normalizedRow.tariffPlanEnabledDate,
+            ]
+          );
+
+          insertedRows += 1;
+          changedColumnsByRowKey[rowKey] = [
+            'GN_cellular_account',
+            'GN_cellular_client',
+            'GN_cellular_contract_number',
+            'GN_cellular_identifier',
+            'GN_cellular_icc',
+            'GN_cellular_status',
+            'GN_cellular_activation_date',
+            'GN_cellular_zone',
+            'GN_cellular_tariff_plan',
+            'GN_cellular_tariff_plan_enabled_date',
+          ];
+          continue;
+        }
+
+        const existing = existingResult.rows[0];
+        const changedColumns: string[] = [];
+
+        if (existing.GN_cellular_account !== normalizedRow.account) changedColumns.push('GN_cellular_account');
+        if (existing.GN_cellular_client !== normalizedRow.client) changedColumns.push('GN_cellular_client');
+        if (existing.GN_cellular_contract_number !== normalizedRow.contractNumber) changedColumns.push('GN_cellular_contract_number');
+        if (existing.GN_cellular_identifier_FK !== normalizedRow.identifierId) changedColumns.push('GN_cellular_identifier');
+        if (existing.GN_cellular_icc !== normalizedRow.icc) changedColumns.push('GN_cellular_icc');
+        if (existing.GN_cellular_status !== normalizedRow.status) changedColumns.push('GN_cellular_status');
+        if (toNullableTrimmedText(existing.GN_cellular_activation_date) !== normalizedRow.activationDate) changedColumns.push('GN_cellular_activation_date');
+        if (existing.GN_cellular_zone !== normalizedRow.zone) changedColumns.push('GN_cellular_zone');
+        if (existing.GN_cellular_tariff_plan_FK !== normalizedRow.tariffId) changedColumns.push('GN_cellular_tariff_plan');
+        if (toNullableTrimmedText(existing.GN_cellular_tariff_plan_enabled_date) !== normalizedRow.tariffPlanEnabledDate) changedColumns.push('GN_cellular_tariff_plan_enabled_date');
+
+        if (changedColumns.length === 0) {
+          unchangedRows += 1;
+          continue;
+        }
+
+        await client.query(
+          `UPDATE "GN_cellular"
+           SET
+             "GN_cellular_client" = $1,
+             "GN_cellular_contract_number" = $2,
+             "GN_cellular_status" = $3,
+             "GN_cellular_activation_date" = $4,
+             "GN_cellular_zone" = $5,
+             "GN_cellular_tariff_plan_FK" = $6,
+             "GN_cellular_tariff_plan_enabled_date" = $7
+           WHERE "GN_cellular_id" = $8`,
+          [
+            normalizedRow.client,
+            normalizedRow.contractNumber,
+            normalizedRow.status,
+            normalizedRow.activationDate,
+            normalizedRow.zone,
+            normalizedRow.tariffId,
+            normalizedRow.tariffPlanEnabledDate,
+            existing.GN_cellular_id,
+          ]
+        );
+
+        updatedRows += 1;
+        changedColumnsByRowKey[rowKey] = changedColumns;
+      }
+
+      await client.query('COMMIT');
+      res.json({
+        insertedRows,
+        updatedRows,
+        unchangedRows,
+        changedColumnsByRowKey,
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to sync cellular rows', err);
+      res.status(500).json({ error: 'Failed to sync cellular rows' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/cellular-identifiers', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `SELECT *
+         FROM "GN_cellular_identifier"
+         ORDER BY "GN_cellular_identifier_id" ASC`
+      );
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_cellular_identifier' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/gn/cellular-tariff-plans', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `SELECT *
+         FROM "GN_cellular_tariff_plan"
+         ORDER BY "GN_cellular_tariff_plan_id" ASC`
+      );
+      res.json(result.rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_cellular_tariff_plan' });
     } finally {
       await client.end();
     }

@@ -1,6 +1,6 @@
 // Типы и константы, используемые на странице прогнозов и в App.tsx.
 // Описывают доступные страницы, структуру строк прогноза и фиксированные метки.
-export type Page = 'start' | 'budget' | 'guide' | 'contracts' | 'invest-program-table' | 'satellites' | 'satellites-control'
+export type Page = 'start' | 'budget' | 'guide' | 'contracts' | 'invest-program-table' | 'satellites' | 'satellites-control' | 'cellular'
 
 export interface ForecastSourceRow extends Record<string, unknown> {}
 

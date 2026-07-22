@@ -24,7 +24,7 @@ A React + TypeScript + Webpack project with a collapsible budget table connected
 
 ### 1. Clone & Install
 ```bash
-git clone https://github.com/Vpride2000/TableBDR.git
+
 cd TableBDR
 npm install
 ```
@@ -35,121 +35,89 @@ Create `.env` file in root:
 PGHOST=127.0.0.1
 PGPORT=5432
 PGUSER=postgres
-PGPASSWORD=pgpwd4habr
-PGDATABASE=postgres
-SERVER_PORT=4000
-```
+# TableBDR
 
-### 3. Start Backend (TypeScript)
-```bash
-npm run server
-```
-- Starts Express API on `http://localhost:4000`
+TableBDR - веб-система для ведения и анализа бюджетных данных (БДР) по направлениям связи и смежным сущностям: подразделения, договоры, контрагенты, объекты, лимиты и спутниковые/сотовые сервисы.
 
-### 4. Start Frontend (Development)
-In another terminal:
-```bash
-npm run dev
-```
-- Webpack dev server on `http://localhost:3005`
-- Hot Module Replacement (HMR) enabled
-- Auto-proxies `/api/*` requests to backend
+## Назначение
 
-### 5. Open in Browser
-```
-http://localhost:3005
-```
+Проект предоставляет единый интерфейс для:
 
-## 📦 Scripts
+- просмотра бюджетных таблиц с детализацией по разным срезам;
+- перехода к карточкам связанных сущностей (договор, подразделение, объект и др.);
+- анализа агрегированных показателей по подразделениям и бюджетным статьям;
+- работы с доменными данными, загружаемыми и хранимыми в PostgreSQL.
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start Webpack dev server (React HMR) |
-| `npm run server` | Start TypeScript backend (Express + PostgreSQL) |
-| `npm run test:db` | Test PostgreSQL connection |
-| `npm run build` | Build for production |
-| `npm run lint` | Run ESLint |
+## Архитектура
 
-## 🏗️ Project Structure
+Приложение состоит из двух частей:
 
-```
+- Frontend (React + TypeScript + Webpack): отвечает за маршрутизацию, таблицы, карточки и аналитические представления.
+- Backend (Express + TypeScript): предоставляет API для чтения/подготовки данных и интеграции с PostgreSQL.
+
+Во время разработки frontend и backend запускаются раздельно, при этом frontend работает через проксирование API-запросов к backend.
+
+## Предметные модули
+
+- Бюджетный контур: таблица БДР, детализация по подразделениям и статьям, сводные представления.
+- Контракты: страницы списка и детальной информации по договорам.
+- Инвест-программа: отдельная таблица и связанные сценарии анализа.
+- Спутниковые сервисы: контроль и детализация спутниковых данных.
+- Сотовая связь: отдельный экран и справочник тарифов.
+
+## Технический стек
+
+- React 19
+- TypeScript 5
+- Webpack 5
+- Express 5
+- PostgreSQL (`pg`)
+- ESLint
+
+## API
+
+Backend предоставляет REST-эндпоинты в пространстве `/api/*`.
+
+Базовая проверка доступности сервиса:
+
+- `GET /api/health`
+
+## Структура репозитория
+
+```text
 TableBDR/
-├── src/
-│   ├── App.tsx              # Main React component
-│   ├── BudgetTable.tsx      # Collapsible budget table
-│   ├── BudgetTable.css      # Table styles
-│   ├── App.css
-│   ├── index.css
-│   ├── main.tsx             # React entry point
-│   └── types.d.ts           # Type definitions
-├── server/
-│   └── index.ts             # Express API (TypeScript)
-├── scripts/
-│   └── testPostgresConnection.ts  # DB connection test
-├── public/
-│   └── icons.svg, favicon.svg
-├── webpack.config.js        # Webpack configuration
-├── tsconfig.json            # TypeScript config reference
-├── tsconfig.app.json        # Frontend TypeScript config
-├── tsconfig.server.json     # Backend TypeScript config
-├── .env                     # Local environment (not in git)
+├── src/                    # UI и предметные модули frontend
+│   ├── budget/
+│   ├── contract/
+│   ├── Purchase/
+│   ├── satellites/
+│   ├── cellular/
+│   ├── hooks/
+│   ├── utils/
+│   └── types/
+├── server/                 # API, подключение к БД, SQL-инициализация
+├── scripts/                # Bootstrap/проверочные и сервисные скрипты
+├── public/                 # Публичные статические ресурсы
+├── dist-server/            # Результат компиляции backend
+├── webpack.config.cjs
+├── tsconfig*.json
 └── package.json
 ```
 
-## 🗄️ Database Schema
+## NPM-скрипты проекта
 
-Проект использует доменную схему GN/PAO для бюджета связи:
-- `GN_bdr`
-- `GN_department`
-- `GN_departament_object`
-- `GN_dogovor`
-- `GN_contractor`
-- `GN_budget_network_item`
-- `PAO__budget_network_item`
+Скрипты отражают доступные режимы разработки и сборки:
 
-## 📋 Features
+- `server-dev` - запуск backend в режиме разработки.
+- `front-dev` - запуск frontend dev-сервера.
+- `build-front` - production-сборка frontend.
+- `build-server` - компиляция backend TypeScript.
+- `test:db` - проверка подключения к PostgreSQL.
+- `lint` - статический анализ кода.
 
-- ✅ React 19 + TypeScript
-- ✅ Webpack bundler with dev server
-- ✅ PostgreSQL integration
-- ✅ Collapsible table rows (2 per group)
-- ✅ Express backend API
-- ✅ Full TypeScript (frontend + backend)
-- ✅ Hot Module Replacement (HMR)
-- ✅ ESLint + TypeScript strict mode
+## Примечания
 
-## 🔌 API Endpoints
-
-### `GET /api/health`
-Health check endpoint.
-
-**Response:**
-```json
-{ "status": "ok" }
-```
-
-## 🛠️ Development
-
-### Modify Table Data
-Edit `/server/index.ts` → `seed` array to add/modify budget entries.
-
-### TypeScript Configuration
-- **Frontend:** `tsconfig.app.json`
-- **Backend:** `tsconfig.server.json`
-
-### Build for Production
-```bash
-npm run build
-```
-Output: `dist/bundle.js`
-
-## 📝 Notes
-
-- `.env` is ignored by Git (keep secrets safe)
-- `node_modules` and `dist` are excluded from version control
-- Webpack proxy redirects `/api/*` to backend during dev
-
-## 📄 License
-
+- Проект содержит отдельный серверный подпакет в `server/`, но основной контур разработки централизован через корневой `package.json`.
+- Для интеграции с БД используются параметры окружения (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `SERVER_PORT`).
 MIT
 

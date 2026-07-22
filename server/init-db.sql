@@ -197,6 +197,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "GN_bdr_monthly_forecast_row_month_uniq"
   ON "GN_bdr_monthly_forecast" ("GN_bdr_ID_FK", "month_index")
   WHERE "GN_bdr_ID_FK" IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS "GN_satellite_gt_numbers" (
+  "GN_satellite_gt_numbers_id" SERIAL NOT NULL UNIQUE,
+  "GN_satellite_gt_number" TEXT NOT NULL,
+  PRIMARY KEY("GN_satellite_gt_numbers_id")
+);
+
+COMMENT ON TABLE "GN_satellite_gt_numbers" IS 'Справочник номеров ГТ для спутников';
+
 CREATE TABLE IF NOT EXISTS "GN_satellites" (
   "GN_satellite_id" SERIAL NOT NULL UNIQUE,
   "GN_satellite_mac" TEXT NOT NULL,

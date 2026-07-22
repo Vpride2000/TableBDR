@@ -7,7 +7,7 @@ export function pageFromHash(hash: string): import('../types/forecast').Page {
   if (hash === '#contracts') return 'contracts'
   if (hash === '#satellites') return 'satellites'
   if (hash === '#satellites-control') return 'satellites-control'
-  if (hash === '#forecasts') return 'forecasts'
+  if (hash === '#cellular') return 'cellular'
   if (hash === '#guide') return 'guide'
   return 'budget'
 }

@@ -1,7 +1,9 @@
 ﻿import 'dotenv/config';
 import express from 'express';
 import { setupRoutes } from './routes.js';
-import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureSatellitesXmlTable, ensureSatelliteColumns } from './db.js';
+import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx } from './db.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Точка входа backend-приложения.
 // Загружает переменные окружения, создает Express-приложение,
@@ -10,6 +12,10 @@ const PORT = process.env.SERVER_PORT ? Number(process.env.SERVER_PORT) : 4000;
 const CORS_ALLOWED_ORIGINS = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) || ['*'];
 
 const app = express();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 // Разрешаем CORS для фронтенда на другом хосте/порту.
 const CORS_ALLOW_CREDENTIALS = process.env.CORS_ALLOW_CREDENTIALS === 'true';
@@ -50,9 +56,12 @@ async function start(): Promise<void> {
   try {
     // Проверяем и создаем обязательные таблицы, если они отсутствуют.
     await ensureDatabaseTables(client);
+    await ensureSatelliteGtNumbersTable(client);
     await ensureContractColumns(client);
     await ensureSatelliteColumns(client);
     await ensureSatellitesXmlTable(client);
+    await ensureCellularTables(client);
+    await bootstrapCellularFromXlsx(client, PROJECT_ROOT);
   } finally {
     await client.end();
   }
