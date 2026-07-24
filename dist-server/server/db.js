@@ -92,6 +92,7 @@ export async function ensureSatellitesXmlTable(client) {
        "month_name" TEXT NOT NULL,
        "branch" TEXT,
        "tariff" TEXT,
+       "tariff_note" TEXT,
        "status" TEXT NOT NULL DEFAULT 'склад',
        "amount_without_vat" NUMERIC(18,2) NOT NULL DEFAULT 0,
        "uploaded_by" TEXT NOT NULL,
@@ -100,6 +101,8 @@ export async function ensureSatellitesXmlTable(client) {
      )`);
     await client.query(`ALTER TABLE "GN_satellite_xml_monthly"
      ADD COLUMN IF NOT EXISTS "status" TEXT NOT NULL DEFAULT 'склад'`);
+    await client.query(`ALTER TABLE "GN_satellite_xml_monthly"
+     ADD COLUMN IF NOT EXISTS "tariff_note" TEXT`);
 }
 export async function ensureSatelliteGtNumbersTable(client) {
     await client.query(`CREATE TABLE IF NOT EXISTS "GN_satellite_gt_numbers" (

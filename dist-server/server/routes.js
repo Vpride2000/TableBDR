@@ -216,6 +216,7 @@ export function setupRoutes(app) {
            x."month_name" AS month_name,
            x."branch" AS branch,
            x."tariff" AS tariff,
+           x."tariff_note" AS tariff_note,
            x."status" AS status,
            x."amount_without_vat" AS amount_without_vat,
            x."uploaded_at" AS uploaded_at
@@ -259,14 +260,16 @@ export function setupRoutes(app) {
              "month_name",
              "branch",
              "tariff",
+             "tariff_note",
              "status",
              "amount_without_vat",
              "uploaded_by"
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT ("mac_norm", "month_name")
            DO UPDATE SET
              "branch" = EXCLUDED."branch",
              "tariff" = EXCLUDED."tariff",
+             "tariff_note" = EXCLUDED."tariff_note",
              "status" = EXCLUDED."status",
              "amount_without_vat" = EXCLUDED."amount_without_vat",
              "uploaded_by" = EXCLUDED."uploaded_by",
@@ -275,6 +278,7 @@ export function setupRoutes(app) {
                     monthName,
                     String(row.branch ?? '').trim() || null,
                     String(row.tariff ?? '').trim() || null,
+                    String(row.tariffNote ?? '').trim() || null,
                     ['сломан', 'склад', 'в работе', 'отключен', 'ошибка'].includes(String(row.status ?? '').trim().toLowerCase())
                         ? String(row.status ?? '').trim().toLowerCase()
                         : 'склад',

@@ -27,6 +27,7 @@ interface SatelliteGtNumberOption {
 
 type SatelliteMonthStatus = 'сломан' | 'склад' | 'в работе' | 'отключен' | 'ошибка'
 type SortDirection = 'asc' | 'desc'
+type SatelliteMonthCell = { branch: string; tariff: string; tariffNote: string; status: SatelliteMonthStatus; amount: number; savedAt: string }
 
 const SATELLITE_MONTH_STATUSES: SatelliteMonthStatus[] = ['сломан', 'склад', 'в работе', 'отключен', 'ошибка']
 const SATELLITES_AUTH_USERS = ['ADM', 'ВГГФ', 'СГГФ', 'ТГГФ'] as const
@@ -74,14 +75,14 @@ export default function SatellitesControlPage() {
   const [authToken, setAuthToken] = useState<string | null>(() => (initialAuthUser && initialAuthToken ? initialAuthToken : null))
   const [authLoading, setAuthLoading] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
-  const [xmlRowsByMacMonth, setXmlRowsByMacMonth] = useState<Record<string, Record<string, { branch: string; tariff: string; status: SatelliteMonthStatus; amount: number; savedAt: string }>>>({})
+  const [xmlRowsByMacMonth, setXmlRowsByMacMonth] = useState<Record<string, Record<string, SatelliteMonthCell>>>({})
   const [months, setMonths] = useState<string[]>([])
   const [xmlRowsCount, setXmlRowsCount] = useState(0)
   const [xmlMatchedCount, setXmlMatchedCount] = useState(0)
   const [uploadingXml, setUploadingXml] = useState(false)
   const [clearingMonth, setClearingMonth] = useState<string | null>(null)
   const [editingMonthCellKey, setEditingMonthCellKey] = useState<string | null>(null)
-  const [draftMonthCell, setDraftMonthCell] = useState<{ tariff: string; status: SatelliteMonthStatus } | null>(null)
+  const [draftMonthCell, setDraftMonthCell] = useState<{ tariff: string; tariffNote: string; status: SatelliteMonthStatus } | null>(null)
   const [savingMonthCellKey, setSavingMonthCellKey] = useState<string | null>(null)
   const [editingSatelliteId, setEditingSatelliteId] = useState<number | null>(null)
   const [editMode, setEditMode] = useState<'limited' | 'full' | null>(null)
@@ -125,12 +126,12 @@ export default function SatellitesControlPage() {
     return parsed.toLocaleString('ru-RU')
   }
 
-  function buildXmlMatrix(rows: Array<{ mac_norm: string; month_name: string; branch: string | null; tariff: string | null; status: string | null; amount_without_vat: string | number; uploaded_at: string | null }>): {
-    matrix: Record<string, Record<string, { branch: string; tariff: string; status: SatelliteMonthStatus; amount: number; savedAt: string }>>
+  function buildXmlMatrix(rows: Array<{ mac_norm: string; month_name: string; branch: string | null; tariff: string | null; tariff_note: string | null; status: string | null; amount_without_vat: string | number; uploaded_at: string | null }>): {
+    matrix: Record<string, Record<string, SatelliteMonthCell>>
     monthList: string[]
   } {
     const monthSet = new Set<string>()
-    const matrix: Record<string, Record<string, { branch: string; tariff: string; status: SatelliteMonthStatus; amount: number; savedAt: string }>> = {}
+    const matrix: Record<string, Record<string, SatelliteMonthCell>> = {}
 
     rows.forEach((row) => {
       const mac = String(row.mac_norm ?? '').trim()
@@ -141,6 +142,7 @@ export default function SatellitesControlPage() {
       matrix[mac][month] = {
         branch: String(row.branch ?? '').trim(),
         tariff: String(row.tariff ?? '').trim(),
+        tariffNote: String(row.tariff_note ?? '').trim(),
         status: normalizeStatus(row.status),
         amount: parseAmount(row.amount_without_vat),
         savedAt: formatSavedAt(row.uploaded_at),
@@ -178,6 +180,7 @@ export default function SatellitesControlPage() {
         month_name: string
         branch: string | null
         tariff: string | null
+        tariff_note: string | null
         status: string | null
         amount_without_vat: string | number
         uploaded_at: string | null
@@ -215,6 +218,7 @@ export default function SatellitesControlPage() {
               month: row.month,
               branch: row.branch,
               tariff: row.tariff,
+              tariffNote: row.tariffNote,
               status: 'склад',
               amountWithoutVat: row.amountWithoutVat,
             })),
@@ -406,6 +410,7 @@ export default function SatellitesControlPage() {
     setEditingMonthCellKey(`${sat.GN_satellite_id}-${month}`)
     setDraftMonthCell({
       tariff: cell?.tariff ?? '',
+      tariffNote: cell?.tariffNote ?? '',
       status: cell?.status ?? 'склад',
     })
   }
@@ -424,6 +429,7 @@ export default function SatellitesControlPage() {
     const cell = xmlRowsByMacMonth[macKey]?.[month] ?? {
       branch: '',
       tariff: '',
+      tariffNote: '',
       status: 'склад' as SatelliteMonthStatus,
       amount: 0,
       savedAt: '',
@@ -445,6 +451,7 @@ export default function SatellitesControlPage() {
             month,
             branch: cell.branch,
             tariff: draftMonthCell.tariff,
+            tariffNote: draftMonthCell.tariffNote,
             status: draftMonthCell.status,
             amountWithoutVat: cell.amount,
           }],
@@ -713,6 +720,19 @@ export default function SatellitesControlPage() {
     })
   }, [satellites, hideUnusedRows, sortedMonths, xmlRowsByMacMonth, sortState, satelliteIndexById])
 
+  const visibleMonthTotals = useMemo(() => {
+    const totals: Record<string, number> = {}
+
+    sortedMonths.forEach((month) => {
+      totals[month] = preparedSatellites.reduce((acc, sat) => {
+        const macKey = normalizeMacKey(sat.GN_satellite_mac)
+        return acc + (xmlRowsByMacMonth[macKey]?.[month]?.amount ?? 0)
+      }, 0)
+    })
+
+    return totals
+  }, [preparedSatellites, sortedMonths, xmlRowsByMacMonth])
+
   return (
     <section className="page-section satellites-section">
       <div className="page-header satellites-page-header">
@@ -901,6 +921,9 @@ export default function SatellitesControlPage() {
                         <button className="satellites-sort-btn" type="button" onClick={() => toggleSort(`month:${month}:amount`)}>
                           Сумма {sortMark(`month:${month}:amount`)}
                         </button>
+                        <div style={{ color: '#64748b', fontSize: '0.7rem', marginTop: '2px' }}>
+                          {moneyFormatter.format(visibleMonthTotals[month] ?? 0)}
+                        </div>
                       </th>
                       {expandedMonths[month] && (
                         <>
@@ -1127,7 +1150,8 @@ export default function SatellitesControlPage() {
                       {sortedMonths.map((month) => {
                         const cell = xmlRowsByMacMonth[macKey]?.[month]
                         const statusValue = cell?.status ?? 'склад'
-                        const tooltip = cell ? `Филиал: ${cell.branch || '-'}\nТариф: ${cell.tariff || '-'}\nСтатус: ${statusValue}` : ''
+                        const tariffTooltip = [cell?.tariff || '-', cell?.tariffNote || ''].filter(Boolean).join('\n')
+                        const tooltip = cell ? `Филиал: ${cell.branch || '-'}\nТариф: ${tariffTooltip || '-'}\nСтатус: ${statusValue}` : ''
                         const statusTooltip = cell?.savedAt
                           ? `Последнее сохранение: ${cell.savedAt}`
                           : 'Последнее сохранение: нет данных'
@@ -1149,16 +1173,32 @@ export default function SatellitesControlPage() {
                               <>
                                 <td>
                                   {isMonthEditing ? (
-                                    <input
-                                      className="invest-program-inline-input"
-                                      value={draftMonthCell?.tariff ?? ''}
-                                      onChange={(event) => {
-                                        const value = event.target.value
-                                        setDraftMonthCell((prev) => (prev ? { ...prev, tariff: value } : prev))
-                                      }}
-                                    />
+                                    <div style={{ display: 'grid', gap: '4px' }}>
+                                      <input
+                                        className="invest-program-inline-input"
+                                        value={draftMonthCell?.tariff ?? ''}
+                                        onChange={(event) => {
+                                          const value = event.target.value
+                                          setDraftMonthCell((prev) => (prev ? { ...prev, tariff: value } : prev))
+                                        }}
+                                      />
+                                      <input
+                                        className="invest-program-inline-input"
+                                        value={draftMonthCell?.tariffNote ?? ''}
+                                        onChange={(event) => {
+                                          const value = event.target.value
+                                          setDraftMonthCell((prev) => (prev ? { ...prev, tariffNote: value } : prev))
+                                        }}
+                                        placeholder="Дата / примечание"
+                                      />
+                                    </div>
                                   ) : (
-                                    <span>{cell?.tariff || '-'}</span>
+                                    <span style={{ display: 'grid', gap: '2px' }}>
+                                      <span>{cell?.tariff || '-'}</span>
+                                      <small style={{ color: '#64748b', fontSize: '0.58rem' }}>
+                                        {cell?.tariffNote || '-'}
+                                      </small>
+                                    </span>
                                   )}
                                 </td>
                                 <td>

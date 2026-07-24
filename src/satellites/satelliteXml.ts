@@ -5,6 +5,7 @@ export interface SatelliteRow {
   branch: string
   macAddress: string
   tariff: string
+  tariffNote: string
   month: string
   unit: string
   quantity: string
@@ -53,19 +54,137 @@ function normalizeMonthName(value: string): string {
   return monthMap[source] ?? source
 }
 
+function monthIndexToName(monthIndex: number): string {
+  const monthNames = [
+    'январь',
+    'февраль',
+    'март',
+    'апрель',
+    'май',
+    'июнь',
+    'июль',
+    'август',
+    'сентябрь',
+    'октябрь',
+    'ноябрь',
+    'декабрь',
+  ]
+
+  return monthNames[monthIndex - 1] ?? ''
+}
+
+function extractMonthFromDateText(value: string): string {
+  const dateRangeMatch = value.match(/(?:с\s+)?(\d{2})\.(\d{2})\.(\d{4})(?:\s+по\s+\d{2}\.\d{2}\.\d{4})?/i)
+  if (dateRangeMatch) {
+    return monthIndexToName(Number(dateRangeMatch[2]))
+  }
+
+  return ''
+}
+
+function extractTariffTail(sourceName: string, macAddress: string): string {
+  if (!macAddress) return ''
+
+  const normalizedSource = normalizeMacText(sourceName)
+  const macIndex = normalizedSource.toUpperCase().indexOf(macAddress.toUpperCase())
+  if (macIndex < 0) return ''
+
+  const tailStart = macIndex + macAddress.length
+  const tail = sourceName.slice(tailStart)
+  const commaIndex = tail.indexOf(',')
+  const rawValue = commaIndex >= 0 ? tail.slice(commaIndex + 1) : tail
+
+  return rawValue.replace(/\s+/g, ' ').trim().replace(/^,\s*/, '')
+}
+
+function splitTariffAndNote(value: string): { tariff: string; tariffNote: string } {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return {
+      tariff: '',
+      tariffNote: '',
+    }
+  }
+
+  const tariffMatch = normalized.match(/\d+\s*Кбит\/с/i)
+  if (!tariffMatch || tariffMatch.index == null) {
+    return {
+      tariff: '',
+      tariffNote: normalized,
+    }
+  }
+
+  const tariff = tariffMatch[0].replace(/\s+/g, ' ').trim()
+  const afterTariff = normalized.slice(tariffMatch.index + tariffMatch[0].length).trim()
+
+  return {
+    tariff,
+    tariffNote: afterTariff.replace(/^[,;:\-]+\s*/, ''),
+  }
+}
+
+function extractTariffFromSource(sourceName: string): string {
+  const normalized = sourceName.replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+
+  // Тариф чаще находится до MAC, поэтому ищем его по всей строке.
+  const strictMatch = normalized.match(/(\d+(?:[.,]\d+)?\s*[КкKkМмMm]\s*бит\s*\/\s*[СсCc])/)
+  if (strictMatch) {
+    return strictMatch[1]
+      .replace(/\s+/g, ' ')
+      .replace(/\s*\/\s*/g, '/')
+      .trim()
+  }
+
+  // Fallback на более широкий паттерн, если в строке нестандартные пробелы/регистр.
+  const fallbackMatch = normalized.match(/(\d+(?:[.,]\d+)?\s*[^\s,]{0,4}бит\s*\/\s*[^\s,]{1,3})/iu)
+  if (!fallbackMatch) return ''
+
+  return fallbackMatch[1]
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\/\s*/g, '/')
+    .trim()
+}
+
+function detectFileMonth(rows: Array<{ month: string }>): string {
+  const counts = new Map<string, number>()
+
+  rows.forEach((row) => {
+    if (!row.month) return
+    counts.set(row.month, (counts.get(row.month) ?? 0) + 1)
+  })
+
+  let selectedMonth = ''
+  let selectedCount = 0
+
+  counts.forEach((count, month) => {
+    if (count > selectedCount) {
+      selectedMonth = month
+      selectedCount = count
+    }
+  })
+
+  return selectedMonth
+}
+
 function parseNameFields(sourceName: string): {
   cleanedDescription: string
   objectName: string
   macAddress: string
   tariff: string
+  tariffNote: string
   month: string
 } {
   const macNormalized = normalizeMacText(sourceName)
 
   const objectMatch = sourceName.match(/на направлении\s+"([^"]+)"/i)
   const macMatch = macNormalized.match(/([0-9A-F]{2}(?::[0-9A-F]{2}){5})/i)
-  const tariffMatch = sourceName.match(/(\d+\s*Кбит\/с)/i)
   const monthMatch = sourceName.match(/в\s+([А-Яа-яЁё]+)\s+\d{4}\s*г\./i)
+  const macAddress = normalizeCellText(macMatch?.[1] ?? null)
+  const tariff = extractTariffFromSource(sourceName)
+  const tariffTail = extractTariffTail(sourceName, macAddress)
+  const tariffParts = splitTariffAndNote(tariffTail)
+  const month = normalizeMonthName(normalizeCellText(monthMatch?.[1] ?? null)) || extractMonthFromDateText(sourceName)
 
   const cleaned = sourceName
     .replace(/Ежемесячная оплата за предоставление услуги передачи данных/gi, '')
@@ -76,9 +195,10 @@ function parseNameFields(sourceName: string): {
   return {
     cleanedDescription: cleaned,
     objectName: normalizeCellText(objectMatch?.[1] ?? null),
-    macAddress: normalizeCellText(macMatch?.[1] ?? null),
-    tariff: normalizeCellText(tariffMatch?.[1] ?? null),
-    month: normalizeMonthName(normalizeCellText(monthMatch?.[1] ?? null)),
+    macAddress,
+    tariff: tariff || tariffParts.tariff,
+    tariffNote: tariffParts.tariffNote,
+    month,
   }
 }
 
@@ -146,6 +266,7 @@ export function aggregateSatelliteRowsByMac(rows: SatelliteRow[]): SatelliteRow[
     existing.quantityTotal += parseSatelliteQuantity(row.quantity)
     if (!existing.row.branch && row.branch) existing.row.branch = row.branch
     if (!existing.row.tariff && row.tariff) existing.row.tariff = row.tariff
+    if (!existing.row.tariffNote && row.tariffNote) existing.row.tariffNote = row.tariffNote
     if (!existing.row.month && row.month) existing.row.month = row.month
   })
 
@@ -176,8 +297,7 @@ export function parseSatelliteRowsFromBuffer(buffer: ArrayBuffer): SatelliteRow[
   }
 
   const itemNodes = Array.from(xml.getElementsByTagName('СведТов'))
-
-  return itemNodes.map((node, index) => {
+  const rows = itemNodes.map((node, index) => {
     const getAttr = (name: string): string => normalizeCellText(node.getAttribute(name))
     const fullDescription = getAttr('НаимТов')
     const details = parseNameFields(fullDescription)
@@ -189,12 +309,23 @@ export function parseSatelliteRowsFromBuffer(buffer: ArrayBuffer): SatelliteRow[
       branch: detectBranch(details.objectName),
       macAddress: details.macAddress,
       tariff: details.tariff,
+      tariffNote: details.tariffNote,
       month: details.month,
       unit: getAttr('НаимЕдИзм'),
       quantity: getAttr('КолТов'),
       amountWithoutVat: getAttr('СтТовБезНДС'),
     }
   })
+
+  const fileMonth = detectFileMonth(rows)
+  if (!fileMonth) {
+    return rows
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    month: row.month || fileMonth,
+  }))
 }
 
 export async function loadSatelliteRows(xmlUrl = './месяц.xml'): Promise<SatelliteRow[]> {
