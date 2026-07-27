@@ -19,6 +19,12 @@ interface TableSection {
   error: string | null;
 }
 
+type GuideProps = {
+  initialExpandedEntities?: string[]
+  onlyEntities?: string[]
+  enableCellularAccountFilter?: boolean
+}
+
 const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: string; columns?: string[] }[] = [
   { title: 'Подразделения', endpoint: '/api/gn/departments', entity: 'departments', idColumn: 'GN_Dep_id' },
   { title: 'Статьи бюджета', endpoint: '/api/gn/budget-items', entity: 'budget-items', idColumn: 'GN_b_id' },
@@ -77,7 +83,17 @@ const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: stri
   },
 };
 
-function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: TableSection; onSectionRowsUpdate: (endpoint: string, rows: Row[]) => void; fkOptions: Record<string, SelectOption[]> }) {
+function DataTable({
+  section,
+  onSectionRowsUpdate,
+  fkOptions,
+  rowFilter,
+}: {
+  section: TableSection
+  onSectionRowsUpdate: (endpoint: string, rows: Row[]) => void
+  fkOptions: Record<string, SelectOption[]>
+  rowFilter?: (row: Row) => boolean
+}) {
   const [editingRowId, setEditingRowId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Row>({});
   const [saving, setSaving] = useState(false);
@@ -92,6 +108,7 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
   const columns = section.data.length > 0
     ? Object.keys(section.data[0])
     : section.columns ?? [section.idColumn];
+  const displayRows = rowFilter ? section.data.filter(rowFilter) : section.data;
 
   function startEdit(row: Row): void {
     setEditingRowId(Number(row[section.idColumn]));
@@ -266,7 +283,7 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
           </tr>
         </thead>
         <tbody>
-          {section.data.map((row, i) => {
+          {displayRows.map((row, i) => {
             const rowId = Number(row[section.idColumn]);
             const isEditing = editingRowId === rowId;
 
@@ -315,7 +332,7 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
         </tbody>
       </table>
       {saveError && <p className="hint hint--error">Ошибка редактирования: {saveError}</p>}
-      {!saveError && section.data.length === 0 && <p className="hint">Нет данных.</p>}
+      {!saveError && displayRows.length === 0 && <p className="hint">Нет данных.</p>}
     </div>
   );
 }
@@ -323,10 +340,8 @@ function DataTable({ section, onSectionRowsUpdate, fkOptions }: { section: Table
 export default function Guide({
   initialExpandedEntities = [],
   onlyEntities,
-}: {
-  initialExpandedEntities?: string[]
-  onlyEntities?: string[]
-} = {}) {
+  enableCellularAccountFilter = false,
+}: GuideProps = {}) {
   const defs = onlyEntities && onlyEntities.length > 0
     ? TABLE_DEFS.filter((def) => onlyEntities.includes(def.entity))
     : TABLE_DEFS;
@@ -341,6 +356,9 @@ export default function Guide({
       error: null,
     }))
   );
+  const [cellularAccounts, setCellularAccounts] = useState<string[]>([]);
+  const [selectedCellularAccount, setSelectedCellularAccount] = useState('');
+  const [allowedTariffPlanIds, setAllowedTariffPlanIds] = useState<Set<string> | null>(null);
 
   // Загружаем секции, которые должны быть раскрыты сразу при инициализации.
   useEffect(() => {
@@ -351,6 +369,43 @@ export default function Guide({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!enableCellularAccountFilter) return;
+
+    void fetch('/api/gn/cellular')
+      .then((res) => {
+        if (!res.ok) throw new Error(formatHttpError(res.status));
+        return res.json() as Promise<Array<{ GN_cellular_account: string | null; GN_cellular_tariff_plan_FK: number | null }>>;
+      })
+      .then((rows) => {
+        const accountSet = new Set<string>();
+        rows.forEach((row) => {
+          const account = String(row.GN_cellular_account ?? '').trim();
+          if (account) accountSet.add(account);
+        });
+        setCellularAccounts([...accountSet].sort((a, b) => a.localeCompare(b, 'ru')));
+
+        if (!selectedCellularAccount) {
+          setAllowedTariffPlanIds(null);
+          return;
+        }
+
+        const ids = new Set<string>();
+        rows.forEach((row) => {
+          const account = String(row.GN_cellular_account ?? '').trim();
+          const tariffId = row.GN_cellular_tariff_plan_FK;
+          if (account === selectedCellularAccount && tariffId != null) {
+            ids.add(String(tariffId));
+          }
+        });
+        setAllowedTariffPlanIds(ids);
+      })
+      .catch(() => {
+        setCellularAccounts([]);
+        setAllowedTariffPlanIds(null);
+      });
+  }, [enableCellularAccountFilter, selectedCellularAccount]);
 
   function onSectionRowsUpdate(endpoint: string, rows: Row[]): void {
     setSections((prev) => prev.map((section) => (section.endpoint === endpoint ? { ...section, data: rows } : section)));
@@ -435,6 +490,19 @@ export default function Guide({
 
   return (
     <section className="guide guide-directory">    
+      {enableCellularAccountFilter && (
+        <div className="form-fields-compact" style={{ marginBottom: '10px' }}>
+          <label className="form-field-compact">
+            <span className="form-field-label">Л/С</span>
+            <select value={selectedCellularAccount} onChange={(event) => setSelectedCellularAccount(event.target.value)}>
+              <option value="">Все</option>
+              {cellularAccounts.map((account) => (
+                <option key={account} value={account}>{account}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
       <div className="guide-grid">
         {sections.map((section) => (
           <div key={section.endpoint} className="guide-section">
@@ -454,6 +522,11 @@ export default function Guide({
                 section={section}
                 onSectionRowsUpdate={onSectionRowsUpdate}
                 fkOptions={buildFkOptions(section)}
+                rowFilter={
+                  enableCellularAccountFilter && section.entity === 'cellular-tariff-plans' && allowedTariffPlanIds
+                    ? (row: Row) => allowedTariffPlanIds.has(String(row.GN_cellular_tariff_plan_id ?? ''))
+                    : undefined
+                }
               />
             )}
           </div>

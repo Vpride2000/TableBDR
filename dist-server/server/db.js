@@ -234,8 +234,11 @@ export async function ensureCellularTables(client) {
        "GN_cellular_zone" TEXT,
        "GN_cellular_tariff_plan_FK" INTEGER NOT NULL REFERENCES "GN_cellular_tariff_plan"("GN_cellular_tariff_plan_id") ON DELETE RESTRICT,
        "GN_cellular_tariff_plan_enabled_date" DATE,
+       "GN_cellular_updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
        UNIQUE ("GN_cellular_account", "GN_cellular_identifier_FK", "GN_cellular_icc")
      )`);
+    await client.query(`ALTER TABLE "GN_cellular"
+     ADD COLUMN IF NOT EXISTS "GN_cellular_updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
 }
 export async function bootstrapCellularFromXlsx(client, projectRoot) {
     const countResult = await client.query('SELECT COUNT(*)::text AS count FROM "GN_cellular"');

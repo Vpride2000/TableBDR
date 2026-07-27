@@ -15,6 +15,7 @@ import SatellitesControlPage from './satellites/SatellitesControlPage'
 import SatellitesDetailsPage from './satellites/SatellitesDetailsPage'
 import CellularPage from './cellular/CellularPage'
 import CellularTariffGuidePopup from './cellular/CellularTariffGuidePopup'
+import CellularIdentifierGuidePopup from './cellular/CellularIdentifierGuidePopup'
 import { Page } from './types/forecast'
 import { pageFromHash } from './utils/forecastUtils'
 
@@ -340,6 +341,7 @@ export default function App() {
   const isBudgetMatrixPopup = window.location.hash === '#budget-matrix-window'
   const isBudgetMainPopup = window.location.hash === '#budget-main-window'
   const isCellularTariffGuidePopup = window.location.hash === '#cellular-tariff-guide-window'
+  const isCellularIdentifierGuidePopup = window.location.hash === '#cellular-identifier-guide-window'
   const limitPopupMatch = window.location.hash.match(/^#limit-window-(\d+)$/)
   const limitPopupRowId = limitPopupMatch ? Number(limitPopupMatch[1]) : null
   const isLimitPopup = limitPopupRowId != null && !Number.isNaN(limitPopupRowId)
@@ -366,6 +368,7 @@ export default function App() {
       if (window.location.hash === '#budget-matrix-window') return
       if (window.location.hash === '#budget-main-window') return
       if (window.location.hash === '#cellular-tariff-guide-window') return
+      if (window.location.hash === '#cellular-identifier-guide-window') return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
       if (/^#object-window-\d+$/.test(window.location.hash)) return
@@ -614,6 +617,14 @@ export default function App() {
     return (
       <main>
         <CellularTariffGuidePopup />
+      </main>
+    )
+  }
+
+  if (isCellularIdentifierGuidePopup) {
+    return (
+      <main>
+        <CellularIdentifierGuidePopup />
       </main>
     )
   }

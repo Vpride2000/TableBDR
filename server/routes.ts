@@ -418,13 +418,18 @@ export function setupRoutes(app: Express): void {
 
     const client = await createDbClient();
     try {
-      const deleted = await client.query(
-        `DELETE FROM "GN_satellite_xml_monthly"
+      const cleared = await client.query(
+        `UPDATE "GN_satellite_xml_monthly"
+         SET
+           "tariff" = NULL,
+           "tariff_note" = NULL,
+           "amount_without_vat" = 0,
+           "uploaded_at" = NOW()
          WHERE "month_name" = $1`,
         [month]
       );
 
-      res.json({ ok: true, deletedRows: deleted.rowCount ?? 0 });
+      res.json({ ok: true, clearedRows: cleared.rowCount ?? 0 });
     } catch (err) {
       console.error('Failed to clear satellites xml month', err);
       res.status(500).json({ error: 'Failed to clear satellites xml month' });
@@ -1128,9 +1133,30 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.get('/api/gn/cellular-accounts', async (req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query<{ GN_cellular_account: string | null }>(
+        `SELECT DISTINCT c."GN_cellular_account"
+         FROM "GN_cellular" c
+         WHERE c."GN_cellular_account" IS NOT NULL
+         ORDER BY c."GN_cellular_account" ASC`
+      );
+
+      res.json(result.rows.map((row) => String(row.GN_cellular_account ?? '').trim()).filter(Boolean));
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch GN_cellular_accounts' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.get('/api/gn/cellular', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
+      const accountFilter = String(req.query.account ?? '').trim();
+      const accountParam = accountFilter ? accountFilter : null;
       const result = await client.query(
         `SELECT
            c."GN_cellular_id",
@@ -1147,11 +1173,15 @@ export function setupRoutes(app: Express): void {
            c."GN_cellular_tariff_plan_FK",
            t."GN_cellular_tariff_plan",
            t."GN_cellular_tariff_plan_details",
-           c."GN_cellular_tariff_plan_enabled_date"
+           c."GN_cellular_tariff_plan_enabled_date",
+           c."GN_cellular_updated_at"
          FROM "GN_cellular" c
          JOIN "GN_cellular_identifier" i ON c."GN_cellular_identifier_FK" = i."GN_cellular_identifier_id"
          JOIN "GN_cellular_tariff_plan" t ON c."GN_cellular_tariff_plan_FK" = t."GN_cellular_tariff_plan_id"
+         WHERE ($1::text IS NULL OR c."GN_cellular_account" = $1)
          ORDER BY c."GN_cellular_id" ASC`
+        ,
+        [accountParam]
       );
       res.json(result.rows);
     } catch (err) {
@@ -1285,8 +1315,9 @@ export function setupRoutes(app: Express): void {
                "GN_cellular_activation_date",
                "GN_cellular_zone",
                "GN_cellular_tariff_plan_FK",
-               "GN_cellular_tariff_plan_enabled_date"
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+               "GN_cellular_tariff_plan_enabled_date",
+               "GN_cellular_updated_at"
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
             [
               normalizedRow.account,
               normalizedRow.client,
@@ -1345,7 +1376,8 @@ export function setupRoutes(app: Express): void {
              "GN_cellular_activation_date" = $4,
              "GN_cellular_zone" = $5,
              "GN_cellular_tariff_plan_FK" = $6,
-             "GN_cellular_tariff_plan_enabled_date" = $7
+             "GN_cellular_tariff_plan_enabled_date" = $7,
+             "GN_cellular_updated_at" = NOW()
            WHERE "GN_cellular_id" = $8`,
           [
             normalizedRow.client,
