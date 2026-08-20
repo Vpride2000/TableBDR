@@ -22,6 +22,7 @@ interface TableSection {
 type GuideProps = {
   initialExpandedEntities?: string[]
   onlyEntities?: string[]
+  lookupEntities?: string[]
   enableCellularAccountFilter?: boolean
 }
 
@@ -52,6 +53,13 @@ const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: s
     idColumn: 'GN_cellular_tariff_plan_id',
     columns: ['GN_cellular_tariff_plan', 'GN_cellular_tariff_plan_details'],
   },
+  {
+    title: 'Лицевые счета',
+    endpoint: '/api/gn/cellular-accounts',
+    entity: 'cellular-accounts',
+    idColumn: 'GN_cellular_account_id',
+    columns: ['GN_cellular_account', 'GN_department_FK', 'GN_cellular_account_note'],
+  },
 ];
 
 const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: string; valueKey: string; labelKey: string }>> = {
@@ -80,6 +88,32 @@ const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: stri
       valueKey: 'GN_equipment_type_id',
       labelKey: 'GN_equipment_type',
     },
+  },
+  'cellular-accounts': {
+    GN_department_FK: {
+      sourceEntity: 'departments',
+      valueKey: 'GN_Dep_id',
+      labelKey: 'GN_department',
+    },
+  },
+};
+
+const GUIDE_COLUMN_LABELS: Record<string, Record<string, string>> = {
+  'cellular-accounts': {
+    GN_cellular_account_id: '№',
+    GN_cellular_account: 'Лицевой',
+    GN_department_FK: 'Подразделение',
+    GN_cellular_account_note: 'Примечание',
+  },
+  'cellular-identifiers': {
+    GN_cellular_identifier_id: '№',
+    GN_cellular_identifier: 'номер',
+    GN_cellular_identifier_fio: 'ФИО',
+  },
+  'cellular-tariff-plans': {
+    GN_cellular_tariff_plan_id: '№',
+    GN_cellular_tariff_plan: 'тариф',
+    GN_cellular_tariff_plan_details: 'состав тарифа',
   },
 };
 
@@ -278,7 +312,7 @@ function DataTable({
       <table className="guide-table table-compact">
         <thead>
           <tr>
-            {columns.map((col) => <th key={col}>{col}</th>)}
+            {columns.map((col) => <th key={col}>{GUIDE_COLUMN_LABELS[section.entity]?.[col] ?? col}</th>)}
             <th>Действия</th>
           </tr>
         </thead>
@@ -340,11 +374,13 @@ function DataTable({
 export default function Guide({
   initialExpandedEntities = [],
   onlyEntities,
+  lookupEntities = [],
   enableCellularAccountFilter = false,
 }: GuideProps = {}) {
-  const defs = onlyEntities && onlyEntities.length > 0
+  const visibleDefs = onlyEntities && onlyEntities.length > 0
     ? TABLE_DEFS.filter((def) => onlyEntities.includes(def.entity))
     : TABLE_DEFS;
+  const defs = [...visibleDefs, ...TABLE_DEFS.filter((def) => lookupEntities.includes(def.entity) && !visibleDefs.some((item) => item.entity === def.entity))];
 
   const [sections, setSections] = useState<TableSection[]>(
     defs.map((def) => ({
@@ -359,6 +395,7 @@ export default function Guide({
   const [cellularAccounts, setCellularAccounts] = useState<string[]>([]);
   const [selectedCellularAccount, setSelectedCellularAccount] = useState('');
   const [allowedTariffPlanIds, setAllowedTariffPlanIds] = useState<Set<string> | null>(null);
+  const [hideUnknownIdentifiers, setHideUnknownIdentifiers] = useState(true);
 
   // Загружаем секции, которые должны быть раскрыты сразу при инициализации.
   useEffect(() => {
@@ -504,30 +541,46 @@ export default function Guide({
         </div>
       )}
       <div className="guide-grid">
-        {sections.map((section) => (
+        {sections.filter((section) => visibleDefs.some((def) => def.entity === section.entity)).map((section) => (
           <div key={section.endpoint} className="guide-section">
             <h2>
               <span>{section.title}</span>
-              <button
-                type="button"
-                className="guide-section-toggle"
-                onClick={() => toggleSection(section.endpoint)}
-                aria-expanded={section.expanded}
-              >
-                {section.expanded ? 'Свернуть' : 'Развернуть'}
-              </button>
+              {visibleDefs.length > 1 && (
+                <button
+                  type="button"
+                  className="guide-section-toggle"
+                  onClick={() => toggleSection(section.endpoint)}
+                  aria-expanded={section.expanded}
+                >
+                  {section.expanded ? 'Свернуть' : 'Развернуть'}
+                </button>
+              )}
             </h2>
             {section.expanded && (
-              <DataTable
-                section={section}
-                onSectionRowsUpdate={onSectionRowsUpdate}
-                fkOptions={buildFkOptions(section)}
-                rowFilter={
-                  enableCellularAccountFilter && section.entity === 'cellular-tariff-plans' && allowedTariffPlanIds
-                    ? (row: Row) => allowedTariffPlanIds.has(String(row.GN_cellular_tariff_plan_id ?? ''))
-                    : undefined
-                }
-              />
+              <>
+                {section.entity === 'cellular-identifiers' && (
+                  <label className="satellites-hide-unused-label">
+                    <input
+                      type="checkbox"
+                      checked={hideUnknownIdentifiers}
+                      onChange={(event) => setHideUnknownIdentifiers(event.target.checked)}
+                    />
+                    скрыть неизвестные номера
+                  </label>
+                )}
+                <DataTable
+                  section={section}
+                  onSectionRowsUpdate={onSectionRowsUpdate}
+                  fkOptions={buildFkOptions(section)}
+                  rowFilter={
+                    enableCellularAccountFilter && section.entity === 'cellular-tariff-plans' && allowedTariffPlanIds
+                      ? (row: Row) => allowedTariffPlanIds.has(String(row.GN_cellular_tariff_plan_id ?? ''))
+                      : section.entity === 'cellular-identifiers' && hideUnknownIdentifiers
+                        ? (row: Row) => String(row.GN_cellular_identifier_fio ?? '').trim() !== ''
+                        : undefined
+                  }
+                />
+              </>
             )}
           </div>
         ))}

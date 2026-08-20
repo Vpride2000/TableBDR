@@ -313,6 +313,15 @@ export async function ensureCellularTables(client: Client): Promise<void> {
   );
 
   await client.query(
+    `CREATE TABLE IF NOT EXISTS "GN_cellular_account" (
+       "GN_cellular_account_id" SERIAL PRIMARY KEY,
+       "GN_cellular_account" TEXT NOT NULL UNIQUE,
+       "GN_department_FK" INTEGER NOT NULL REFERENCES "GN_department"("GN_Dep_id") ON DELETE RESTRICT,
+       "GN_cellular_account_note" TEXT
+     )`
+  );
+
+  await client.query(
     `CREATE TABLE IF NOT EXISTS "GN_cellular" (
        "GN_cellular_id" SERIAL PRIMARY KEY,
        "GN_cellular_account" TEXT,

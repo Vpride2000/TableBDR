@@ -53,6 +53,11 @@ type SyncResult = {
   changedColumnsByRowKey: Record<string, string[]>
 }
 
+type CellularAccountOption = {
+  account: string
+  department: string
+}
+
 function normalizeDateDisplay(value: string | null): string {
   if (!value) return ''
   if (value.length >= 10) return value.slice(0, 10)
@@ -175,9 +180,9 @@ export default function CellularPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [zoneFilter, setZoneFilter] = useState('')
   const [tariffFilter, setTariffFilter] = useState('')
-  const [accountOptions, setAccountOptions] = useState<string[]>([])
+  const [accountOptions, setAccountOptions] = useState<CellularAccountOption[]>([])
   const [accountFilter, setAccountFilter] = useState('')
-  const [hideBlocked, setHideBlocked] = useState(false)
+  const [hideBlocked, setHideBlocked] = useState(true)
   const [hideGlonass, setHideGlonass] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [hasLoadedTable, setHasLoadedTable] = useState(false)
@@ -349,11 +354,11 @@ export default function CellularPage() {
   async function loadAccounts(): Promise<void> {
     setAccountsLoading(true)
     try {
-      const accountsRes = await fetch('/api/gn/cellular-accounts')
+      const accountsRes = await fetch('/api/gn/cellular-account-options')
 
       if (!accountsRes.ok) throw new Error(formatHttpError(accountsRes.status))
 
-      const accounts = (await accountsRes.json()) as string[]
+      const accounts = (await accountsRes.json()) as CellularAccountOption[]
       setAccountOptions(accounts)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить список Л/С')
@@ -463,6 +468,15 @@ export default function CellularPage() {
     if (popup) popup.focus()
   }
 
+  function openAccountGuideWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#cellular-account-guide-window`,
+      'cellular-account-guide-window',
+      'popup=yes,width=1100,height=760,resizable=yes,scrollbars=yes'
+    )
+    if (popup) popup.focus()
+  }
+
   function openIdentifierGuideWindow(): void {
     const popup = window.open(
       `${window.location.pathname}#cellular-identifier-guide-window`,
@@ -495,40 +509,42 @@ export default function CellularPage() {
 
   return (
     <section className="guide invest-program-section transparent-section">
-      <div className="guide-section invest-program-content">
-        <h2>Сотовая связь</h2>
+      <div className="guide-section invest-program-content">    
 
         {accountsLoading && <p className="hint">Загрузка списка Л/С...</p>}
         {error && <p className="hint hint--error">Ошибка: {error}</p>}
 
         {!accountsLoading && !error && (
           <>
-            <p className="hint">
-              Основная таблица загружается из XLSX и связана со справочниками Идентификатор и Тарифный план.
-            </p>
-
-            <div className="guide-table-wrap section-bottom-space">
-              <div className="guide-table-actions" style={{ justifyContent: 'flex-start', marginBottom: '8px' }}>
+          <div className="guide-table-wrap cellular-main-table-wrap section-bottom-space">
+                <div className="page-header">
+                  <h3> Справочник абонентов служебной сотовой связи </h3>
+                </div>
+                
+                <div className="guide-table-actions" style={{ justifyContent: 'flex-start', marginBottom: '8px' }}>
                 <button
                   type="button"
                   className="page-action-btn page-action-btn--secondary"
                   onClick={openIdentifierGuideWindow}
                 >
-                  Справочник: Идентификатор (popup)
+                  Справочник абонентов краткий
                 </button>
                 <button
                   type="button"
                   className="page-action-btn page-action-btn--secondary"
                   onClick={openTariffGuideWindow}
                 >
-                  Справочник: Тарифный план (popup)
+                  Тарифы
                 </button>
-              </div>
-              <h3>Основная таблица сотовой связи</h3>
-              <div className="form-fields-compact" style={{ marginBottom: '10px' }}>
-                <label className="form-field-compact">
-                  <span className="page-action-btn page-action-btn--success" style={{ display: 'inline-block' }}>
-                    {uploading ? 'Загрузка...' : 'Загрузить обновленный XLSX'}
+                <button
+                  type="button"
+                  className="page-action-btn page-action-btn--secondary"
+                  onClick={openAccountGuideWindow}
+                >
+                  Лицевые счета
+                </button>               
+                  <span className="page-action-btn page-action-btn--secondary" style={{ display: 'inline-block' }}>
+                    {uploading ? 'Загрузка...' : 'Загрузить обновленный отчет из XLSX'}
                   </span>
                   <input
                     type="file"
@@ -539,22 +555,48 @@ export default function CellularPage() {
                     style={{ display: 'none' }}
                     disabled={uploading}
                   />
-                </label>
-                <button
-                  type="button"
-                  className={hideBlocked ? 'page-action-btn page-action-btn--success' : 'page-action-btn page-action-btn--secondary'}
-                  onClick={() => setHideBlocked((prev) => !prev)}
-                >
-                  {hideBlocked ? 'Показать все' : 'Скрыть заблокированные'}
-                </button>
-                <span className="hint" style={{ alignSelf: 'center' }}>
-                  Последняя загрузка: <strong>{lastUploadDisplay}</strong>
-                </span>
-              </div>
-              {uploadMessage && <p className="hint">{uploadMessage}</p>}
-              {uploadError && <p className="hint hint--error">Ошибка загрузки: {uploadError}</p>}
-              <div className="form-fields-compact" style={{ marginBottom: '10px' }}>
-                <label className="form-field-compact">
+                  <span style={{ marginLeft: '12px' }}>Последняя загрузка: <strong>{lastUploadDisplay}</strong></span>
+              </div>  
+          
+                         <p className="hint">
+                {hasLoadedTable && cellularRows.length > 0
+                  ? <>Найдено строк: <strong>{filteredCellularRows.length}</strong> из {cellularRows.length}</>
+                  : hasLoadedTable
+                    ? 'По выбранному Л/С данные не найдены.'
+                    : accountFilter
+                      ? 'Нажмите Загрузить, чтобы подгрузить данные по выбранному Л/С.'
+                      : 'Выберите Л/С или пункт Все и нажмите Загрузить.'}
+              </p>
+              <div className="form-field-compact">
+                 <button
+                    type="button"
+                    className="page-action-btn page-action-btn--success"
+                    onClick={() => {
+                      void handleLoadTable()
+                    }}
+                    disabled={!canLoadTable || loadingTable}
+                  >
+                    {loadingTable ? 'Загрузка...' : 'Показать справочник'}
+                  </button>                  
+                  <span className="form-field-label">Л/С</span>
+                  <select value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}>
+                    <option value="">Все</option>
+                    {accountOptions.map((option) => (
+                      <option key={option.account} value={option.account}>
+                        {option.department ? `${option.account} (${option.department})` : option.account}
+                      </option>
+                    ))}
+                  </select>                
+                    <button
+                    type="button"
+                    className="page-action-btn page-action-btn--secondary"
+                    onClick={resetCellularFilters}
+                  >
+                    Сбросить
+                  </button>
+                  </div> 
+                  <div style={{ marginTop: '20px' }}>  
+               <label className="form-field-compact">
                   <span className="form-field-label">Поиск</span>
                   <input
                     type="text"
@@ -563,29 +605,12 @@ export default function CellularPage() {
                     onChange={(event) => setGlobalSearch(event.target.value)}
                   />
                 </label>
-
-                <label className="form-field-compact">
-                  <span className="form-field-label">Л/С</span>
-                  <select value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}>
-                    <option value="">Все</option>
-                    {accountOptions.map((account) => (
-                      <option key={account} value={account}>{account}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="form-field-compact" style={{ minWidth: 'auto' }}>
-                  <span className="form-field-label">Фильтр</span>
-                  <span className="hint" style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-                    <input
-                      type="checkbox"
-                      checked={hideGlonass}
-                      onChange={(event) => setHideGlonass(event.target.checked)}
-                    />
-                    без Глонасс
-                  </span>
-                </label>
-
+                
+                             
+              </div>
+              {uploadMessage && <p className="hint">{uploadMessage}</p>}
+              {uploadError && <p className="hint hint--error">Ошибка загрузки: {uploadError}</p>}
+              <div className="form-fields-compact" style={{ marginTop: '20px', marginBottom: '10px' }}>
                 <label className="form-field-compact">
                   <span className="form-field-label">Статус</span>
                   <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
@@ -597,7 +622,7 @@ export default function CellularPage() {
                 </label>
 
                 <label className="form-field-compact">
-                  <span className="form-field-label">Зона</span>
+                  <span className="form-field-label">Регион номера</span>
                   <select value={zoneFilter} onChange={(event) => setZoneFilter(event.target.value)}>
                     <option value="">Все</option>
                     {zoneOptions.map((zone) => (
@@ -615,43 +640,25 @@ export default function CellularPage() {
                     ))}
                   </select>
                 </label>
-
-                <div className="form-actions-row-compact">
-                  <button
-                    type="button"
-                    className="page-action-btn page-action-btn--secondary"
-                    onClick={resetCellularFilters}
-                  >
-                    Сбросить
-                  </button>
-                </div>
-
-                <div className="form-actions-row-compact">
-                  <button
-                    type="button"
-                    className="page-action-btn page-action-btn--success"
-                    onClick={() => {
-                      void handleLoadTable()
-                    }}
-                    disabled={!canLoadTable || loadingTable}
-                  >
-                    {loadingTable ? 'Загрузка...' : 'Загрузить'}
-                  </button>
-                </div>
-              </div>
-
-              <p className="hint">
-                {hasLoadedTable && cellularRows.length > 0
-                  ? <>Найдено строк: <strong>{filteredCellularRows.length}</strong> из {cellularRows.length}</>
-                  : hasLoadedTable
-                    ? 'По выбранному Л/С данные не найдены.'
-                    : accountFilter
-                      ? 'Нажмите Загрузить, чтобы подгрузить данные по выбранному Л/С.'
-                      : 'Выберите Л/С или пункт Все и нажмите Загрузить.'}
-              </p>
-
+                <label className="satellites-hide-unused-label" style={{ marginRight: '12px' }}>
+                  <input
+                    type="checkbox"
+                    checked={!hideBlocked}
+                    onChange={(event) => setHideBlocked(!event.target.checked)}
+                  />
+                  Показывать заблокированные
+                </label>
+                <label className="satellites-hide-unused-label">
+                  <input
+                    type="checkbox"
+                    checked={!hideGlonass}
+                    onChange={(event) => setHideGlonass(!event.target.checked)}
+                  />
+                  Показывать Глонасс
+                </label>  
+              </div> 
               {hasLoadedTable && (
-                <table className="guide-table table-compact">
+                <table className="guide-table table-compact cellular-main-table">
                 <thead>
                   <tr>
                     <th>
@@ -703,7 +710,7 @@ export default function CellularPage() {
                     ].join('\n')
 
                     const tariffComment = [
-                      `Детали (из справочника): ${row.GN_cellular_tariff_plan_details ?? '-'}`,
+                      `Состав тарифа: ${row.GN_cellular_tariff_plan_details ?? '-'}`,
                       `Тарифный план включен: ${normalizeDateDisplay(row.GN_cellular_tariff_plan_enabled_date) || '-'}`,
                     ].join('\n')
 

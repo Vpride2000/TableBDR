@@ -928,9 +928,38 @@ export function setupRoutes(app) {
             await client.end();
         }
     });
+    app.get('/api/gn/cellular-account-options', async (req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`SELECT DISTINCT
+           c."GN_cellular_account",
+           a."GN_cellular_account_id",
+           d."GN_department"
+         FROM "GN_cellular" c
+         LEFT JOIN "GN_cellular_account" a ON a."GN_cellular_account" = c."GN_cellular_account"
+         LEFT JOIN "GN_department" d ON d."GN_Dep_id" = a."GN_department_FK"
+         WHERE c."GN_cellular_account" IS NOT NULL
+         ORDER BY c."GN_cellular_account" ASC, a."GN_cellular_account_id" ASC`);
+            res.json(result.rows
+                .map((row) => ({
+                account: String(row.GN_cellular_account ?? '').trim(),
+                department: String(row.GN_department ?? '').trim(),
+            }))
+                .filter((row) => row.account));
+        }
+        catch (err) {
+            console.error(err);
+            res.status(500).json({ error: 'Failed to fetch GN_cellular_account_options' });
+        }
+        finally {
+            await client.end();
+        }
+    });
     app.get('/api/gn/cellular', async (req, res) => {
         const client = await createDbClient();
         try {
+            const accountFilter = String(req.query.account ?? '').trim();
+            const accountParam = accountFilter ? accountFilter : null;
             const result = await client.query(`SELECT
            c."GN_cellular_id",
            c."GN_cellular_account",
@@ -951,7 +980,8 @@ export function setupRoutes(app) {
          FROM "GN_cellular" c
          JOIN "GN_cellular_identifier" i ON c."GN_cellular_identifier_FK" = i."GN_cellular_identifier_id"
          JOIN "GN_cellular_tariff_plan" t ON c."GN_cellular_tariff_plan_FK" = t."GN_cellular_tariff_plan_id"
-         ORDER BY c."GN_cellular_id" ASC`);
+         WHERE ($1::text IS NULL OR c."GN_cellular_account" = $1)
+         ORDER BY c."GN_cellular_id" ASC`, [accountParam]);
             res.json(result.rows);
         }
         catch (err) {
@@ -1161,6 +1191,26 @@ export function setupRoutes(app) {
         catch (err) {
             console.error(err);
             res.status(500).json({ error: 'Failed to fetch GN_cellular_tariff_plan' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.get('/api/gn/cellular-accounts', async (req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`SELECT
+           a."GN_cellular_account_id",
+           a."GN_cellular_account",
+           a."GN_department_FK",
+           a."GN_cellular_account_note"
+         FROM "GN_cellular_account" a
+         ORDER BY a."GN_cellular_account_id" ASC`);
+            res.json(result.rows);
+        }
+        catch (err) {
+            console.error(err);
+            res.status(500).json({ error: 'Failed to fetch GN_cellular_account' });
         }
         finally {
             await client.end();

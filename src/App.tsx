@@ -16,6 +16,7 @@ import SatellitesDetailsPage from './satellites/SatellitesDetailsPage'
 import CellularPage from './cellular/CellularPage'
 import CellularTariffGuidePopup from './cellular/CellularTariffGuidePopup'
 import CellularIdentifierGuidePopup from './cellular/CellularIdentifierGuidePopup'
+import CellularAccountGuidePopup from './cellular/CellularAccountGuidePopup'
 import { Page } from './types/forecast'
 import { pageFromHash } from './utils/forecastUtils'
 
@@ -202,20 +203,23 @@ function StartDashboard() {
               <strong>{formatMoney(summary.totalServiceBudget)}</strong>
             </li>
           </ul>
+           <h3>Топ услуг по бюджету</h3>
+          <ul className="dashboard-compact-list">
+            {summary.topServices.map((item) => (
+              <li key={item.name}>
+                <strong>{item.name}</strong> — {formatMoney(item.budget)}
+              </li>
+            ))}
+          </ul>
         </div>
 
         <div className="dashboard-card">
           <h3>Договоры</h3>
-          <p className="dashboard-card-value">Всего: <strong>{formatCount(summary.contractCount)}</strong></p>
+          <p className="dashboard-card-value">Всего договоров: <strong>{formatCount(summary.contractCount)}</strong></p>
           {renderStatusItems(summary.contractStatusCounts)}
-        </div>
-
-        <div className="dashboard-card">
-          <h3>Доп. соглашения</h3>
-          <p className="dashboard-card-value">Всего: <strong>{formatCount(summary.agreementCount)}</strong></p>
+          <p className="dashboard-card-value dashboard-card-value--spaced">Всего доп. соглашений: <strong>{formatCount(summary.agreementCount)}</strong></p>
           {renderStatusItems(summary.agreementStatusCounts)}
         </div>
-
         <div className="dashboard-card">
           <h3>Закупки оборудования</h3>
           <ul className="dashboard-stat-list">
@@ -232,11 +236,11 @@ function StartDashboard() {
               <strong>{formatCount(summary.purchaseInBudget)}</strong>
             </li>
           </ul>
+           <h3>Статусы закупок</h3>
+          {renderStatusItems(summary.purchaseStatusCounts)}
         </div>
-      </div>
 
-      <div className="dashboard-grid">
-        <div className="dashboard-card">
+        <div className="dashboard-card dashboard-card--links">
           <h3>Полезные ссылки</h3>
           <ul className="dashboard-links-list">
             {usefulLinks.map((link) => (
@@ -244,22 +248,6 @@ function StartDashboard() {
                 <a href={link.href} target="_blank" rel="noreferrer">
                   {link.label}
                 </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="dashboard-card">
-          <h3>Статусы закупок</h3>
-          {renderStatusItems(summary.purchaseStatusCounts)}
-        </div>
-
-        <div className="dashboard-card">
-          <h3>Топ услуг по бюджету</h3>
-          <ul className="dashboard-compact-list">
-            {summary.topServices.map((item) => (
-              <li key={item.name}>
-                <strong>{item.name}</strong> — {formatMoney(item.budget)}
               </li>
             ))}
           </ul>
@@ -325,7 +313,7 @@ function BudgetSectionPage({
       {activeTab === 'details' && (
         <div className="budget-popup-links">
           <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenSatellitesDetails}>
-            Спутники: Детализация
+            Спутники: Сделать детализацию из XML первички
           </button>
         </div>
       )}
@@ -342,6 +330,7 @@ export default function App() {
   const isBudgetMainPopup = window.location.hash === '#budget-main-window'
   const isCellularTariffGuidePopup = window.location.hash === '#cellular-tariff-guide-window'
   const isCellularIdentifierGuidePopup = window.location.hash === '#cellular-identifier-guide-window'
+  const isCellularAccountGuidePopup = window.location.hash === '#cellular-account-guide-window'
   const limitPopupMatch = window.location.hash.match(/^#limit-window-(\d+)$/)
   const limitPopupRowId = limitPopupMatch ? Number(limitPopupMatch[1]) : null
   const isLimitPopup = limitPopupRowId != null && !Number.isNaN(limitPopupRowId)
@@ -369,6 +358,7 @@ export default function App() {
       if (window.location.hash === '#budget-main-window') return
       if (window.location.hash === '#cellular-tariff-guide-window') return
       if (window.location.hash === '#cellular-identifier-guide-window') return
+      if (window.location.hash === '#cellular-account-guide-window') return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
       if (/^#object-window-\d+$/.test(window.location.hash)) return
@@ -625,6 +615,14 @@ export default function App() {
     return (
       <main>
         <CellularIdentifierGuidePopup />
+      </main>
+    )
+  }
+
+  if (isCellularAccountGuidePopup) {
+    return (
+      <main>
+        <CellularAccountGuidePopup />
       </main>
     )
   }

@@ -20,6 +20,7 @@ type ContractInfo = {
   GN_contract_date?: string;
   GN_contract_term_from?: string;
   GN_contract_term_to?: string
+  GN_contract_side?: string
 }
 
 interface ContractDetailsPageProps {
@@ -39,6 +40,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
   const [contractError, setContractError] = useState<string | null>(null);
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([]);
   const [dogovorOptions, setDogovorOptions] = useState<LookupOption[]>([]);
+  const [departmentOptions, setDepartmentOptions] = useState<LookupOption[]>([]);
   const [contractDraft, setContractDraft] = useState<ContractInfo | null>(null);
   const [isEditingContract, setIsEditingContract] = useState(false);
   const [contractSaveLoading, setContractSaveLoading] = useState(false);
@@ -95,21 +97,24 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
       setContractError(null);
 
       try {
-        const [contractsResponse, contractorsResponse, dogovorsResponse, agreementsResponse] = await Promise.all([
+        const [contractsResponse, contractorsResponse, dogovorsResponse, departmentsResponse, agreementsResponse] = await Promise.all([
           fetch('/api/gn/contracts'),
           fetch('/api/gn/contractors'),
           fetch('/api/gn/dogovors'),
+          fetch('/api/gn/departments'),
           fetch('/api/gn/contract-additional-agreements'),
         ]);
 
         if (!contractsResponse.ok) throw new Error('Failed to fetch contracts');
         if (!contractorsResponse.ok) throw new Error('Failed to fetch contractors');
         if (!dogovorsResponse.ok) throw new Error('Failed to fetch dogovors');
+        if (!departmentsResponse.ok) throw new Error('Failed to fetch departments');
         if (!agreementsResponse.ok) throw new Error('Failed to fetch agreements');
 
         const contracts = (await contractsResponse.json()) as ContractInfo[];
         const contractors = (await contractorsResponse.json()) as Row[];
         const dogovors = (await dogovorsResponse.json()) as Row[];
+        const departments = (await departmentsResponse.json()) as Row[];
         const allAgreements = (await agreementsResponse.json()) as ContractAdditionalAgreement[];
 
         const contract = contracts.find(c => c.GN_contract_id === contractId);
@@ -122,6 +127,14 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
         setContractDraft(contract);
         setContractorOptions(mapLookupOptions(contractors, 'GN_c_id', 'GN_contarctor'));
         setDogovorOptions(mapLookupOptions(dogovors, 'GN_dgv_id', 'GN_dogovor'));
+        setDepartmentOptions(
+          departments
+            .map((department) => ({
+              value: String(department.GN_department ?? ''),
+              label: String(department.GN_department ?? ''),
+            }))
+            .filter((option) => option.value)
+        );
 
         const contractAgreements = allAgreements.filter(a => a.GN_contract_id_FK === contract.GN_contract_id);
         setAgreements(contractAgreements);
@@ -512,6 +525,9 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
               <div className="contract-details-meta-row">
                 <strong>Состояние:</strong> {contractInfo.GN_contract_state}
               </div>
+              <div className="contract-details-meta-row">
+                <strong>Сторона:</strong> {contractInfo.GN_contract_side || ''}
+              </div>
 
               <div className="contract-details-meta-row">
                 <strong>Дата договора:</strong> {contractInfo.GN_contract_date ? formatDateDisplay(contractInfo.GN_contract_date) : ''}
@@ -581,6 +597,19 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
                   value={contractDraft?.GN_contract_state ?? ''}
                   onChange={(event) => updateContractDraft('GN_contract_state', event.target.value)}
                 />
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-side">Сторона</label>
+                <select
+                  id="contract-side"
+                  value={contractDraft?.GN_contract_side ?? ''}
+                  onChange={(event) => updateContractDraft('GN_contract_side', event.target.value)}
+                >
+                  <option value="">Выберите сторону</option>
+                  {departmentOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
               </div>
               <div className="form-field form-field-compact">
                 <label className="form-field-label" htmlFor="contract-date">Дата договора</label>

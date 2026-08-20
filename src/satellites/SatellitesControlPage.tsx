@@ -89,6 +89,7 @@ export default function SatellitesControlPage() {
   const [draftSatellite, setDraftSatellite] = useState<{ mac: string; directionName: string; description: string; departmentId: number | null; gtNumbersFK: number | null; diameter: string; power: string; model: string; modem: string } | null>(null)
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({})
   const [hideUnusedRows, setHideUnusedRows] = useState(false)
+  const [hideEquipmentColumns, setHideEquipmentColumns] = useState(true)
   const [sortState, setSortState] = useState<{ key: string; direction: SortDirection }>({ key: 'index', direction: 'asc' })
   const [savingRowEdit, setSavingRowEdit] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -630,7 +631,7 @@ export default function SatellitesControlPage() {
         return true
       }
       const macKey = normalizeMacKey(satellite.GN_satellite_mac)
-      return sortedMonths.some((month) => !!xmlRowsByMacMonth[macKey]?.[month])
+      return sortedMonths.some((month) => (xmlRowsByMacMonth[macKey]?.[month]?.amount ?? 0) !== 0)
     })
 
     const directionFactor = sortState.direction === 'asc' ? 1 : -1
@@ -817,20 +818,7 @@ export default function SatellitesControlPage() {
                 Из XML загружено строк: <strong>{xmlRowsCount}</strong>. Сопоставлено по MAC: <strong>{xmlMatchedCount}</strong>.
               </p>
             )}
-            <table className="guide-table table-compact satellites-table">
-              <thead>
-                <tr>
-                  <th rowSpan={2}>
-                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('index')}>
-                      № {sortMark('index')}
-                    </button>
-                  </th>
-                  <th rowSpan={2}>
-                    <div className="satellites-header-stack">
-                      <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('mac')}>
-                        MAC {sortMark('mac')}
-                      </button>
-                      <label className="satellites-hide-unused-label">
+            <label className="satellites-hide-unused-label">
                         <input
                           type="checkbox"
                           checked={hideUnusedRows}
@@ -838,6 +826,24 @@ export default function SatellitesControlPage() {
                         />
                         скрыть не исп.
                       </label>
+                      <label className="satellites-hide-unused-label">
+                        <input
+                          type="checkbox"
+                          checked={hideEquipmentColumns}
+                          onChange={(event) => setHideEquipmentColumns(event.target.checked)}
+                        />
+                        скрыть оборудование
+                      </label>
+            <table className="guide-table table-compact satellites-table">
+              <thead>
+                <tr>
+                  <th rowSpan={2}>№</th>
+                  <th rowSpan={2}>
+                    <div className="satellites-header-stack">
+                      <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('mac')}>
+                        MAC {sortMark('mac')}
+                      </button>
+                      
                     </div>
                   </th>
                   <th rowSpan={2}>
@@ -855,26 +861,34 @@ export default function SatellitesControlPage() {
                       Номера ГТ {sortMark('gtNumbers')}
                     </button>
                   </th>
-                  <th rowSpan={2}>
-                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('diameter')}>
-                      Диаметр {sortMark('diameter')}
-                    </button>
-                  </th>
-                  <th rowSpan={2}>
-                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('power')}>
-                      Мощность {sortMark('power')}
-                    </button>
-                  </th>
-                  <th rowSpan={2}>
-                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('model')}>
-                      Модель {sortMark('model')}
-                    </button>
-                  </th>
-                  <th rowSpan={2}>
-                    <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('modem')}>
-                      Модем {sortMark('modem')}
-                    </button>
-                  </th>
+                  {!hideEquipmentColumns && (
+                    <th rowSpan={2}>
+                      <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('diameter')}>
+                        Диаметр {sortMark('diameter')}
+                      </button>
+                    </th>
+                  )}
+                  {!hideEquipmentColumns && (
+                    <th rowSpan={2}>
+                      <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('power')}>
+                        Мощность {sortMark('power')}
+                      </button>
+                    </th>
+                  )}
+                  {!hideEquipmentColumns && (
+                    <th rowSpan={2}>
+                      <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('model')}>
+                        Модель {sortMark('model')}
+                      </button>
+                    </th>
+                  )}
+                  {!hideEquipmentColumns && (
+                    <th rowSpan={2}>
+                      <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('modem')}>
+                        Модем {sortMark('modem')}
+                      </button>
+                    </th>
+                  )}
                   {authUser === 'ADM' && (
                     <th rowSpan={2}>
                       <button className="satellites-sort-btn" type="button" onClick={() => toggleSort('actions')}>
@@ -1020,54 +1034,62 @@ export default function SatellitesControlPage() {
                           })()
                         )}
                       </td>
-                      <td>
-                        {isEditingRow ? (
-                          <input
-                            className="invest-program-inline-input"
-                            value={draftSatellite?.diameter ?? ''}
-                            onChange={(event) => {
-                              const value = event.target.value
-                              setDraftSatellite((prev) => (prev ? { ...prev, diameter: value } : prev))
-                            }}
-                          />
-                        ) : (sat.GN_satellite_diameter || '-')}
-                      </td>
-                      <td>
-                        {isEditingRow ? (
-                          <input
-                            className="invest-program-inline-input"
-                            value={draftSatellite?.power ?? ''}
-                            onChange={(event) => {
-                              const value = event.target.value
-                              setDraftSatellite((prev) => (prev ? { ...prev, power: value } : prev))
-                            }}
-                          />
-                        ) : (sat.GN_satellite_power || '-')}
-                      </td>
-                      <td>
-                        {isEditingRow ? (
-                          <input
-                            className="invest-program-inline-input"
-                            value={draftSatellite?.model ?? ''}
-                            onChange={(event) => {
-                              const value = event.target.value
-                              setDraftSatellite((prev) => (prev ? { ...prev, model: value } : prev))
-                            }}
-                          />
-                        ) : (sat.GN_satellite_model || '-')}
-                      </td>
-                      <td>
-                        {isEditingRow ? (
-                          <input
-                            className="invest-program-inline-input"
-                            value={draftSatellite?.modem ?? ''}
-                            onChange={(event) => {
-                              const value = event.target.value
-                              setDraftSatellite((prev) => (prev ? { ...prev, modem: value } : prev))
-                            }}
-                          />
-                        ) : (sat.GN_satellite_modem || '-')}
-                      </td>
+                      {!hideEquipmentColumns && (
+                        <td>
+                          {isEditingRow ? (
+                            <input
+                              className="invest-program-inline-input"
+                              value={draftSatellite?.diameter ?? ''}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                setDraftSatellite((prev) => (prev ? { ...prev, diameter: value } : prev))
+                              }}
+                            />
+                          ) : (sat.GN_satellite_diameter || '-')}
+                        </td>
+                      )}
+                      {!hideEquipmentColumns && (
+                        <td>
+                          {isEditingRow ? (
+                            <input
+                              className="invest-program-inline-input"
+                              value={draftSatellite?.power ?? ''}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                setDraftSatellite((prev) => (prev ? { ...prev, power: value } : prev))
+                              }}
+                            />
+                          ) : (sat.GN_satellite_power || '-')}
+                        </td>
+                      )}
+                      {!hideEquipmentColumns && (
+                        <td>
+                          {isEditingRow ? (
+                            <input
+                              className="invest-program-inline-input"
+                              value={draftSatellite?.model ?? ''}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                setDraftSatellite((prev) => (prev ? { ...prev, model: value } : prev))
+                              }}
+                            />
+                          ) : (sat.GN_satellite_model || '-')}
+                        </td>
+                      )}
+                      {!hideEquipmentColumns && (
+                        <td>
+                          {isEditingRow ? (
+                            <input
+                              className="invest-program-inline-input"
+                              value={draftSatellite?.modem ?? ''}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                setDraftSatellite((prev) => (prev ? { ...prev, modem: value } : prev))
+                              }}
+                            />
+                          ) : (sat.GN_satellite_modem || '-')}
+                        </td>
+                      )}
                       {authUser === 'ADM' && (
                         <td className="invest-program-actions-cell">
                           {!isEditingRow || editMode !== 'full' ? (

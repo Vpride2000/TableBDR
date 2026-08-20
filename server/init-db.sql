@@ -205,6 +205,15 @@ CREATE TABLE IF NOT EXISTS "GN_satellite_gt_numbers" (
 
 COMMENT ON TABLE "GN_satellite_gt_numbers" IS 'Справочник номеров ГТ для спутников';
 
+CREATE TABLE IF NOT EXISTS "GN_cellular_account" (
+  "GN_cellular_account_id" SERIAL PRIMARY KEY,
+  "GN_cellular_account" TEXT NOT NULL UNIQUE,
+  "GN_department_FK" INTEGER NOT NULL REFERENCES "GN_department"("GN_Dep_id") ON DELETE RESTRICT,
+  "GN_cellular_account_note" TEXT
+);
+
+COMMENT ON TABLE "GN_cellular_account" IS 'Справочник лицевых счетов сотовой связи';
+
 CREATE TABLE IF NOT EXISTS "GN_satellites" (
   "GN_satellite_id" SERIAL NOT NULL UNIQUE,
   "GN_satellite_mac" TEXT NOT NULL,
