@@ -17,6 +17,7 @@ import CellularPage from './cellular/CellularPage'
 import CellularTariffGuidePopup from './cellular/CellularTariffGuidePopup'
 import CellularIdentifierGuidePopup from './cellular/CellularIdentifierGuidePopup'
 import CellularAccountGuidePopup from './cellular/CellularAccountGuidePopup'
+import ImportSubstitutionPage from './importSubstitution/ImportSubstitutionPage'
 import { Page } from './types/forecast'
 import { pageFromHash } from './utils/forecastUtils'
 
@@ -34,10 +35,15 @@ interface DashboardSummary {
   contractStatusCounts: Record<string, number>
   agreementCount: number
   agreementStatusCounts: Record<string, number>
-  purchaseItems: number
-  purchaseQuantity: number
-  purchaseStatusCounts: Record<string, number>
-  purchaseInBudget: number
+  cellularCount: number
+  cellularActiveCount: number
+  cellularGlonassCount: number
+  cellularNonBlockedPercent: number
+  cellularAccountCount: number
+  satelliteCount: number
+  satelliteActiveCount: number
+  satelliteDepartmentCount: number
+  satelliteDirectionCount: number
   topServices: Array<{ name: string; budget: number }>
 }
 
@@ -51,22 +57,30 @@ function StartDashboard() {
 
     async function loadSummary(): Promise<void> {
       try {
-        const [bdrResponse, contractsResponse, agreementsResponse, investResponse] = await Promise.all([
+        const [bdrResponse, contractsResponse, agreementsResponse, cellularResponse, satellitesResponse] = await Promise.all([
           fetch('/api/gn/bdr'),
           fetch('/api/gn/contracts'),
           fetch('/api/gn/contract-additional-agreements'),
-          fetch('/api/gn/invest-program'),
+          fetch('/api/gn/cellular'),
+          fetch('/api/satellites/summary'),
         ])
 
         if (!bdrResponse.ok) throw new Error(`BDR HTTP ${bdrResponse.status}`)
         if (!contractsResponse.ok) throw new Error(`Contracts HTTP ${contractsResponse.status}`)
         if (!agreementsResponse.ok) throw new Error(`Agreements HTTP ${agreementsResponse.status}`)
-        if (!investResponse.ok) throw new Error(`Invest HTTP ${investResponse.status}`)
+        if (!cellularResponse.ok) throw new Error(`Cellular HTTP ${cellularResponse.status}`)
+        if (!satellitesResponse.ok) throw new Error(`Satellites HTTP ${satellitesResponse.status}`)
 
         const bdrRows = (await bdrResponse.json()) as Array<Record<string, unknown>>
         const contractRows = (await contractsResponse.json()) as Array<Record<string, unknown>>
         const agreementRows = (await agreementsResponse.json()) as Array<Record<string, unknown>>
-        const investRows = (await investResponse.json()) as Array<Record<string, unknown>>
+        const cellularRows = (await cellularResponse.json()) as Array<Record<string, unknown>>
+        const satellitesSummary = (await satellitesResponse.json()) as {
+          satelliteCount: number
+          activeSatelliteCount: number
+          departmentCount: number
+          directionCount: number
+        }
 
         const parseNumber = (value: unknown): number => {
           const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
@@ -102,12 +116,6 @@ function StartDashboard() {
           return acc
         }, {})
 
-        const purchaseStatusCounts = investRows.reduce<Record<string, number>>((acc, row) => {
-          const status = normalizeStatus(row['GN_invest_status'])
-          acc[status] = (acc[status] ?? 0) + 1
-          return acc
-        }, {})
-
         if (!isMounted) return
 
         setSummary({
@@ -118,10 +126,22 @@ function StartDashboard() {
           contractStatusCounts,
           agreementCount: agreementRows.length,
           agreementStatusCounts,
-          purchaseItems: investRows.length,
-          purchaseQuantity: investRows.reduce((sum, row) => sum + parseNumber(row['GN_invest_quantity']), 0),
-          purchaseStatusCounts,
-          purchaseInBudget: investRows.filter((row) => String(row['GN_invest_in_budget'] ?? '').trim().toLowerCase() === 'да').length,
+          cellularCount: cellularRows.length,
+          cellularActiveCount: cellularRows.filter((row) => String(row['GN_cellular_status'] ?? '').trim().toLowerCase() === 'действующий').length,
+          cellularGlonassCount: cellularRows.filter((row) => {
+            const tariffText = `${String(row['GN_cellular_tariff_plan'] ?? '')} ${String(row['GN_cellular_tariff_plan_details'] ?? '')}`.toLowerCase()
+            return tariffText.includes('глонасс')
+          }).length,
+          cellularNonBlockedPercent: cellularRows.length === 0
+            ? 0
+            : (cellularRows.filter((row) => String(row['GN_cellular_status'] ?? '').trim().toLowerCase() !== 'заблокирован').length / cellularRows.length) * 100,
+          cellularAccountCount: new Set(cellularRows
+            .map((row) => String(row['GN_cellular_account'] ?? '').trim())
+            .filter(Boolean)).size,
+          satelliteCount: satellitesSummary.satelliteCount,
+          satelliteActiveCount: satellitesSummary.activeSatelliteCount,
+          satelliteDepartmentCount: satellitesSummary.departmentCount,
+          satelliteDirectionCount: satellitesSummary.directionCount,
           topServices: Array.from(serviceBudgetByType.entries())
             .sort((a, b) => b[1] - a[1])
             .slice(0, 3)
@@ -148,6 +168,9 @@ function StartDashboard() {
     currency: 'RUB',
     maximumFractionDigits: 0,
   }).format(value)
+  const formatPercent = (value: number): string => new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 1,
+  }).format(value) + '%'
 
   if (loading) {
     return <p className="hint">Загрузка сводной информации...</p>
@@ -182,7 +205,7 @@ function StartDashboard() {
       <div className="dashboard-header">
         <div>
           <h2>Сводный дашбоард</h2>
-          <p className="hint">Обзор ключевых метрик по услугам связи, договорам и закупкам оборудования.</p>
+          <p className="hint">Обзор ключевых метрик по услугам связи, договорам, сотовой и спутниковой связи.</p>
         </div>
       </div>
 
@@ -221,23 +244,51 @@ function StartDashboard() {
           {renderStatusItems(summary.agreementStatusCounts)}
         </div>
         <div className="dashboard-card">
-          <h3>Закупки оборудования</h3>
+          <h3>Сотовая связь</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
-              <span>Позиции</span>
-              <strong>{formatCount(summary.purchaseItems)}</strong>
+              <span>Номера</span>
+              <strong>{formatCount(summary.cellularCount)}</strong>
             </li>
             <li className="dashboard-stat-item">
-              <span>Сумма единиц</span>
-              <strong>{formatCount(summary.purchaseQuantity)}</strong>
+              <span>Действующие</span>
+              <strong>{formatCount(summary.cellularActiveCount)}</strong>
             </li>
             <li className="dashboard-stat-item">
-              <span>В бюджете</span>
-              <strong>{formatCount(summary.purchaseInBudget)}</strong>
+              <span>С тарифом Глонасс</span>
+              <strong>{formatCount(summary.cellularGlonassCount)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Незаблокированные</span>
+              <strong>{formatPercent(summary.cellularNonBlockedPercent)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Лицевые счета</span>
+              <strong>{formatCount(summary.cellularAccountCount)}</strong>
             </li>
           </ul>
-           <h3>Статусы закупок</h3>
-          {renderStatusItems(summary.purchaseStatusCounts)}
+        </div>
+
+        <div className="dashboard-card">
+          <h3>Спутники (ГКС)</h3>
+          <ul className="dashboard-stat-list">
+            <li className="dashboard-stat-item">
+              <span>Спутниковые станции</span>
+              <strong>{formatCount(summary.satelliteCount)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Активные станции</span>
+              <strong>{formatCount(summary.satelliteActiveCount)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Подразделения</span>
+              <strong>{formatCount(summary.satelliteDepartmentCount)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Направления</span>
+              <strong>{formatCount(summary.satelliteDirectionCount)}</strong>
+            </li>
+          </ul>
         </div>
 
         <div className="dashboard-card dashboard-card--links">
@@ -400,6 +451,10 @@ export default function App() {
     }
     if (nextPage === 'cellular') {
       window.location.hash = '#cellular'
+      return
+    }
+    if (nextPage === 'import-substitution') {
+      window.location.hash = '#import-substitution'
       return
     }
     if (nextPage === 'guide') {
@@ -688,7 +743,7 @@ export default function App() {
             Услуги_связи
           </a>
           <a href="#contracts" onClick={(event) => { event.preventDefault(); goTo('contracts') }}>
-            Карта_договоров
+            Договора
           </a>
           <a href="#invest-program-table" onClick={(event) => { event.preventDefault(); goTo('invest-program-table') }}>
             Закупки
@@ -698,6 +753,9 @@ export default function App() {
           </a>
           <a href="#cellular" onClick={(event) => { event.preventDefault(); goTo('cellular') }}>
             Сотовая
+          </a>
+          <a href="#import-substitution" onClick={(event) => { event.preventDefault(); goTo('import-substitution') }}>
+            Импортозамещение
           </a>
         </div>        
         <div className="app-nav-guide">
@@ -716,6 +774,7 @@ export default function App() {
         </div>
       )}
       {page === 'cellular' && <CellularPage />}
+      {page === 'import-substitution' && <ImportSubstitutionPage />}
       {page === 'budget' && (
         <BudgetSectionPage
           onOpenBudgetDept={openBudgetDeptWindow}

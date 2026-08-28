@@ -9,4 +9,5 @@ export declare function ensureSatelliteGtNumbersTable(client: Client): Promise<v
 export declare function ensureSatelliteColumns(client: Client): Promise<void>;
 export declare function ensureCellularTables(client: Client): Promise<void>;
 export declare function bootstrapCellularFromXlsx(client: Client, projectRoot: string): Promise<void>;
+export declare function ensureImportSubstitutionTable(client: Client): Promise<void>;
 //# sourceMappingURL=db.d.ts.map

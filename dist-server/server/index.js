@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { setupRoutes } from './routes.js';
-import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx } from './db.js';
+import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable } from './db.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 // Точка входа backend-приложения.
@@ -48,6 +48,7 @@ async function start() {
         await ensureSatelliteColumns(client);
         await ensureSatellitesXmlTable(client);
         await ensureCellularTables(client);
+        await ensureImportSubstitutionTable(client);
         await bootstrapCellularFromXlsx(client, PROJECT_ROOT);
     }
     finally {

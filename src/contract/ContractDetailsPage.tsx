@@ -21,6 +21,7 @@ type ContractInfo = {
   GN_contract_term_from?: string;
   GN_contract_term_to?: string
   GN_contract_side?: string
+  GN_contract_asez_number?: string
 }
 
 interface ContractDetailsPageProps {
@@ -546,6 +547,9 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
               <div className="contract-details-meta-row">
                 <strong>Дата загрузки в АСЭЗ:</strong> {contractInfo.GN_contract_asez_load_date ? formatDateDisplay(contractInfo.GN_contract_asez_load_date) : ''}
               </div>
+              <div className="contract-details-meta-row">
+                <strong>Номер АСЭЗ:</strong> {contractInfo.GN_contract_asez_number || ''}
+              </div>
               <button
                 type="button"
                 className="page-action-btn page-action-btn--secondary"
@@ -654,6 +658,15 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
                   type="date"
                   value={contractDraft?.GN_contract_asez_load_date ?? ''}
                   onChange={(event) => updateContractDraft('GN_contract_asez_load_date', event.target.value)}
+                />
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-asez-number">Номер АСЭЗ</label>
+                <input
+                  id="contract-asez-number"
+                  type="text"
+                  value={contractDraft?.GN_contract_asez_number ?? ''}
+                  onChange={(event) => updateContractDraft('GN_contract_asez_number', event.target.value)}
                 />
               </div>
               <div className="form-actions-row-compact">

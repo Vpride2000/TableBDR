@@ -134,6 +134,11 @@ export const GN_TABLE_CONFIGS = {
             'GN_additional_agreement_amount',
         ],
     },
+    'import-substitution': {
+        tableName: 'GN_import_substitution',
+        idColumn: 'GN_import_substitution_id',
+        editableColumns: ['Подразделение', 'Процент исполнения'],
+    },
 };
 export const BDR_SELECT_FIELDS = `SELECT
   b."GN_bdr_ID",

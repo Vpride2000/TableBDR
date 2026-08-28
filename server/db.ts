@@ -428,3 +428,18 @@ export async function bootstrapCellularFromXlsx(client: Client, projectRoot: str
     throw error;
   }
 }
+
+export async function ensureImportSubstitutionTable(client: Client): Promise<void> {
+  // Drop table if it exists to recreate without FK constraint
+  await client.query(`DROP TABLE IF EXISTS "GN_import_substitution" CASCADE`);
+
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS "GN_import_substitution" (
+       "GN_import_substitution_id" SERIAL PRIMARY KEY,
+       "Подразделение" TEXT NOT NULL,
+       "Процент исполнения" NUMERIC(5,2) NOT NULL DEFAULT 0,
+       "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`
+  );
+}

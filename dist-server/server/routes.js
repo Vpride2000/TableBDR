@@ -49,6 +49,36 @@ export function setupRoutes(app) {
     app.get('/api/health', (req, res) => {
         res.json({ status: 'ok' });
     });
+    app.get('/api/satellites/summary', async (req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`SELECT
+           COUNT(*)::text AS "satelliteCount",
+           COUNT(DISTINCT s."GN_satellite_id") FILTER (WHERE EXISTS (
+             SELECT 1
+             FROM "GN_satellite_xml_monthly" x
+             WHERE x."mac_norm" = REPLACE(UPPER(COALESCE(s."GN_satellite_mac", '')), ':', '')
+               AND x."amount_without_vat" > 0
+           ))::text AS "activeSatelliteCount",
+           COUNT(DISTINCT s."GN_department_FK")::text AS "departmentCount",
+           COUNT(DISTINCT NULLIF(TRIM(s."GN_satellite_direction_name"), ''))::text AS "directionCount"
+         FROM "GN_satellites" s`);
+            const row = result.rows[0];
+            res.json({
+                satelliteCount: Number(row?.satelliteCount ?? 0),
+                activeSatelliteCount: Number(row?.activeSatelliteCount ?? 0),
+                departmentCount: Number(row?.departmentCount ?? 0),
+                directionCount: Number(row?.directionCount ?? 0),
+            });
+        }
+        catch (err) {
+            console.error('Failed to fetch satellites summary', err);
+            res.status(500).json({ error: 'Failed to fetch satellites summary' });
+        }
+        finally {
+            await client.end();
+        }
+    });
     app.post('/api/satellites/auth', (req, res) => {
         const payload = req.body;
         const username = String(payload?.username ?? '').trim();
@@ -1219,14 +1249,21 @@ export function setupRoutes(app) {
     app.patch('/api/gn/equipment-models/:id', async (req, res) => {
         const client = await createDbClient();
         const id = Number(req.params.id);
-        const { department_fk, budget_item_fk, object_fk, status } = req.body;
+        const { model, manufacturer_fk, type_fk, department_fk, budget_item_fk, object_fk, status } = req.body;
         try {
-            await client.query(`UPDATE "GN_equipment_model"
-         SET "GN_equipment_department_FK" = $1,
-             "GN_equipment_budget_item_FK" = $2,
-             "GN_equipment_object_FK" = $3,
-             "GN_equipment_status" = $4
-         WHERE "GN_equipment_model_id" = $5`, [department_fk || null, budget_item_fk || null, object_fk || null, status, id]);
+            const result = await client.query(`UPDATE "GN_equipment_model"
+         SET "GN_equipment_model" = $1,
+           "GN_equipment_manufacturer_FK" = $2,
+           "GN_equipment_type_FK" = $3,
+           "GN_equipment_department_FK" = $4,
+           "GN_equipment_budget_item_FK" = $5,
+           "GN_equipment_object_FK" = $6,
+           "GN_equipment_status" = $7
+         WHERE "GN_equipment_model_id" = $8`, [model, manufacturer_fk || null, type_fk || null, department_fk || null, budget_item_fk || null, object_fk || null, status, id]);
+            if (result.rowCount === 0) {
+                res.status(404).json({ error: 'Модель оборудования не найдена' });
+                return;
+            }
             res.json({ success: true });
         }
         catch (err) {
@@ -1602,6 +1639,8 @@ export function setupRoutes(app) {
         }
         const values = fields.map((column) => {
             if (column.endsWith('_FK')) {
+                if (req.body[column] === null)
+                    return null;
                 const numericValue = Number(req.body[column]);
                 if (Number.isNaN(numericValue)) {
                     throw new Error(`Invalid value for ${column}`);
@@ -1816,6 +1855,89 @@ export function setupRoutes(app) {
                 return;
             }
             res.status(500).json({ error: 'Failed to create GN_bdr row' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    // Импортозамещение endpoints
+    app.get('/api/gn/import-substitution', async (req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`SELECT
+           "GN_import_substitution_id",
+           "Подразделение",
+           "Процент исполнения"
+         FROM "GN_import_substitution"
+         ORDER BY "Подразделение" ASC`);
+            res.json(result.rows);
+        }
+        catch (err) {
+            console.error(err);
+            res.status(500).json({ error: 'Failed to fetch import-substitution data' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.put('/api/gn/import-substitution/:id', async (req, res) => {
+        const { id } = req.params;
+        const { 'Подразделение': department, 'Процент исполнения': percentage } = req.body;
+        const rowId = Number(id);
+        if (Number.isNaN(rowId)) {
+            res.status(400).json({ error: 'Invalid row id' });
+            return;
+        }
+        if (!department || percentage === undefined) {
+            res.status(400).json({ error: 'Missing required fields' });
+            return;
+        }
+        const percentageNumber = Number(percentage);
+        if (!Number.isFinite(percentageNumber) || percentageNumber < 0 || percentageNumber > 100) {
+            res.status(400).json({ error: 'Percentage must be a number between 0 and 100' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`UPDATE "GN_import_substitution"
+         SET "Подразделение" = $1, "Процент исполнения" = $2, "updated_at" = NOW()
+         WHERE "GN_import_substitution_id" = $3
+         RETURNING *`, [department, percentageNumber, rowId]);
+            if (result.rowCount === 0) {
+                res.status(404).json({ error: 'Row not found' });
+                return;
+            }
+            res.json(result.rows[0]);
+        }
+        catch (err) {
+            console.error(err);
+            res.status(500).json({ error: 'Failed to update import-substitution data' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.post('/api/gn/import-substitution', async (req, res) => {
+        const { 'Подразделение': department, 'Процент исполнения': percentage } = req.body;
+        if (!department || percentage === undefined) {
+            res.status(400).json({ error: 'Missing required fields' });
+            return;
+        }
+        const percentageNumber = Number(percentage);
+        if (!Number.isFinite(percentageNumber) || percentageNumber < 0 || percentageNumber > 100) {
+            res.status(400).json({ error: 'Percentage must be a number between 0 and 100' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`INSERT INTO "GN_import_substitution" ("Подразделение", "Процент исполнения")
+         VALUES ($1, $2)
+         RETURNING *`, [department, percentageNumber]);
+            res.status(201).json(result.rows[0]);
+        }
+        catch (err) {
+            console.error(err);
+            res.status(500).json({ error: 'Failed to create import-substitution data' });
         }
         finally {
             await client.end();

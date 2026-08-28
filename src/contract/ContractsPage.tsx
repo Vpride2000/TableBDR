@@ -39,6 +39,7 @@ type ContractTermVisual = {
   fromLabel: string
   toLabel: string
   monthsTotal: number
+  monthsRemaining: number
   segments: ContractTermSegment[]
   visualStartLabel: string
 }
@@ -47,12 +48,10 @@ const COLUMNS = [
   { key: 'GN_contract_contractor_FK', label: 'контрагент', kind: 'lookup' as const, narrow: true },
   { key: 'GN_contract_department', label: 'подразделение', kind: 'text' as const, narrow: true },
   { key: 'GN_contract_side', label: 'сторона', kind: 'text' as const, narrow: true },
-  { key: 'GN_contract_dogovor_FK', label: 'договор', kind: 'lookup' as const, narrow: true },
-  { key: 'GN_contract_asez_number', label: 'номер АСЭЗ', kind: 'text' as const, narrow: true },
+  { key: 'GN_contract_dogovor_FK', label: 'договор', kind: 'lookup' as const },
   { key: 'GN_contract_date', label: 'дата', kind: 'date' as const },
   { key: 'GN_contract_term_from', label: 'срок С', kind: 'date' as const },
   { key: 'GN_contract_term_to', label: 'срок ПО', kind: 'date' as const },
-  { key: 'GN_contract_state', label: 'состояние', kind: 'text' as const, narrow: true },
   { key: 'GN_contract_status_updated_at', label: 'обновлён', kind: 'date' as const },
   { key: 'GN_contract_approval_status', label: 'статус', kind: 'status' as const },
 ]
@@ -155,25 +154,32 @@ function buildContractTermVisual(fromValue: string, toValue: string): ContractTe
   const endDate = fromDate.getTime() <= toDate.getTime() ? toDate : fromDate
 
   const now = new Date()
-  const currentYearStart = new Date(Date.UTC(now.getFullYear(), 0, 1))
+  const currentMonthStart = new Date(Date.UTC(now.getFullYear(), now.getUTCMonth(), 1))
 
   const monthsTotal = (endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12
     + (endDate.getUTCMonth() - startDate.getUTCMonth()) + 1
   if (monthsTotal <= 0) return null
 
-  // Для завершившихся до текущего года оставляем строку, но без цветовой индикации.
-  if (endDate.getTime() < currentYearStart.getTime()) {
+  const monthsRemaining = Math.max(
+    0,
+    (endDate.getUTCFullYear() - currentMonthStart.getUTCFullYear()) * 12
+      + (endDate.getUTCMonth() - currentMonthStart.getUTCMonth()) + 1,
+  )
+
+  // Для завершившихся до текущего месяца оставляем строку, но без цветовой индикации.
+  if (endDate.getTime() < currentMonthStart.getTime()) {
     return {
       fromLabel: formatMonthLabel(startDate),
       toLabel: formatMonthLabel(endDate),
       monthsTotal,
+      monthsRemaining: 0,
       segments: [],
       visualStartLabel: formatMonthLabel(startDate),
     }
   }
 
-  // Визуал начинается с начала текущего года (или с даты начала договора, если она позже)
-  const visualStart = startDate.getTime() > currentYearStart.getTime() ? startDate : currentYearStart
+  // Визуал начинается с текущего месяца (или с даты начала договора, если она позже)
+  const visualStart = startDate.getTime() > currentMonthStart.getTime() ? startDate : currentMonthStart
 
   const visualMonths = (endDate.getUTCFullYear() - visualStart.getUTCFullYear()) * 12
     + (endDate.getUTCMonth() - visualStart.getUTCMonth()) + 1
@@ -194,6 +200,7 @@ function buildContractTermVisual(fromValue: string, toValue: string): ContractTe
     fromLabel: formatMonthLabel(startDate),
     toLabel: formatMonthLabel(endDate),
     monthsTotal,
+    monthsRemaining,
     segments,
     visualStartLabel: formatMonthLabel(visualStart),
   }
@@ -861,11 +868,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               <table className="guide-table table-compact invest-program-table-min contracts-active-table">
               <thead>
                 <tr>
-                  <th>
-                    <button className="contract-sort-btn" type="button" onClick={() => toggleSort('GN_contract_id')} title="Сортировать по №">
-                      № {getSortMark('GN_contract_id')}
-                    </button>
-                  </th>
+                  <th>№</th>
                   {DISPLAY_COLUMNS.map((column) => (
                     <th key={column.key}>
                       <button className="contract-sort-btn" type="button" onClick={() => toggleSort(column.key)} title={`Сортировать по ${column.label}`}>
@@ -909,7 +912,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                               {column.key === 'GN_contract_dogovor_FK' ? (
                                 <button
                                   type="button"
-                                  className="contract-cell-button contracts-cell-truncate"
+                                  className="contract-cell-button contracts-cell-full"
                                   onClick={() => onOpenContract(row.GN_contract_id)}
                                   title={label}
                                 >
@@ -981,7 +984,12 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                   />
                                 ))}
                               </div>
-                              <div className="contracts-term-meta">{termVisual.monthsTotal} мес. — до {termVisual.toLabel}</div>
+                              <div className="contracts-term-meta">{termVisual.monthsTotal} мес. — с {termVisual.fromLabel} по {termVisual.toLabel}</div>
+                              {termVisual.segments.length > 0 && (
+                                <div className="contracts-term-meta contracts-term-meta--remaining">
+                                  осталось {termVisual.monthsRemaining} мес.
+                                </div>
+                              )}
                             </div>
                           )
                         })()}
@@ -1166,7 +1174,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                   {DISPLAY_COLUMNS.map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
-                  <th>Действия</th>
                 </tr>
               </thead>
               <tbody>
@@ -1229,8 +1236,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                             </td>
                           )
                         })}
-                        <td className="invest-program-actions-cell">
-                        </td>
                       </tr>
                     </Fragment>
                   ))

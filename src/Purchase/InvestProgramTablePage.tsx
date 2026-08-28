@@ -15,9 +15,7 @@ const INVEST_TABLE_COLUMNS = [
   'ОКДП ТКО для ИС ПРИТ',
   'поставщик',
   'Огрузочный реквизит',
-  'Статус',
   'оплата',
-  'в бюджете',
 ]
 
 const OKDP_COLUMN = 'ОКДП ТКО для ИС ПРИТ'
@@ -25,7 +23,7 @@ const OGRUZ_COLUMN = 'Огрузочный реквизит'
 const SUPPLIER_COLUMN = 'поставщик'
 const PF_NPF_COLUMN = 'ПФ/НПФ'
 const NAME_COLUMN = 'Наименование'
-const MAIN_TEXT_EDIT_COLUMNS = new Set(['Кол-во', 'Статус', 'оплата', 'в бюджете'])
+const MAIN_TEXT_EDIT_COLUMNS = new Set(['Кол-во', 'оплата'])
 
 const STATUS_OPTIONS = ['готово к заккупке', 'в закупе', 'поставка', 'поставленно']
 
@@ -70,8 +68,11 @@ export default function InvestProgramTablePage() {
   const [budgetOptions, setBudgetOptions] = useState<LookupOption[]>([])
   const [objectOptions, setObjectOptions] = useState<LookupOption[]>([])
   const [equipmentRows, setEquipmentRows] = useState<InvestRow[]>([])
+  const [equipmentManufacturerOptions, setEquipmentManufacturerOptions] = useState<LookupOption[]>([])
+  const [equipmentTypeOptions, setEquipmentTypeOptions] = useState<LookupOption[]>([])
   const [loadingEquipment, setLoadingEquipment] = useState(true)
   const [equipmentError, setEquipmentError] = useState<string | null>(null)
+  const [isInvestProgramExpanded, setIsInvestProgramExpanded] = useState(false)
   // Статусы загрузки и ошибки для основной таблицы и для справочников.
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -99,6 +100,7 @@ export default function InvestProgramTablePage() {
         const data = (await response.json()) as Record<string, unknown>[]
 
         const mappedRows: InvestRow[] = data.map((row) => ({
+          id: String(row.GN_invest_program_id ?? ''),
           'ПФ/НПФ': String(row.GN_invest_pf_npf ?? ''),
           'Наименование': String(row.GN_invest_name ?? ''),
           'Кол-во': String(row.GN_invest_quantity ?? ''),
@@ -133,7 +135,7 @@ export default function InvestProgramTablePage() {
     }
 
     void loadInvestProgram()
-  }, [])
+  }, [isInvestProgramExpanded])
 
   useEffect(() => {
     /**
@@ -225,7 +227,7 @@ export default function InvestProgramTablePage() {
     }
 
     void loadLookups()
-  }, [])
+  }, [isInvestProgramExpanded])
 
   useEffect(() => {
     // Загружаем модели оборудования для второй сводной таблицы
@@ -255,6 +257,8 @@ export default function InvestProgramTablePage() {
           'Модель': String(row.GN_equipment_model ?? ''),
           'Производитель': manuMap.get(String(row.GN_equipment_manufacturer_FK ?? '')) ?? '',
           'Тип': typeMap.get(String(row.GN_equipment_type_FK ?? '')) ?? '',
+          'ПроизводительId': String(row.GN_equipment_manufacturer_FK ?? ''),
+          'ТипId': String(row.GN_equipment_type_FK ?? ''),
           'Подразделение': String(row.GN_equipment_department_FK ?? ''),
           'Статья бюджета': String(row.GN_equipment_budget_item_FK ?? ''),
           'Объект': String(row.GN_equipment_object_FK ?? ''),
@@ -262,6 +266,8 @@ export default function InvestProgramTablePage() {
           'id': String(row.GN_equipment_model_id ?? ''),
         }))
 
+        setEquipmentManufacturerOptions(mapLookupOptions(manu, 'GN_equipment_manufacturer_id', 'GN_equipment_manufacturer'))
+        setEquipmentTypeOptions(mapLookupOptions(types, 'GN_equipment_type_id', 'GN_equipment_type'))
         setEquipmentRows(mapped)
       } catch (err) {
         setEquipmentError(err instanceof Error ? err.message : 'Не удалось загрузить модели оборудования')
@@ -318,6 +324,50 @@ export default function InvestProgramTablePage() {
     setEditingRowDraft((prevRow) => (prevRow ? { ...prevRow, [column]: nextValue } : prevRow))
   }
 
+  async function addInvestRow(): Promise<void> {
+    const response = await fetch('/api/gn/invest-program', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        GN_invest_pf_npf: '',
+        GN_invest_name: 'Новая позиция',
+        GN_invest_quantity: 0,
+        GN_invest_okdp_fk: null,
+        GN_invest_supplier_fk: null,
+        GN_invest_ogruz_fk: null,
+        GN_invest_status: 'готово к заккупке',
+        GN_invest_payment: '',
+        GN_invest_in_budget: 'нет',
+        GN_invest_peo_code: '',
+        GN_invest_mtr_code: '',
+        GN_invest_pzp: '',
+        GN_invest_agent_report: '',
+        GN_invest_ap: '',
+        GN_invest_spec: '',
+        GN_invest_commissioning: '',
+        GN_invest_it_accounting: '',
+        GN_invest_sed_spec: '',
+        GN_invest_sed_agent_report: '',
+        GN_invest_state: '',
+        GN_invest_real_price_no_vat_per_unit: 0,
+        GN_invest_real_sum_no_vat_plus_agent_no_vat: 0,
+        GN_invest_sum_no_vat: 0,
+      }),
+    })
+
+    if (!response.ok) throw new Error(formatHttpError(response.status))
+    window.location.reload()
+  }
+
+  async function deleteInvestRow(rowIndex: number): Promise<void> {
+    const row = rows[rowIndex]
+    if (!row?.id || !window.confirm('Удалить эту строку?')) return
+
+    const response = await fetch(`/api/gn/invest-program/${row.id}`, { method: 'DELETE' })
+    if (!response.ok) throw new Error(formatHttpError(response.status))
+    setRows((prevRows) => prevRows.filter((_, index) => index !== rowIndex))
+  }
+
   /**
    * Возвращает текущую строку, выбранную для просмотра деталей в попапе.
    */
@@ -331,14 +381,29 @@ export default function InvestProgramTablePage() {
   return (
     <section className="guide invest-program">
       <div className="guide-section">
-        <h2>Инвест.программа: таблица</h2>
-        {loading && <p className="hint">Загрузка данных...</p>}
-        {error && <p className="hint hint--error">Ошибка: {error}</p>}
-        {loadingLookups && <p className="hint">Загрузка справочников...</p>}
-        {lookupError && <p className="hint hint--error">Ошибка: {lookupError}</p>}
+        <h2>
+          <button
+            type="button"
+            className="invest-program-section-toggle"
+            aria-expanded={isInvestProgramExpanded}
+            onClick={() => setIsInvestProgramExpanded((expanded) => !expanded)}
+          >
+            <span aria-hidden="true">{isInvestProgramExpanded ? '▾' : '▸'}</span>
+            Состояние закупок ОНМ
+          </button>
+          <button type="button" className="invest-program-row-action-button" onClick={() => void addInvestRow()}>
+            ДОБАВИТЬ
+          </button>
+        </h2>
+        {isInvestProgramExpanded && (
+          <>
+            {loading && <p className="hint">Загрузка данных...</p>}
+            {error && <p className="hint hint--error">Ошибка: {error}</p>}
+            {loadingLookups && <p className="hint">Загрузка справочников...</p>}
+            {lookupError && <p className="hint hint--error">Ошибка: {lookupError}</p>}
 
-        {!loading && !error && (
-          <div className="guide-table-wrap">
+            {!loading && !error && (
+              <div className="guide-table-wrap invest-program-table-wrap--narrow">
             <table className="guide-table table-compact">
               <thead>
                 <tr>
@@ -536,31 +601,36 @@ export default function InvestProgramTablePage() {
                         ИЗМ
                       </button>
                     )}
+                    <button
+                      type="button"
+                      className="invest-program-row-action-button invest-program-row-action-button--secondary"
+                      onClick={() => void deleteInvestRow(rowIndex)}
+                    >
+                      УДАЛИТЬ
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+              </div>
+            )}
+          </>
         )}
 
         <div className="guide-section">
-          <h2>Модели оборудования: сводная таблица</h2>
+          <h2>Доступно для заказа</h2>
           {loadingEquipment && <p className="hint">Загрузка моделей...</p>}
           {equipmentError && <p className="hint hint--error">Ошибка: {equipmentError}</p>}
           {!loadingEquipment && !equipmentError && (
-            <div className="guide-table-wrap">
+            <div className="guide-table-wrap invest-program-table-wrap--narrow">
               <table className="guide-table table-compact">
                 <thead>
                   <tr>
                     <th>№</th>
-                    <th>Модель</th>
-                    <th>Производитель</th>
                     <th>Тип</th>
-                    <th>Подразделение</th>
-                    <th>Статья бюджета</th>
-                    <th>Объект</th>
-                    <th>Статус</th>
+                    <th>Производитель</th>
+                    <th>Модель</th>
                     <th>Действия</th>
                   </tr>
                 </thead>
@@ -571,74 +641,71 @@ export default function InvestProgramTablePage() {
                     return (
                     <tr key={`eq-${er.id || idx}`}>
                       <td>{idx + 1}</td>
-                      <td>{er['Модель']}</td>
-                      <td>{er['Производитель']}</td>
-                      <td>{er['Тип']}</td>
                       <td>
                         {isEditingEq ? (
-                          <select className="invest-program-field" value={draft['Подразделение']} onChange={(e) => setEditingEquipmentDraft((prev) => prev ? {...prev, 'Подразделение': e.target.value} : prev)} disabled={loadingLookups}>
-                            <option value="">-</option>
-                            {departmentOptions.map((opt) => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
+                          <select
+                            className="invest-program-field"
+                            value={draft['ТипId']}
+                            onChange={(event) => setEditingEquipmentDraft((prev) => prev ? {
+                              ...prev,
+                              'ТипId': event.target.value,
+                              'Тип': equipmentTypeOptions.find((option) => option.value === event.target.value)?.label ?? '',
+                            } : prev)}
+                          >
+                            {equipmentTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                           </select>
-                        ) : (
-                          <span className="invest-program-cell-text">{getLookupLabel(departmentOptions, er['Подразделение'])}</span>
-                        )}
+                        ) : er['Тип']}
                       </td>
                       <td>
                         {isEditingEq ? (
-                          <select className="invest-program-field" value={draft['Статья бюджета']} onChange={(e) => setEditingEquipmentDraft((prev) => prev ? {...prev, 'Статья бюджета': e.target.value} : prev)} disabled={loadingLookups}>
-                            <option value="">-</option>
-                            {budgetOptions.map((opt) => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
+                          <select
+                            className="invest-program-field"
+                            value={draft['ПроизводительId']}
+                            onChange={(event) => setEditingEquipmentDraft((prev) => prev ? {
+                              ...prev,
+                              'ПроизводительId': event.target.value,
+                              'Производитель': equipmentManufacturerOptions.find((option) => option.value === event.target.value)?.label ?? '',
+                            } : prev)}
+                          >
+                            {equipmentManufacturerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                           </select>
-                        ) : (
-                          <span className="invest-program-cell-text">{getLookupLabel(budgetOptions, er['Статья бюджета'])}</span>
-                        )}
+                        ) : er['Производитель']}
                       </td>
                       <td>
                         {isEditingEq ? (
-                          <select className="invest-program-field" value={draft['Объект']} onChange={(e) => setEditingEquipmentDraft((prev) => prev ? {...prev, 'Объект': e.target.value} : prev)} disabled={loadingLookups}>
-                            <option value="">-</option>
-                            {objectOptions.map((opt) => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="invest-program-cell-text">{getLookupLabel(objectOptions, er['Объект'])}</span>
-                        )}
-                      </td>
-                      <td>
-                        {isEditingEq ? (
-                          <select className="invest-program-field" value={draft['Статус']} onChange={(e) => setEditingEquipmentDraft((prev) => prev ? {...prev, 'Статус': e.target.value} : prev)}>
-                            {STATUS_OPTIONS.map((s) => (
-                              <option key={s} value={s}>{s}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="invest-program-cell-text">{er['Статус']}</span>
-                        )}
+                          <input
+                            className="invest-program-field"
+                            value={draft['Модель']}
+                            onChange={(event) => setEditingEquipmentDraft((prev) => prev ? { ...prev, 'Модель': event.target.value } : prev)}
+                          />
+                        ) : er['Модель']}
                       </td>
                       <td className="invest-program-actions-cell">
                         {isEditingEq ? (
                           <>
                             <button type="button" className="invest-program-row-action-button" onClick={async () => {
                               const d = editingEquipmentDraft!
-                              setEquipmentRows((prev) => prev.map((r, i) => i === idx ? { ...d } : r))
-                              setEditingEquipmentRowIndex(null)
-                              setEditingEquipmentDraft(null)
-                              await fetch(`/api/gn/equipment-models/${d['id']}`, {
+                              const response = await fetch(`/api/gn/equipment-models/${d['id']}`, {
                                 method: 'PATCH',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
+                                  model: d['Модель'],
+                                  manufacturer_fk: d['ПроизводительId'] ? Number(d['ПроизводительId']) : null,
+                                  type_fk: d['ТипId'] ? Number(d['ТипId']) : null,
                                   department_fk: d['Подразделение'] ? Number(d['Подразделение']) : null,
                                   budget_item_fk: d['Статья бюджета'] ? Number(d['Статья бюджета']) : null,
                                   object_fk: d['Объект'] ? Number(d['Объект']) : null,
                                   status: d['Статус'],
                                 }),
                               })
+
+                              if (!response.ok) {
+                                throw new Error(formatHttpError(response.status))
+                              }
+
+                              setEquipmentRows((prev) => prev.map((r, i) => i === idx ? { ...d } : r))
+                              setEditingEquipmentRowIndex(null)
+                              setEditingEquipmentDraft(null)
                             }}>
                               СОХР
                             </button>

@@ -180,6 +180,7 @@ export default function CellularPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [zoneFilter, setZoneFilter] = useState('')
   const [tariffFilter, setTariffFilter] = useState('')
+  const [fioFilter, setFioFilter] = useState('')
   const [accountOptions, setAccountOptions] = useState<CellularAccountOption[]>([])
   const [accountFilter, setAccountFilter] = useState('')
   const [hideBlocked, setHideBlocked] = useState(true)
@@ -234,6 +235,24 @@ export default function CellularPage() {
     return [...values].sort((a, b) => a.localeCompare(b, 'ru'))
   }, [cellularRows])
 
+  const fioOptions = useMemo(() => {
+    const values = new Set<string>()
+    cellularRows.forEach((row) => {
+      const fio = String(row.GN_cellular_identifier_fio ?? '').trim()
+      if (fio) values.add(fio)
+    })
+    return [...values].sort((a, b) => a.localeCompare(b, 'ru'))
+  }, [cellularRows])
+
+  const accountUniqueOptions = useMemo(() => {
+    const values = new Set<string>()
+    cellularRows.forEach((row) => {
+      const account = String(row.GN_cellular_account ?? '').trim()
+      if (account) values.add(account)
+    })
+    return [...values].sort((a, b) => a.localeCompare(b, 'ru'))
+  }, [cellularRows])
+
   const canLoadTable = true
 
   const filteredCellularRows = useMemo(() => {
@@ -259,6 +278,10 @@ export default function CellularPage() {
       }
 
       if (statusFilter && String(row.GN_cellular_status ?? '') !== statusFilter) {
+        return false
+      }
+
+      if (fioFilter && String(row.GN_cellular_identifier_fio ?? '') !== fioFilter) {
         return false
       }
 
@@ -304,7 +327,7 @@ export default function CellularPage() {
 
       return searchable.includes(normalizedSearch)
     })
-  }, [cellularRows, globalSearch, statusFilter, zoneFilter, tariffFilter, accountFilter, hideBlocked, hideGlonass])
+  }, [cellularRows, globalSearch, statusFilter, zoneFilter, tariffFilter, fioFilter, accountFilter, hideBlocked, hideGlonass])
 
   const sortedCellularRows = useMemo(() => {
     const valueBySortKey = (row: CellularRow, key: SortKey): string | number => {
@@ -611,35 +634,6 @@ export default function CellularPage() {
               {uploadMessage && <p className="hint">{uploadMessage}</p>}
               {uploadError && <p className="hint hint--error">Ошибка загрузки: {uploadError}</p>}
               <div className="form-fields-compact" style={{ marginTop: '20px', marginBottom: '10px' }}>
-                <label className="form-field-compact">
-                  <span className="form-field-label">Статус</span>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                    <option value="">Все</option>
-                    {statusOptions.map((status) => (
-                      <option key={status} value={status}>{status}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="form-field-compact">
-                  <span className="form-field-label">Регион номера</span>
-                  <select value={zoneFilter} onChange={(event) => setZoneFilter(event.target.value)}>
-                    <option value="">Все</option>
-                    {zoneOptions.map((zone) => (
-                      <option key={zone} value={zone}>{zone}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="form-field-compact">
-                  <span className="form-field-label">Тариф</span>
-                  <select value={tariffFilter} onChange={(event) => setTariffFilter(event.target.value)}>
-                    <option value="">Все</option>
-                    {tariffOptions.map((tariff) => (
-                      <option key={tariff} value={tariff}>{tariff}</option>
-                    ))}
-                  </select>
-                </label>
                 <label className="satellites-hide-unused-label" style={{ marginRight: '12px' }}>
                   <input
                     type="checkbox"
@@ -672,29 +666,99 @@ export default function CellularPage() {
                       </button>
                     </th>
                     <th>
-                      <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('fio')}>
-                        ФИО (из справочника) {sortMark('fio')}
-                      </button>
+                      <div className="filter-header">
+                        <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('fio')}>
+                          ФИО (из справочника) {sortMark('fio')}
+                        </button>
+                        <select
+                          value={fioFilter}
+                          onChange={(e) => setFioFilter(e.target.value)}
+                          className="cellular-filter-select"
+                        >
+                          <option value="">Все</option>
+                          {fioOptions.map((fio) => (
+                            <option key={fio} value={fio}>
+                              {fio}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </th>
                     <th>
-                      <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('account')}>
-                        Л/С {sortMark('account')}
-                      </button>
+                      <div className="filter-header">
+                        <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('account')}>
+                          Л/С {sortMark('account')}
+                        </button>
+                        <select
+                          value={accountFilter}
+                          onChange={(e) => setAccountFilter(e.target.value)}
+                          className="cellular-filter-select"
+                        >
+                          <option value="">Все</option>
+                          {accountUniqueOptions.map((account) => (
+                            <option key={account} value={account}>
+                              {account}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </th>
                     <th>
-                      <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('status')}>
-                        Статус {sortMark('status')}
-                      </button>
+                      <div className="filter-header">
+                        <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('status')}>
+                          Статус {sortMark('status')}
+                        </button>
+                        <select
+                          value={statusFilter}
+                          onChange={(e) => setStatusFilter(e.target.value)}
+                          className="cellular-filter-select"
+                        >
+                          <option value="">Все</option>
+                          {statusOptions.map((status) => (
+                            <option key={status} value={status}>
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </th>
                     <th>
-                      <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('zone')}>
-                        Зона {sortMark('zone')}
-                      </button>
+                      <div className="filter-header">
+                        <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('zone')}>
+                          Зона {sortMark('zone')}
+                        </button>
+                        <select
+                          value={zoneFilter}
+                          onChange={(e) => setZoneFilter(e.target.value)}
+                          className="cellular-filter-select"
+                        >
+                          <option value="">Все</option>
+                          {zoneOptions.map((zone) => (
+                            <option key={zone} value={zone}>
+                              {zone}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </th>
                     <th>
-                      <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('tariff')}>
-                        Тарифный план {sortMark('tariff')}
-                      </button>
+                      <div className="filter-header">
+                        <button type="button" className="satellites-sort-btn" onClick={() => toggleSort('tariff')}>
+                          Тарифный план {sortMark('tariff')}
+                        </button>
+                        <select
+                          value={tariffFilter}
+                          onChange={(e) => setTariffFilter(e.target.value)}
+                          className="cellular-filter-select"
+                        >
+                          <option value="">Все</option>
+                          {tariffOptions.map((tariff) => (
+                            <option key={tariff} value={tariff}>
+                              {tariff}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </th>
                   </tr>
                 </thead>
