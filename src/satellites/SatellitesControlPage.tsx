@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { aggregateSatelliteRowsByMac, parseSatelliteRowsFromBuffer, type SatelliteRow } from './satelliteXml'
 
 interface Satellite {
@@ -90,6 +91,7 @@ export default function SatellitesControlPage() {
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({})
   const [hideUnusedRows, setHideUnusedRows] = useState(false)
   const [hideEquipmentColumns, setHideEquipmentColumns] = useState(true)
+  const [departmentFilter, setDepartmentFilter] = useState('')
   const [sortState, setSortState] = useState<{ key: string; direction: SortDirection }>({ key: 'index', direction: 'asc' })
   const [savingRowEdit, setSavingRowEdit] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -625,8 +627,16 @@ export default function SatellitesControlPage() {
     return indexMap
   }, [satellites])
 
+  const departmentFilterOptions = useMemo(() => {
+    const values = new Set(satellites.map((satellite) => satellite.GN_department?.trim()).filter((department): department is string => !!department))
+    return [...values].sort((left, right) => left.localeCompare(right, 'ru'))
+  }, [satellites])
+
   const preparedSatellites = useMemo(() => {
     const filtered = satellites.filter((satellite) => {
+      if (departmentFilter && satellite.GN_department !== departmentFilter) {
+        return false
+      }
       if (!hideUnusedRows) {
         return true
       }
@@ -719,7 +729,7 @@ export default function SatellitesControlPage() {
 
       return baseCompare * directionFactor
     })
-  }, [satellites, hideUnusedRows, sortedMonths, xmlRowsByMacMonth, sortState, satelliteIndexById])
+  }, [satellites, departmentFilter, hideUnusedRows, sortedMonths, xmlRowsByMacMonth, sortState, satelliteIndexById])
 
   const visibleMonthTotals = useMemo(() => {
     const totals: Record<string, number> = {}
@@ -733,6 +743,67 @@ export default function SatellitesControlPage() {
 
     return totals
   }, [preparedSatellites, sortedMonths, xmlRowsByMacMonth])
+
+  function exportToXlsx(): void {
+    if (preparedSatellites.length === 0) {
+      setError('Нет данных для экспорта')
+      return
+    }
+
+    const header = [
+      '№',
+      'MAC',
+      'Имя',
+      'ПФ',
+      'Номера ГТ',
+      'Диаметр',
+      'Мощность',
+      'Модель',
+      'Модем',
+      'Местонахождение',
+      ...sortedMonths.flatMap((month) => [`${month}: Сумма`, `${month}: Тариф`, `${month}: Статус`, `${month}: Примечание`]),
+    ]
+    const rows = preparedSatellites.map((satellite, index) => {
+      const macKey = normalizeMacKey(satellite.GN_satellite_mac)
+      const gtNumber = gtNumbers.find((item) => item.GN_satellite_gt_numbers_id === satellite.GN_satellite_gt_numbers_FK)?.GN_satellite_gt_number ?? ''
+
+      return [
+        index + 1,
+        satellite.GN_satellite_mac,
+        satellite.GN_satellite_direction_name,
+        satellite.GN_department ?? '',
+        gtNumber,
+        satellite.GN_satellite_diameter ?? '',
+        satellite.GN_satellite_power ?? '',
+        satellite.GN_satellite_model ?? '',
+        satellite.GN_satellite_modem ?? '',
+        satellite.GN_satellite_description ?? '',
+        ...sortedMonths.flatMap((month) => {
+          const cell = xmlRowsByMacMonth[macKey]?.[month]
+          return [cell?.amount ?? 0, cell?.tariff ?? '', cell?.status ?? '', cell?.tariffNote ?? '']
+        }),
+      ]
+    })
+    const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows])
+    const numberColumns = new Set<number>([0])
+    sortedMonths.forEach((_, monthIndex) => numberColumns.add(10 + monthIndex * 4))
+
+    rows.forEach((_, rowIndex) => {
+      numberColumns.forEach((columnIndex) => {
+        const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex })]
+        if (cell) cell.z = columnIndex === 0 ? '0' : '#,##0.00'
+      })
+    })
+    worksheet['!cols'] = header.map((title, columnIndex) => ({
+      wch: Math.min(40, Math.max(12, ...[title, ...rows.map((row) => String(row[columnIndex] ?? ''))].map((value) => value.length + 2))),
+    }))
+    worksheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: header.length - 1 } }) }
+    worksheet['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' }
+
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Контроль спутников')
+    XLSX.writeFile(workbook, `Спутники_контроль_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
 
   return (
     <section className="page-section satellites-section">
@@ -800,6 +871,9 @@ export default function SatellitesControlPage() {
           <div className="satellites-table-card">           
             <p className="hint">Найдено направлений: <strong>{satellites.length}</strong></p>
             <div className="satellites-actions">
+              <button className="page-action-btn page-action-btn--secondary" type="button" onClick={exportToXlsx}>
+                Выгрузить в Excel
+              </button>
               {authUser === 'ADM' && (
                 <label className="satellites-file-input-label">
                   <span className="page-action-btn page-action-btn--success">Загрузить XML</span>
@@ -818,6 +892,15 @@ export default function SatellitesControlPage() {
                 Из XML загружено строк: <strong>{xmlRowsCount}</strong>. Сопоставлено по MAC: <strong>{xmlMatchedCount}</strong>.
               </p>
             )}
+            <label className="satellites-hide-unused-label">
+                        <span>ПФ</span>
+                        <select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}>
+                          <option value="">Все ПФ</option>
+                          {departmentFilterOptions.map((department) => (
+                            <option key={department} value={department}>{department}</option>
+                          ))}
+                        </select>
+                      </label>
             <label className="satellites-hide-unused-label">
                         <input
                           type="checkbox"

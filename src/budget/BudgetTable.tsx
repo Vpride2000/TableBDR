@@ -1,4 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
+import * as XLSXStyle from 'xlsx-js-style';
 import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils';
 import MainBudgetTableContent from './MainBudgetTableContent';
 
@@ -34,6 +36,7 @@ const BDR_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> 
 
 const LOCKED_EDIT_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Лимит', 'Един. лимит']);
 const EXTRA_NUMERIC_COLUMNS = new Set(['БДР25корр', 'БДР26', 'БДР26корр']);
+const FINANCIAL_EXPORT_COLUMNS = new Set(['Лимит', 'БДР25корр', 'БДР26', 'БДР26корр', 'Един. лимит']);
 const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Един. лимит', 'Предмет договора', 'Примечания']);
 const COLUMN_TITLES: Record<string, string> = {
   GN_bdr_ID: '№',
@@ -82,6 +85,15 @@ function formatFinancialValue(value: unknown): string {
   return FINANCIAL_NUMBER_FORMATTER.format(parseNumericValue(value));
 }
 
+function toExcelNumber(value: unknown): number | string {
+  if (typeof value === 'number') return value;
+  const text = String(value ?? '').trim();
+  if (text === '') return '';
+
+  const parsed = Number(text.replace(/\s+/g, '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : text;
+}
+
 interface BudgetTableProps {
   onAddRow: () => void;
   onOpenLimit: (rowId: number) => void;
@@ -108,6 +120,9 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
   const [lookupRows, setLookupRows] = useState<Record<string, Row[]>>({});
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [contractsLookup, setContractsLookup] = useState<Record<string, number>>({});
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   function setFilter(column: string, value: string): void {
     setFilters((prev) => ({ ...prev, [column]: value }));
@@ -377,6 +392,112 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
     }
   }
 
+  function exportToXlsx(): void {
+    const exportColumns = orderedColumns;
+    const header = exportColumns.map((column) => COLUMN_TITLES[column] ?? column);
+    const rows = data.map((row) => exportColumns.map((column) => (
+      FINANCIAL_EXPORT_COLUMNS.has(column) || column === 'Кол-во'
+        ? toExcelNumber(row[column])
+        : row[column] ?? ''
+    )));
+    const worksheet = XLSXStyle.utils.aoa_to_sheet([header, ...rows]);
+    const lastRowIndex = rows.length;
+    const lastColumnIndex = Math.max(exportColumns.length - 1, 0);
+
+    header.forEach((_, columnIndex) => {
+      const cell = worksheet[XLSXStyle.utils.encode_cell({ r: 0, c: columnIndex })];
+      if (cell) {
+        cell.s = {
+          font: { bold: true, color: { rgb: 'FFFFFF' } },
+          fill: { fgColor: { rgb: '1F4E78' } },
+          alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+        };
+      }
+    });
+
+    rows.forEach((_, rowIndex) => {
+      exportColumns.forEach((column, columnIndex) => {
+        const cell = worksheet[XLSXStyle.utils.encode_cell({ r: rowIndex + 1, c: columnIndex })];
+        if (!cell) return;
+
+        if (FINANCIAL_EXPORT_COLUMNS.has(column)) {
+          cell.z = '#,##0.00';
+        } else if (column === 'Кол-во') {
+          cell.z = '#,##0';
+        }
+      });
+    });
+
+    worksheet['!cols'] = header.map((title, columnIndex) => ({
+      wch: Math.min(48, Math.max(12, ...[title, ...rows.map((row) => String(row[columnIndex] ?? ''))].map((value) => value.length + 2))),
+    }));
+    worksheet['!autofilter'] = {
+      ref: XLSXStyle.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRowIndex, c: lastColumnIndex } }),
+    };
+    worksheet['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' };
+    worksheet['!rows'] = [{ hpt: 32 }];
+
+    const workbook = XLSXStyle.utils.book_new();
+
+    XLSXStyle.utils.book_append_sheet(workbook, worksheet, 'Лимиты');
+    XLSXStyle.writeFile(workbook, 'Таблица_лимитов_по_услугам_связи.xlsx');
+  }
+
+  async function importFromXlsx(file: File): Promise<void> {
+    setImporting(true);
+    setImportMessage(null);
+    setImportError(null);
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error('В файле отсутствуют листы');
+
+      const sheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<Row>(sheet, { defval: '' });
+      const columnByExportTitle = Object.fromEntries(
+        Object.entries(COLUMN_TITLES).map(([column, title]) => [title, column])
+      );
+      let updatedRows = 0;
+
+      for (const row of rows) {
+        const rowId = Number(row['№'] ?? row.GN_bdr_ID);
+        if (!Number.isInteger(rowId) || rowId <= 0) continue;
+
+        const payload = Object.fromEntries(
+          Object.entries(row).map(([column, value]) => [columnByExportTitle[column] ?? column, value])
+        );
+        delete payload['№'];
+        delete payload.GN_bdr_ID;
+
+        const response = await fetch(`/api/gn/bdr/${rowId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(`Строка №${rowId}: ${errorPayload.error || formatHttpError(response.status)}`);
+        }
+
+        updatedRows += 1;
+      }
+
+      if (updatedRows === 0) {
+        throw new Error('В файле не найдены строки с корректной колонкой №');
+      }
+
+      await loadData();
+      localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()));
+      setImportMessage(`Загружено строк: ${updatedRows}.`);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Не удалось загрузить файл Excel');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <section className="budget">
       {loading && <p className="hint">Загрузка данных...</p>}
@@ -389,7 +510,26 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
             <button type="button" className="page-action-btn" onClick={onAddRowProp}>
               Добавить строку
             </button>
+            <button type="button" className="page-action-btn page-action-btn--secondary" onClick={exportToXlsx}>
+              Выгрузить в Excel
+            </button>
+            <label className="page-action-btn page-action-btn--secondary" style={{ cursor: importing ? 'default' : 'pointer' }}>
+              {importing ? 'Загрузка...' : 'Загрузить из Excel'}
+              <input
+                type="file"
+                accept=".xlsx"
+                style={{ display: 'none' }}
+                disabled={importing}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (file) void importFromXlsx(file);
+                }}
+              />
+            </label>
           </div>
+          {importMessage && <p className="hint">{importMessage}</p>}
+          {importError && <p className="hint hint--error">Ошибка загрузки из Excel: {importError}</p>}
           <MainBudgetTableContent
             visibleMainColumns={visibleMainColumns}
             filteredData={filteredData}

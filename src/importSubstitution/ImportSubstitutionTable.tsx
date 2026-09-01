@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react'
+import * as XLSX from 'xlsx'
 import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils'
 
 type Row = Record<string, unknown>;
@@ -12,7 +13,24 @@ interface SortState {
 
 const IMPORT_SUBSTITUTION_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> = {
   'Подразделение': { endpoint: '/api/gn/departments', labelKey: 'GN_department' },
+  'Код ТКО': { endpoint: '/api/gn/invest-okdp-tko-is-prit', labelKey: 'GN_invest_okdp_tko_is_prit' },
+  'Вендор ТКО': { endpoint: '/api/gn/equipment-manufacturers', labelKey: 'GN_equipment_manufacturer' },
 };
+
+const IMPORT_SUBSTITUTION_COLUMNS = [
+  'Подразделение', 'Код ТКО', 'Наименование ТКО', 'Вендор ТКО',
+  'Классификация ТКО', 'ЕРРП', 'ЕРМТР', 'Регистрационный номер ТКО', 'Количество',
+  'Замещенное импортное ТКО', 'Кол-во выводенного импортного ТКО', 'Статья затрат ТКО',
+  'Платеж ТР без НДС', 'Год', 'Примечание',
+] as const;
+const SELECT_VALUE_OPTIONS: Record<string, string[]> = {
+  'Классификация ТКО': ['Импорт', 'РФ в реестре', 'РФ НЕ в реестре'],
+  'ЕРРП': ['ДА', 'НЕТ'],
+  'ЕРМТР': ['ДА', 'НЕТ'],
+  'Статья затрат ТКО': ['ОНМ', 'ПЭН'],
+};
+const NUMERIC_COLUMNS = new Set(['Количество', 'Кол-во выводенного импортного ТКО', 'Платеж ТР без НДС', 'Год']);
+const DEFAULT_NEW_ROW: Row = { 'ЕРРП': 'НЕТ', 'ЕРМТР': 'НЕТ', 'Статья затрат ТКО': 'ПЭН' };
 
 function parseComparable(value: unknown): number | string {
   if (typeof value === 'number') return value;
@@ -52,6 +70,9 @@ export default function ImportSubstitutionTable(): React.ReactElement {
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [newRowData, setNewRowData] = useState<Row>({});
   const [addError, setAddError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   function setFilter(column: string, value: string): void {
     setFilters((prev) => ({ ...prev, [column]: value }));
@@ -61,7 +82,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     setLoading(true);
     setError(null);
 
-    return fetch('/api/gn/import-substitution')
+    return fetch('/api/import-substitution', { cache: 'no-store' })
       .then((res) => {
         if (!res.ok) throw new Error(formatHttpError(res.status));
         return res.json() as Promise<Row[]>;
@@ -93,7 +114,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     void loadSelectOptions();
   }, []);
 
-  const columns = useMemo(() => ['Подразделение', 'Процент исполнения'], []);
+  const columns = useMemo(() => [...IMPORT_SUBSTITUTION_COLUMNS], []);
 
   const sortedData = useMemo(() => {
     if (!sort) return data;
@@ -153,6 +174,12 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     }));
   }
 
+  function startNewRow(): void {
+    setNewRowData(DEFAULT_NEW_ROW);
+    setAddError(null);
+    setIsAddingNew(true);
+  }
+
   function getSelectOptionsForColumn(column: string): SelectOption[] {
     const config = IMPORT_SUBSTITUTION_SELECT_CONFIG[column];
     if (!config) return [];
@@ -164,13 +191,65 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     });
   }
 
+  function exportToXlsx(): void {
+    const header = ['№', ...columns];
+    const rows = filteredData.map((row) => [row.GN_import_substitution_id ?? '', ...columns.map((column) => row[column] ?? '')]);
+    const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    worksheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: header.length - 1 } }) };
+    worksheet['!cols'] = header.map((title, index) => ({
+      wch: Math.min(44, Math.max(12, ...[title, ...rows.map((row) => String(row[index] ?? ''))].map((value) => value.length + 2))),
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Импортозамещение');
+    XLSX.writeFile(workbook, 'Импортозамещение.xlsx');
+  }
+
+  async function importFromXlsx(file: File): Promise<void> {
+    setImporting(true);
+    setImportError(null);
+    setImportMessage(null);
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName) throw new Error('В файле отсутствуют листы');
+
+      const rows = XLSX.utils.sheet_to_json<Row>(workbook.Sheets[sheetName], { defval: '' });
+      let savedRows = 0;
+      for (const row of rows) {
+        const rowId = Number(row['№']);
+        const payload = Object.fromEntries(columns.map((column) => [column, row[column] ?? '']));
+        if (!String(payload['Подразделение']).trim()) continue;
+
+        const response = await fetch(Number.isInteger(rowId) && rowId > 0 ? `/api/import-substitution/${rowId}` : '/api/import-substitution', {
+          method: Number.isInteger(rowId) && rowId > 0 ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(`Строка ${savedRows + 2}: ${errorPayload.error || formatHttpError(response.status)}`);
+        }
+        savedRows += 1;
+      }
+      if (savedRows === 0) throw new Error('В файле нет строк для загрузки');
+
+      await loadData();
+      setImportMessage(`Загружено строк: ${savedRows}.`);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Не удалось загрузить файл Excel');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function saveEdit(): Promise<void> {
     if (editingRowId == null) return;
     setSaving(true);
     setSaveError(null);
 
     try {
-      const response = await fetch(`/api/gn/import-substitution/${editingRowId}`, {
+      const response = await fetch(`/api/import-substitution/${editingRowId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -184,9 +263,11 @@ export default function ImportSubstitutionTable(): React.ReactElement {
       }
 
       const updatedRow = (await response.json()) as Row;
-      setData((prev) =>
-        prev.map((row) => (Number(row['GN_import_substitution_id']) === editingRowId ? updatedRow : row))
-      );
+      setData((previous) => previous.map((row) => (
+        Number(row['GN_import_substitution_id']) === editingRowId
+          ? { ...row, ...draft, ...updatedRow }
+          : row
+      )));
       cancelEdit();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Не удалось сохранить изменения');
@@ -206,14 +287,14 @@ export default function ImportSubstitutionTable(): React.ReactElement {
   async function createNewRow(): Promise<void> {
     setAddError(null);
     
-    if (!newRowData['Подразделение'] || newRowData['Процент исполнения'] === undefined) {
+    if (!newRowData['Подразделение']) {
       setAddError('Заполните все обязательные поля');
       return;
     }
 
     setSaving(true);
     try {
-      const response = await fetch('/api/gn/import-substitution', {
+      const response = await fetch('/api/import-substitution', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -226,8 +307,8 @@ export default function ImportSubstitutionTable(): React.ReactElement {
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
 
-      const createdRow = (await response.json()) as Row;
-      setData((prev) => [...prev, createdRow]);
+      await response.json();
+      await loadData();
       setNewRowData({});
       setIsAddingNew(false);
     } catch (err) {
@@ -241,11 +322,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     return (
       <div className="empty-state">
         <p className="hint">Нет данных по импортозамещению.</p>
-        <button
-          type="button"
-          className="page-action-btn"
-          onClick={() => setIsAddingNew(true)}
-        >
+        <button type="button" className="page-action-btn" onClick={startNewRow}>
           Добавить первую запись
         </button>
       </div>
@@ -253,49 +330,67 @@ export default function ImportSubstitutionTable(): React.ReactElement {
   }
 
   return (
-    <div className="table-wrapper">
+    <div className="import-substitution-table-wrap">
       {!isAddingNew && (
-        <div className="table-actions">
+        <div className="guide-table-actions">
           <button
             type="button"
-            className="page-action-btn"
-            onClick={() => setIsAddingNew(true)}
+            className="page-action-btn page-action-btn--secondary"
+            onClick={startNewRow}
           >
             Добавить строку
           </button>
+          <button type="button" className="page-action-btn page-action-btn--secondary" onClick={exportToXlsx}>
+            Выгрузить в Excel
+          </button>
+          <label className="page-action-btn page-action-btn--secondary" style={{ cursor: importing ? 'default' : 'pointer' }}>
+            {importing ? 'Загрузка...' : 'Загрузить из Excel'}
+            <input
+              type="file"
+              accept=".xlsx"
+              style={{ display: 'none' }}
+              disabled={importing}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void importFromXlsx(file);
+              }}
+            />
+          </label>
         </div>
       )}
+      {importMessage && <p className="hint">{importMessage}</p>}
+      {importError && <p className="hint hint--error">Ошибка загрузки из Excel: {importError}</p>}
 
       {isAddingNew && (
         <div className="new-row-form">
           <div className="new-row-form-fields">
-            <div className="form-field">
-              <label>Подразделение:</label>
-              <select
-                value={String(newRowData['Подразделение'] ?? '')}
-                onChange={(e) => setNewRowData((prev) => ({ ...prev, 'Подразделение': e.target.value }))}
-                className="form-input"
-              >
-                <option value="">Выберите подразделение</option>
-                {getSelectOptionsForColumn('Подразделение').map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-field">
-              <label>Процент исполнения:</label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                value={String(newRowData['Процент исполнения'] ?? '')}
-                onChange={(e) => setNewRowData((prev) => ({ ...prev, 'Процент исполнения': e.target.value }))}
-                className="form-input"
-              />
-            </div>
+            {columns.map((column) => (
+              <div className="form-field" key={column}>
+                <label>{column}:</label>
+                {IMPORT_SUBSTITUTION_SELECT_CONFIG[column] || SELECT_VALUE_OPTIONS[column] ? (
+                  <select
+                    value={String(newRowData[column] ?? '')}
+                    onChange={(event) => setNewRowData((previous) => ({ ...previous, [column]: event.target.value }))}
+                    className="form-input"
+                  >
+                    <option value="">Выберите значение</option>
+                    {(IMPORT_SUBSTITUTION_SELECT_CONFIG[column]
+                      ? getSelectOptionsForColumn(column).map((option) => option.value)
+                      : SELECT_VALUE_OPTIONS[column]
+                    ).map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    type={NUMERIC_COLUMNS.has(column) ? 'number' : 'text'}
+                    step={column === 'Год' ? '1' : NUMERIC_COLUMNS.has(column) ? '0.01' : undefined}
+                    value={String(newRowData[column] ?? '')}
+                    onChange={(event) => setNewRowData((previous) => ({ ...previous, [column]: event.target.value }))}
+                    className="form-input"
+                  />
+                )}
+              </div>
+            ))}
           </div>
           <div className="new-row-form-actions">
             <button
@@ -323,15 +418,16 @@ export default function ImportSubstitutionTable(): React.ReactElement {
         </div>
       )}
 
-      <table className="data-table">
-        <thead>
+      <div className="guide-table-wrap invest-program-table-wrap--narrow">
+        <table className="guide-table table-compact import-substitution-table">
+          <thead>
           <tr>
             {columns.map((column) => (
               <th key={column}>
                 <div className="table-header-content">
                   <button
                     type="button"
-                    className="table-sort-button"
+                    className="invest-program-row-action-button invest-program-row-action-button--secondary import-substitution-sort-button"
                     onClick={() => toggleSort(column)}
                   >
                     {column}
@@ -344,7 +440,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                 </div>
                 <input
                   type="text"
-                  className="table-filter-input"
+                  className="contract-filter-input"
                   placeholder="Фильтр..."
                   value={filters[column] ?? ''}
                   onChange={(e) => setFilter(column, e.target.value)}
@@ -353,38 +449,36 @@ export default function ImportSubstitutionTable(): React.ReactElement {
             ))}
             <th>Действия</th>
           </tr>
-        </thead>
-        <tbody>
+          </thead>
+          <tbody>
           {filteredData.map((row) => {
             const rowId = Number(row['GN_import_substitution_id']);
             const isEditing = editingRowId === rowId;
 
             return (
-              <tr key={rowId} className={isEditing ? 'editing-row' : ''}>
+              <tr key={rowId} className={isEditing ? 'editing' : ''}>
                 {columns.map((column) => (
                   <td key={column}>
                     {isEditing ? (
-                      column === 'Подразделение' ? (
+                      IMPORT_SUBSTITUTION_SELECT_CONFIG[column] || SELECT_VALUE_OPTIONS[column] ? (
                         <select
                           value={String(draft[column] ?? '')}
                           onChange={(e) => updateDraft(column, e.target.value)}
-                          className="cell-input cell-select"
+                          className="invest-program-inline-input"
                         >
                           <option value="">Выберите подразделение</option>
-                          {getSelectOptionsForColumn(column).map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
+                          {(IMPORT_SUBSTITUTION_SELECT_CONFIG[column]
+                            ? getSelectOptionsForColumn(column).map((option) => option.value)
+                            : SELECT_VALUE_OPTIONS[column]
+                          ).map((option) => <option key={option} value={option}>{option}</option>)}
                         </select>
                       ) : (
                         <input
-                          type="number"
-                          min="0"
-                          max="100"
+                          type={NUMERIC_COLUMNS.has(column) ? 'number' : 'text'}
+                          step={column === 'Год' ? '1' : NUMERIC_COLUMNS.has(column) ? '0.01' : undefined}
                           value={String(draft[column] ?? '')}
                           onChange={(e) => updateDraft(column, e.target.value)}
-                          className="cell-input"
+                          className="invest-program-inline-input"
                         />
                       )
                     ) : (
@@ -392,12 +486,12 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                     )}
                   </td>
                 ))}
-                <td className="actions-cell">
+                <td className="invest-program-actions-cell">
                   {isEditing ? (
                     <>
                       <button
                         type="button"
-                        className="action-btn action-btn--save"
+                        className="invest-program-row-action-button"
                         onClick={() => void saveEdit()}
                         disabled={saving}
                       >
@@ -405,7 +499,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                       </button>
                       <button
                         type="button"
-                        className="action-btn action-btn--cancel"
+                        className="invest-program-row-action-button invest-program-row-action-button--secondary"
                         onClick={cancelEdit}
                         disabled={saving}
                       >
@@ -416,7 +510,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                   ) : (
                     <button
                       type="button"
-                      className="action-btn action-btn--edit"
+                      className="invest-program-row-action-button"
                       onClick={() => startEdit(row)}
                     >
                       Редактировать
@@ -426,8 +520,9 @@ export default function ImportSubstitutionTable(): React.ReactElement {
               </tr>
             );
           })}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -87,7 +87,8 @@ export const GN_TABLE_CONFIGS = {
     'cellular-tariff-plans': {
         tableName: 'GN_cellular_tariff_plan',
         idColumn: 'GN_cellular_tariff_plan_id',
-        editableColumns: ['GN_cellular_tariff_plan', 'GN_cellular_tariff_plan_details'],
+        editableColumns: ['GN_cellular_tariff_plan', 'GN_cellular_tariff_plan_details', 'GN_cellular_tariff_plan_cost'],
+        numericColumns: ['GN_cellular_tariff_plan_cost'],
     },
     'cellular-accounts': {
         tableName: 'GN_cellular_account',

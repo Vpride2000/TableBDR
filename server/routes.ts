@@ -1502,8 +1502,19 @@ export function setupRoutes(app: Express): void {
            a."GN_cellular_account_id",
            a."GN_cellular_account",
            a."GN_department_FK",
-           a."GN_cellular_account_note"
+           a."GN_cellular_account_note",
+           COALESCE(cnt.numbers_count, 0)::int AS "GN_cellular_account_numbers_count",
+           COALESCE(cnt.active_numbers_count, 0)::int AS "GN_cellular_account_active_numbers_count",
+           COALESCE(cnt.total_cost, 0) AS "GN_cellular_account_total_cost"
          FROM "GN_cellular_account" a
+         LEFT JOIN (
+           SELECT c."GN_cellular_account", COUNT(*) AS numbers_count,
+             COUNT(*) FILTER (WHERE lower(trim(c."GN_cellular_status")) = 'действующий') AS active_numbers_count,
+             SUM(CASE WHEN lower(trim(c."GN_cellular_status")) = 'действующий' THEN COALESCE(t."GN_cellular_tariff_plan_cost", 0) ELSE 0 END) AS total_cost
+           FROM "GN_cellular" c
+           LEFT JOIN "GN_cellular_tariff_plan" t ON t."GN_cellular_tariff_plan_id" = c."GN_cellular_tariff_plan_FK"
+           GROUP BY c."GN_cellular_account"
+         ) cnt ON cnt."GN_cellular_account" = a."GN_cellular_account"
          ORDER BY a."GN_cellular_account_id" ASC`
       );
       res.json(result.rows);
@@ -2040,6 +2051,14 @@ export function setupRoutes(app: Express): void {
         }
         return numericValue;
       }
+      if (config.numericColumns?.includes(column)) {
+        if (req.body[column] === null || req.body[column] === '') return null;
+        const numericValue = Number(req.body[column]);
+        if (Number.isNaN(numericValue)) {
+          throw new Error(`Invalid value for ${column}`);
+        }
+        return numericValue;
+      }
       return req.body[column];
     });
 
@@ -2120,6 +2139,14 @@ export function setupRoutes(app: Express): void {
       .join(', ');
     const values = updates.map((column) => {
       if (column.endsWith('_FK')) {
+        const numericValue = Number(req.body[column]);
+        if (Number.isNaN(numericValue)) {
+          throw new Error(`Invalid value for ${column}`);
+        }
+        return numericValue;
+      }
+      if (config.numericColumns?.includes(column)) {
+        if (req.body[column] === null || req.body[column] === '') return null;
         const numericValue = Number(req.body[column]);
         if (Number.isNaN(numericValue)) {
           throw new Error(`Invalid value for ${column}`);
@@ -2345,15 +2372,31 @@ export function setupRoutes(app: Express): void {
   });
 
   // Импортозамещение endpoints
-  app.get('/api/gn/import-substitution', async (req: Request, res: Response): Promise<void> => {
+  app.get('/api/import-substitution', async (req: Request, res: Response): Promise<void> => {
+    res.setHeader('Cache-Control', 'no-store');
     const client = await createDbClient();
     try {
       const result = await client.query(
         `SELECT
            "GN_import_substitution_id",
            "Подразделение",
-           "Процент исполнения"
-         FROM "GN_import_substitution"
+           okdp."GN_invest_okdp_tko_is_prit" AS "Код ТКО",
+           i."Наименование ТКО",
+           vendor."GN_equipment_manufacturer" AS "Вендор ТКО",
+           i."Классификация ТКО",
+           i."ЕРРП",
+           i."ЕРМТР",
+           i."Регистрационный номер ТКО",
+           i."Количество",
+           i."Замещенное импортное ТКО",
+           i."Кол-во выводенного импортного ТКО",
+           i."Статья затрат ТКО",
+           i."Платеж ТР без НДС",
+           i."Год",
+           i."Примечание"
+         FROM "GN_import_substitution" i
+         LEFT JOIN "GN_invest_okdp_tko_is_prit" okdp ON i."GN_import_substitution_okdp_fk" = okdp."GN_invest_okdp_tko_is_prit_id"
+         LEFT JOIN "GN_equipment_manufacturer" vendor ON i."GN_import_substitution_vendor_fk" = vendor."GN_equipment_manufacturer_id"
          ORDER BY "Подразделение" ASC`
       );
       res.json(result.rows);
@@ -2365,9 +2408,25 @@ export function setupRoutes(app: Express): void {
     }
   });
 
-  app.put('/api/gn/import-substitution/:id', async (req: Request, res: Response): Promise<void> => {
+  app.put('/api/import-substitution/:id', async (req: Request, res: Response): Promise<void> => {
     const { id } = req.params;
-    const { 'Подразделение': department, 'Процент исполнения': percentage } = req.body;
+    const {
+      'Подразделение': department,
+      'Код ТКО': okdpCode,
+      'Наименование ТКО': tkoName,
+      'Вендор ТКО': vendorName,
+      'Классификация ТКО': classification,
+      'ЕРРП': errp,
+      'ЕРМТР': ermtr,
+      'Регистрационный номер ТКО': registrationNumber,
+      'Количество': quantity,
+      'Замещенное импортное ТКО': replacedImportTko,
+      'Кол-во выводенного импортного ТКО': decommissionedQuantity,
+      'Статья затрат ТКО': costItem,
+      'Платеж ТР без НДС': paymentWithoutVat,
+      'Год': year,
+      'Примечание': note,
+    } = req.body;
 
     const rowId = Number(id);
     if (Number.isNaN(rowId)) {
@@ -2375,25 +2434,45 @@ export function setupRoutes(app: Express): void {
       return;
     }
 
-    if (!department || percentage === undefined) {
+    if (!department) {
       res.status(400).json({ error: 'Missing required fields' });
       return;
     }
 
-    const percentageNumber = Number(percentage);
-    if (!Number.isFinite(percentageNumber) || percentageNumber < 0 || percentageNumber > 100) {
-      res.status(400).json({ error: 'Percentage must be a number between 0 and 100' });
+    if (classification && !['Импорт', 'РФ в реестре', 'РФ НЕ в реестре'].includes(classification)) {
+      res.status(400).json({ error: 'Некорректная классификация ТКО' });
+      return;
+    }
+    if (![undefined, 'ДА', 'НЕТ'].includes(errp) || ![undefined, 'ДА', 'НЕТ'].includes(ermtr)) {
+      res.status(400).json({ error: 'ЕРРП и ЕРМТР могут принимать только значения ДА или НЕТ' });
+      return;
+    }
+    if (costItem && !['ОНМ', 'ПЭН'].includes(costItem)) {
+      res.status(400).json({ error: 'Некорректная статья затрат ТКО' });
       return;
     }
 
     const client = await createDbClient();
     try {
+      const resolveId = async (query: string, value: unknown): Promise<number | null> => {
+        const normalized = String(value ?? '').trim();
+        if (!normalized) return null;
+        const lookup = await client.query<{ id: number }>(query, [normalized]);
+        if (lookup.rowCount === 0) throw new Error('Значение не найдено в справочнике');
+        return lookup.rows[0].id;
+      };
+      const okdpId = await resolveId('SELECT "GN_invest_okdp_tko_is_prit_id" AS id FROM "GN_invest_okdp_tko_is_prit" WHERE "GN_invest_okdp_tko_is_prit" = $1 LIMIT 1', okdpCode);
+      const vendorId = await resolveId('SELECT "GN_equipment_manufacturer_id" AS id FROM "GN_equipment_manufacturer" WHERE "GN_equipment_manufacturer" = $1 LIMIT 1', vendorName);
       const result = await client.query(
         `UPDATE "GN_import_substitution"
-         SET "Подразделение" = $1, "Процент исполнения" = $2, "updated_at" = NOW()
-         WHERE "GN_import_substitution_id" = $3
+         SET "Подразделение" = $1, "GN_import_substitution_okdp_fk" = $2, "Наименование ТКО" = $3,
+           "GN_import_substitution_vendor_fk" = $4, "Классификация ТКО" = $5, "ЕРРП" = $6,
+           "ЕРМТР" = $7, "Регистрационный номер ТКО" = $8, "Количество" = $9,
+           "Замещенное импортное ТКО" = $10, "Кол-во выводенного импортного ТКО" = $11,
+           "Статья затрат ТКО" = $12, "Платеж ТР без НДС" = $13, "Год" = $14, "Примечание" = $15, "updated_at" = NOW()
+         WHERE "GN_import_substitution_id" = $16
          RETURNING *`,
-        [department, percentageNumber, rowId]
+        [department, okdpId, tkoName || null, vendorId, classification || null, errp || 'НЕТ', ermtr || 'НЕТ', registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem || 'ПЭН', paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, rowId]
       );
 
       if (result.rowCount === 0) {
@@ -2404,39 +2483,72 @@ export function setupRoutes(app: Express): void {
       res.json(result.rows[0]);
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: 'Failed to update import-substitution data' });
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update import-substitution data' });
     } finally {
       await client.end();
     }
   });
 
-  app.post('/api/gn/import-substitution', async (req: Request, res: Response): Promise<void> => {
-    const { 'Подразделение': department, 'Процент исполнения': percentage } = req.body;
+  app.post('/api/import-substitution', async (req: Request, res: Response): Promise<void> => {
+    const {
+      'Подразделение': department,
+      'Код ТКО': okdpCode,
+      'Наименование ТКО': tkoName,
+      'Вендор ТКО': vendorName,
+      'Классификация ТКО': classification,
+      'ЕРРП': errp = 'НЕТ',
+      'ЕРМТР': ermtr = 'НЕТ',
+      'Регистрационный номер ТКО': registrationNumber,
+      'Количество': quantity,
+      'Замещенное импортное ТКО': replacedImportTko,
+      'Кол-во выводенного импортного ТКО': decommissionedQuantity,
+      'Статья затрат ТКО': costItem = 'ПЭН',
+      'Платеж ТР без НДС': paymentWithoutVat,
+      'Год': year,
+      'Примечание': note,
+    } = req.body;
 
-    if (!department || percentage === undefined) {
+    if (!department) {
       res.status(400).json({ error: 'Missing required fields' });
       return;
     }
 
-    const percentageNumber = Number(percentage);
-    if (!Number.isFinite(percentageNumber) || percentageNumber < 0 || percentageNumber > 100) {
-      res.status(400).json({ error: 'Percentage must be a number between 0 and 100' });
+    if (classification && !['Импорт', 'РФ в реестре', 'РФ НЕ в реестре'].includes(classification)) {
+      res.status(400).json({ error: 'Некорректная классификация ТКО' });
+      return;
+    }
+    if (!['ДА', 'НЕТ'].includes(errp) || !['ДА', 'НЕТ'].includes(ermtr)) {
+      res.status(400).json({ error: 'ЕРРП и ЕРМТР могут принимать только значения ДА или НЕТ' });
+      return;
+    }
+    if (!['ОНМ', 'ПЭН'].includes(costItem)) {
+      res.status(400).json({ error: 'Некорректная статья затрат ТКО' });
       return;
     }
 
     const client = await createDbClient();
     try {
+      const resolveId = async (query: string, value: unknown): Promise<number | null> => {
+        const normalized = String(value ?? '').trim();
+        if (!normalized) return null;
+        const lookup = await client.query<{ id: number }>(query, [normalized]);
+        if (lookup.rowCount === 0) throw new Error('Значение не найдено в справочнике');
+        return lookup.rows[0].id;
+      };
+      const okdpId = await resolveId('SELECT "GN_invest_okdp_tko_is_prit_id" AS id FROM "GN_invest_okdp_tko_is_prit" WHERE "GN_invest_okdp_tko_is_prit" = $1 LIMIT 1', okdpCode);
+      const vendorId = await resolveId('SELECT "GN_equipment_manufacturer_id" AS id FROM "GN_equipment_manufacturer" WHERE "GN_equipment_manufacturer" = $1 LIMIT 1', vendorName);
       const result = await client.query(
-        `INSERT INTO "GN_import_substitution" ("Подразделение", "Процент исполнения")
-         VALUES ($1, $2)
+        `INSERT INTO "GN_import_substitution" (
+           "Подразделение", "GN_import_substitution_okdp_fk", "Наименование ТКО", "GN_import_substitution_vendor_fk", "Классификация ТКО", "ЕРРП", "ЕРМТР", "Регистрационный номер ТКО", "Количество", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО", "Статья затрат ТКО", "Платеж ТР без НДС", "Год", "Примечание"
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING *`,
-        [department, percentageNumber]
+        [department, okdpId, tkoName || null, vendorId, classification || null, errp, ermtr, registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem, paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null]
       );
 
       res.status(201).json(result.rows[0]);
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: 'Failed to create import-substitution data' });
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create import-substitution data' });
     } finally {
       await client.end();
     }

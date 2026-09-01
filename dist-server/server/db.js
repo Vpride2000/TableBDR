@@ -220,8 +220,11 @@ export async function ensureCellularTables(client) {
     await client.query(`CREATE TABLE IF NOT EXISTS "GN_cellular_tariff_plan" (
        "GN_cellular_tariff_plan_id" SERIAL PRIMARY KEY,
        "GN_cellular_tariff_plan" TEXT NOT NULL UNIQUE,
-       "GN_cellular_tariff_plan_details" TEXT
+       "GN_cellular_tariff_plan_details" TEXT,
+       "GN_cellular_tariff_plan_cost" NUMERIC
      )`);
+    await client.query(`ALTER TABLE "GN_cellular_tariff_plan"
+     ADD COLUMN IF NOT EXISTS "GN_cellular_tariff_plan_cost" NUMERIC`);
     await client.query(`CREATE TABLE IF NOT EXISTS "GN_cellular_account" (
        "GN_cellular_account_id" SERIAL PRIMARY KEY,
        "GN_cellular_account" TEXT NOT NULL UNIQUE,
@@ -316,8 +319,6 @@ export async function bootstrapCellularFromXlsx(client, projectRoot) {
     }
 }
 export async function ensureImportSubstitutionTable(client) {
-    // Drop table if it exists to recreate without FK constraint
-    await client.query(`DROP TABLE IF EXISTS "GN_import_substitution" CASCADE`);
     await client.query(`CREATE TABLE IF NOT EXISTS "GN_import_substitution" (
        "GN_import_substitution_id" SERIAL PRIMARY KEY,
        "Подразделение" TEXT NOT NULL,
@@ -325,5 +326,20 @@ export async function ensureImportSubstitutionTable(client) {
        "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
        "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
      )`);
+    await client.query(`ALTER TABLE "GN_import_substitution"
+       ADD COLUMN IF NOT EXISTS "GN_import_substitution_okdp_fk" INTEGER REFERENCES "GN_invest_okdp_tko_is_prit"("GN_invest_okdp_tko_is_prit_id") ON DELETE SET NULL,
+       ADD COLUMN IF NOT EXISTS "Наименование ТКО" TEXT,
+       ADD COLUMN IF NOT EXISTS "GN_import_substitution_vendor_fk" INTEGER REFERENCES "GN_equipment_manufacturer"("GN_equipment_manufacturer_id") ON DELETE SET NULL,
+       ADD COLUMN IF NOT EXISTS "Классификация ТКО" TEXT,
+       ADD COLUMN IF NOT EXISTS "ЕРРП" TEXT NOT NULL DEFAULT 'НЕТ',
+       ADD COLUMN IF NOT EXISTS "ЕРМТР" TEXT NOT NULL DEFAULT 'НЕТ',
+       ADD COLUMN IF NOT EXISTS "Регистрационный номер ТКО" TEXT,
+       ADD COLUMN IF NOT EXISTS "Количество" NUMERIC(18,2),
+       ADD COLUMN IF NOT EXISTS "Замещенное импортное ТКО" TEXT,
+       ADD COLUMN IF NOT EXISTS "Кол-во выводенного импортного ТКО" NUMERIC(18,2),
+       ADD COLUMN IF NOT EXISTS "Статья затрат ТКО" TEXT NOT NULL DEFAULT 'ПЭН',
+       ADD COLUMN IF NOT EXISTS "Платеж ТР без НДС" NUMERIC(18,2),
+       ADD COLUMN IF NOT EXISTS "Год" INTEGER,
+       ADD COLUMN IF NOT EXISTS "Примечание" TEXT`);
 }
 //# sourceMappingURL=db.js.map

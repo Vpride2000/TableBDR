@@ -2,6 +2,7 @@ export interface GnTableConfig {
     tableName: string;
     idColumn: string;
     editableColumns: string[];
+    numericColumns?: string[];
 }
 export interface LimitCalculationLineInput {
     quantity: number;

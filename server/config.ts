@@ -4,6 +4,7 @@ export interface GnTableConfig {
   tableName: string;
   idColumn: string;
   editableColumns: string[];
+  numericColumns?: string[];
 }
 
 export interface LimitCalculationLineInput {
@@ -129,7 +130,8 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
   'cellular-tariff-plans': {
     tableName: 'GN_cellular_tariff_plan',
     idColumn: 'GN_cellular_tariff_plan_id',
-    editableColumns: ['GN_cellular_tariff_plan', 'GN_cellular_tariff_plan_details'],
+    editableColumns: ['GN_cellular_tariff_plan', 'GN_cellular_tariff_plan_details', 'GN_cellular_tariff_plan_cost'],
+    numericColumns: ['GN_cellular_tariff_plan_cost'],
   },
   'cellular-accounts': {
     tableName: 'GN_cellular_account',
