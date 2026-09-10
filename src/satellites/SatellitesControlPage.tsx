@@ -83,7 +83,7 @@ export default function SatellitesControlPage() {
   const [uploadingXml, setUploadingXml] = useState(false)
   const [clearingMonth, setClearingMonth] = useState<string | null>(null)
   const [editingMonthCellKey, setEditingMonthCellKey] = useState<string | null>(null)
-  const [draftMonthCell, setDraftMonthCell] = useState<{ tariff: string; tariffNote: string; status: SatelliteMonthStatus } | null>(null)
+  const [draftMonthCell, setDraftMonthCell] = useState<{ amount: string; tariff: string; tariffNote: string; status: SatelliteMonthStatus } | null>(null)
   const [savingMonthCellKey, setSavingMonthCellKey] = useState<string | null>(null)
   const [editingSatelliteId, setEditingSatelliteId] = useState<number | null>(null)
   const [editMode, setEditMode] = useState<'limited' | 'full' | null>(null)
@@ -412,6 +412,7 @@ export default function SatellitesControlPage() {
     const cell = xmlRowsByMacMonth[macKey]?.[month]
     setEditingMonthCellKey(`${sat.GN_satellite_id}-${month}`)
     setDraftMonthCell({
+      amount: String(cell?.amount ?? 0),
       tariff: cell?.tariff ?? '',
       tariffNote: cell?.tariffNote ?? '',
       status: cell?.status ?? 'склад',
@@ -456,7 +457,7 @@ export default function SatellitesControlPage() {
             tariff: draftMonthCell.tariff,
             tariffNote: draftMonthCell.tariffNote,
             status: draftMonthCell.status,
-            amountWithoutVat: cell.amount,
+            amountWithoutVat: authUser === 'ADM' ? parseAmount(draftMonthCell.amount) : cell.amount,
           }],
         }),
       })
@@ -744,6 +745,26 @@ export default function SatellitesControlPage() {
     return totals
   }, [preparedSatellites, sortedMonths, xmlRowsByMacMonth])
 
+  const visibleMonthDepartmentTotals = useMemo(() => {
+    const totals: Record<string, Array<{ department: string; amount: number }>> = {}
+
+    sortedMonths.forEach((month) => {
+      const byDepartment = new Map<string, number>()
+      preparedSatellites.forEach((satellite) => {
+        const macKey = normalizeMacKey(satellite.GN_satellite_mac)
+        const amount = xmlRowsByMacMonth[macKey]?.[month]?.amount ?? 0
+        const department = satellite.GN_department?.trim() || 'Не указано'
+        byDepartment.set(department, (byDepartment.get(department) ?? 0) + amount)
+      })
+      totals[month] = [...byDepartment.entries()]
+        .filter(([, amount]) => amount !== 0)
+        .sort(([left], [right]) => left.localeCompare(right, 'ru'))
+        .map(([department, amount]) => ({ department, amount }))
+    })
+
+    return totals
+  }, [preparedSatellites, sortedMonths, xmlRowsByMacMonth])
+
   function exportToXlsx(): void {
     if (preparedSatellites.length === 0) {
       setError('Нет данных для экспорта')
@@ -1006,6 +1027,14 @@ export default function SatellitesControlPage() {
                           >
                             {clearingMonth === month ? 'Очистка...' : 'Очистить'}
                           </button>
+                        )}
+                        {authUser === 'ADM' && expandedMonths[month] && visibleMonthDepartmentTotals[month]?.length > 0 && (
+                          <small
+                            style={{ gridColumn: '1 / -1', color: '#475569', fontSize: '0.65rem', lineHeight: 1.2 }}
+                            title="Свод стоимости по ПФ"
+                          >
+                            {visibleMonthDepartmentTotals[month].map(({ department, amount }) => `${department}: ${moneyFormatter.format(amount)}`).join(' | ')}
+                          </small>
                         )}
                       </div>
                     </th>
@@ -1272,7 +1301,19 @@ export default function SatellitesControlPage() {
                         return (
                           <Fragment key={`${sat.GN_satellite_id}-${month}`}>
                             <td className={`number-cell ${statusClass}`} title={tooltip}>
-                              {cell ? moneyFormatter.format(cell.amount) : '-'}
+                              {isMonthEditing && authUser === 'ADM' ? (
+                                <input
+                                  className="invest-program-inline-input"
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={draftMonthCell?.amount ?? ''}
+                                  onChange={(event) => {
+                                    const value = event.target.value
+                                    setDraftMonthCell((prev) => (prev ? { ...prev, amount: value } : prev))
+                                  }}
+                                  disabled={savingMonthCellKey === monthCellKey}
+                                />
+                              ) : (cell ? moneyFormatter.format(cell.amount) : '-')}
                             </td>
                             {expandedMonths[month] && (
                               <>

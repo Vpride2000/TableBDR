@@ -25,6 +25,8 @@ type GuideProps = {
   onlyEntities?: string[]
   lookupEntities?: string[]
   enableCellularAccountFilter?: boolean
+  // Режим каталога: показывает только таблицу названий справочников с кнопками открытия в отдельном окне.
+  directoryView?: boolean
 }
 
 const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: string; columns?: string[] }[] = [
@@ -127,6 +129,18 @@ const GUIDE_READONLY_COLUMNS: Record<string, string[]> = {
   'cellular-accounts': ['GN_cellular_account_numbers_count', 'GN_cellular_account_active_numbers_count', 'GN_cellular_account_total_cost'],
 };
 
+const EXCEL_IMPORT_EXPORT_ENTITIES = new Set([
+  'invest-okdp-tko-is-prit',
+  'invest-ogruz-rekvizit',
+  'equipment-manufacturers',
+]);
+
+const EXCEL_FILE_NAMES: Record<string, string> = {
+  'invest-okdp-tko-is-prit': 'Справочник_ОКДП_ТКО_для_ИС_ПРИТ.xlsx',
+  'invest-ogruz-rekvizit': 'Справочник_Огрузочный_реквизит.xlsx',
+  'equipment-manufacturers': 'Справочник_Производители_оборудования.xlsx',
+};
+
 function DataTable({
   section,
   onSectionRowsUpdate,
@@ -155,6 +169,7 @@ function DataTable({
     ? Object.keys(section.data[0])
     : section.columns ?? [section.idColumn];
   const isCellularAccounts = section.entity === 'cellular-accounts';
+  const supportsExcelImportExport = EXCEL_IMPORT_EXPORT_ENTITIES.has(section.entity);
   const accountDepartmentOptions = fkOptions.GN_department_FK ?? [];
   const displayRows = useMemo(() => {
     const filteredRows = rowFilter ? section.data.filter(rowFilter) : section.data;
@@ -349,6 +364,15 @@ function DataTable({
     XLSX.writeFile(workbook, 'Лицевые_счета.xlsx');
   }
 
+  function exportReferenceToExcel(): void {
+    const exportColumns = [section.idColumn, ...columns.filter((column) => column !== section.idColumn)];
+    const rows = section.data.map((row) => exportColumns.map((column) => row[column] ?? ''));
+    const worksheet = XLSX.utils.aoa_to_sheet([exportColumns, ...rows]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, section.title.slice(0, 31));
+    XLSX.writeFile(workbook, EXCEL_FILE_NAMES[section.entity]);
+  }
+
   async function importIdentifiersFromExcel(file: File): Promise<void> {
     setImporting(true);
     setImportError(null);
@@ -366,6 +390,9 @@ function DataTable({
         return;
       }
 
+      const existingIds = new Set(section.data.map((row) => Number(row[section.idColumn])));
+      const updatedIds = new Set<number>();
+      const importedIds = new Set<number>();
       for (let i = 1; i < rawRows.length; i += 1) {
         const [idCell, identifierCell, fioCell] = rawRows[i];
         const identifier = String(identifierCell ?? '').trim();
@@ -373,9 +400,11 @@ function DataTable({
 
         const fio = String(fioCell ?? '').trim();
         const id = Number(idCell);
+        if (Number.isInteger(id) && id > 0) importedIds.add(id);
         const body = { GN_cellular_identifier: identifier, GN_cellular_identifier_fio: fio };
+        const shouldUpdate = Number.isInteger(id) && id > 0 && existingIds.has(id) && !updatedIds.has(id);
 
-        const response = Number.isFinite(id) && id > 0
+        const response = shouldUpdate
           ? await fetch(`/api/gn/${section.entity}/${id}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
@@ -387,11 +416,80 @@ function DataTable({
               body: JSON.stringify(body),
             });
 
+        if (shouldUpdate) updatedIds.add(id);
         if (!response.ok) {
           const payload = (await response.json().catch(() => ({}))) as { error?: string };
           throw new Error(payload.error || formatHttpError(response.status));
         }
       }
+
+      const markMissingResponse = await fetch(`/api/gn/${section.entity}/mark-missing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [...importedIds] }),
+      });
+      if (!markMissingResponse.ok) throw new Error(formatHttpError(markMissingResponse.status));
+
+      const refreshed = await fetch(section.endpoint);
+      if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
+      onSectionRowsUpdate(section.endpoint, (await refreshed.json()) as Row[]);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Не удалось загрузить данные из Excel');
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function importReferenceFromExcel(file: File): Promise<void> {
+    setImporting(true);
+    setImportError(null);
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error('В файле отсутствуют листы');
+
+      const rawRows = XLSX.utils.sheet_to_json<Array<unknown>>(workbook.Sheets[firstSheetName], { header: 1, defval: '' });
+      if (rawRows.length < 2) return;
+
+      const importColumns = columns.filter((column) => column !== section.idColumn && !readonlyColumns.includes(column));
+      const existingIds = new Set(section.data.map((row) => Number(row[section.idColumn])));
+      const updatedIds = new Set<number>();
+      const importedIds = new Set<number>();
+      for (let index = 1; index < rawRows.length; index += 1) {
+        const row = rawRows[index];
+        const values = importColumns.map((_, columnIndex) => String(row[columnIndex + 1] ?? '').trim());
+        if (values.every((value) => !value)) continue;
+
+        const id = Number(row[0]);
+  if (Number.isInteger(id) && id > 0) importedIds.add(id);
+        const body = Object.fromEntries(importColumns.map((column, columnIndex) => [column, values[columnIndex]]));
+        const shouldUpdate = Number.isInteger(id) && id > 0 && existingIds.has(id) && !updatedIds.has(id);
+        const response = shouldUpdate
+          ? await fetch(`/api/gn/${section.entity}/${id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+          : await fetch(`/api/gn/${section.entity}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+
+        if (shouldUpdate) updatedIds.add(id);
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || formatHttpError(response.status));
+        }
+      }
+
+      const markMissingResponse = await fetch(`/api/gn/${section.entity}/mark-missing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [...importedIds] }),
+      });
+      if (!markMissingResponse.ok) throw new Error(formatHttpError(markMissingResponse.status));
 
       const refreshed = await fetch(section.endpoint);
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
@@ -437,6 +535,27 @@ function DataTable({
                   const file = event.target.files?.[0];
                   event.target.value = '';
                   if (file) void importIdentifiersFromExcel(file);
+                }}
+              />
+            </label>
+          </>
+        )}
+        {supportsExcelImportExport && (
+          <>
+            <button type="button" className="page-action-btn page-action-btn--secondary" onClick={exportReferenceToExcel}>
+              Выгрузить в Excel
+            </button>
+            <label className="page-action-btn page-action-btn--secondary" style={{ cursor: importing ? 'default' : 'pointer' }}>
+              {importing ? 'Загрузка...' : 'Загрузить из Excel'}
+              <input
+                type="file"
+                accept=".xlsx"
+                style={{ display: 'none' }}
+                disabled={importing}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (file) void importReferenceFromExcel(file);
                 }}
               />
             </label>
@@ -561,6 +680,7 @@ export default function Guide({
   onlyEntities,
   lookupEntities = [],
   enableCellularAccountFilter = false,
+  directoryView = false,
 }: GuideProps = {}) {
   const visibleDefs = onlyEntities && onlyEntities.length > 0
     ? TABLE_DEFS.filter((def) => onlyEntities.includes(def.entity))
@@ -708,6 +828,43 @@ export default function Guide({
     });
 
     return result;
+  }
+
+  // Каталог справочников: таблица названий, содержимое открывается в отдельном окне.
+  if (directoryView) {
+    return (
+      <section className="guide guide-directory">
+        <div className="guide-table-wrap" style={{ maxWidth: '640px' }}>
+          <table className="guide-table table-compact">
+            <thead>
+              <tr>
+                <th>№</th>
+                <th>Справочник</th>
+                <th>ОПИСАНИЕ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sections.map((section, index) => (
+                <tr key={section.endpoint}>
+                  <td>{index + 1}</td>
+                  <td>
+                    <a
+                      href={`#guide-window-${section.entity}`}
+                      target={`guide-window-${section.entity}`}
+                      rel="noreferrer"
+                      className="guide-directory-action-link"
+                    >
+                      {section.title}
+                    </a>
+                  </td>
+                  <td />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
   }
 
   return (

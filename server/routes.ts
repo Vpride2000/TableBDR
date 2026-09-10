@@ -1094,7 +1094,7 @@ export function setupRoutes(app: Express): void {
   app.get('/api/gn/invest-okdp-tko-is-prit', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
-      const result = await client.query('SELECT * FROM "GN_invest_okdp_tko_is_prit" ORDER BY "GN_invest_okdp_tko_is_prit_id" ASC');
+      const result = await client.query('SELECT * FROM "GN_invest_okdp_tko_is_prit" WHERE "is_deleted" = FALSE ORDER BY "GN_invest_okdp_tko_is_prit_id" ASC');
       res.json(result.rows);
     } catch (err) {
       console.error(err);
@@ -1107,7 +1107,7 @@ export function setupRoutes(app: Express): void {
   app.get('/api/gn/invest-ogruz-rekvizit', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
-      const result = await client.query('SELECT * FROM "GN_invest_ogruz_rekvizit" ORDER BY "GN_invest_ogruz_rekvizit_id" ASC');
+      const result = await client.query('SELECT * FROM "GN_invest_ogruz_rekvizit" WHERE "is_deleted" = FALSE ORDER BY "GN_invest_ogruz_rekvizit_id" ASC');
       res.json(result.rows);
     } catch (err) {
       console.error(err);
@@ -1120,7 +1120,7 @@ export function setupRoutes(app: Express): void {
   app.get('/api/gn/equipment-manufacturers', async (req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
-      const result = await client.query('SELECT * FROM "GN_equipment_manufacturer" ORDER BY "GN_equipment_manufacturer_id" ASC');
+      const result = await client.query('SELECT * FROM "GN_equipment_manufacturer" WHERE "is_deleted" = FALSE ORDER BY "GN_equipment_manufacturer_id" ASC');
       res.json(result.rows);
     } catch (err) {
       console.error(err);
@@ -1466,6 +1466,7 @@ export function setupRoutes(app: Express): void {
       const result = await client.query(
         `SELECT *
          FROM "GN_cellular_identifier"
+         WHERE "is_deleted" = FALSE
          ORDER BY "GN_cellular_identifier_id" ASC`
       );
       res.json(result.rows);
@@ -2077,6 +2078,34 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.post('/api/gn/:entity/mark-missing', async (req: Request, res: Response): Promise<void> => {
+    const { entity } = req.params;
+    const config = GN_TABLE_CONFIGS[entity];
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+
+    if (!config?.supportsExcelImportDeletion) {
+      res.status(404).json({ error: 'Excel deletion marking is not supported for this entity' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      await client.query(
+        `UPDATE "${config.tableName}"
+         SET "is_deleted" = TRUE, "deleted_at" = NOW()
+         WHERE "is_deleted" = FALSE
+           AND NOT ("${config.idColumn}" = ANY($1::int[]))`,
+        [ids],
+      );
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to mark missing Excel rows' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.delete('/api/gn/:entity/:id', async (req: Request, res: Response): Promise<void> => {
     const { entity, id } = req.params;
     const config = GN_TABLE_CONFIGS[entity];
@@ -2190,6 +2219,7 @@ export function setupRoutes(app: Express): void {
     const client = await createDbClient();
     try {
       const result = await client.query(`${BDR_SELECT_FIELDS}
+        WHERE b."is_deleted" = FALSE
         ORDER BY b."GN_bdr_ID" ASC`);
       res.json(result.rows);
     } catch (err) {
@@ -2371,6 +2401,26 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.post('/api/gn/bdr/mark-missing', async (req: Request, res: Response): Promise<void> => {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+    const client = await createDbClient();
+    try {
+      await client.query(
+        `UPDATE "GN_bdr"
+         SET "is_deleted" = TRUE, "deleted_at" = NOW()
+         WHERE "is_deleted" = FALSE
+           AND NOT ("GN_bdr_ID" = ANY($1::int[]))`,
+        [ids],
+      );
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to mark missing Excel rows' });
+    } finally {
+      await client.end();
+    }
+  });
+
   // Импортозамещение endpoints
   app.get('/api/import-substitution', async (req: Request, res: Response): Promise<void> => {
     res.setHeader('Cache-Control', 'no-store');
@@ -2382,6 +2432,7 @@ export function setupRoutes(app: Express): void {
            "Подразделение",
            okdp."GN_invest_okdp_tko_is_prit" AS "Код ТКО",
            i."Наименование ТКО",
+           etype."GN_equipment_type" AS "Тип",
            vendor."GN_equipment_manufacturer" AS "Вендор ТКО",
            i."Классификация ТКО",
            i."ЕРРП",
@@ -2396,7 +2447,9 @@ export function setupRoutes(app: Express): void {
            i."Примечание"
          FROM "GN_import_substitution" i
          LEFT JOIN "GN_invest_okdp_tko_is_prit" okdp ON i."GN_import_substitution_okdp_fk" = okdp."GN_invest_okdp_tko_is_prit_id"
+         LEFT JOIN "GN_equipment_type" etype ON i."GN_import_substitution_equipment_type_fk" = etype."GN_equipment_type_id"
          LEFT JOIN "GN_equipment_manufacturer" vendor ON i."GN_import_substitution_vendor_fk" = vendor."GN_equipment_manufacturer_id"
+         WHERE i."is_deleted" = FALSE
          ORDER BY "Подразделение" ASC`
       );
       res.json(result.rows);
@@ -2414,6 +2467,7 @@ export function setupRoutes(app: Express): void {
       'Подразделение': department,
       'Код ТКО': okdpCode,
       'Наименование ТКО': tkoName,
+      'Тип': equipmentTypeName,
       'Вендор ТКО': vendorName,
       'Классификация ТКО': classification,
       'ЕРРП': errp,
@@ -2462,6 +2516,7 @@ export function setupRoutes(app: Express): void {
         return lookup.rows[0].id;
       };
       const okdpId = await resolveId('SELECT "GN_invest_okdp_tko_is_prit_id" AS id FROM "GN_invest_okdp_tko_is_prit" WHERE "GN_invest_okdp_tko_is_prit" = $1 LIMIT 1', okdpCode);
+      const equipmentTypeId = await resolveId('SELECT "GN_equipment_type_id" AS id FROM "GN_equipment_type" WHERE "GN_equipment_type" = $1 LIMIT 1', equipmentTypeName);
       const vendorId = await resolveId('SELECT "GN_equipment_manufacturer_id" AS id FROM "GN_equipment_manufacturer" WHERE "GN_equipment_manufacturer" = $1 LIMIT 1', vendorName);
       const result = await client.query(
         `UPDATE "GN_import_substitution"
@@ -2469,10 +2524,11 @@ export function setupRoutes(app: Express): void {
            "GN_import_substitution_vendor_fk" = $4, "Классификация ТКО" = $5, "ЕРРП" = $6,
            "ЕРМТР" = $7, "Регистрационный номер ТКО" = $8, "Количество" = $9,
            "Замещенное импортное ТКО" = $10, "Кол-во выводенного импортного ТКО" = $11,
-           "Статья затрат ТКО" = $12, "Платеж ТР без НДС" = $13, "Год" = $14, "Примечание" = $15, "updated_at" = NOW()
+           "Статья затрат ТКО" = $12, "Платеж ТР без НДС" = $13, "Год" = $14, "Примечание" = $15,
+           "GN_import_substitution_equipment_type_fk" = $17, "updated_at" = NOW()
          WHERE "GN_import_substitution_id" = $16
          RETURNING *`,
-        [department, okdpId, tkoName || null, vendorId, classification || null, errp || 'НЕТ', ermtr || 'НЕТ', registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem || 'ПЭН', paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, rowId]
+        [department, okdpId, tkoName || null, vendorId, classification || null, errp || 'НЕТ', ermtr || 'НЕТ', registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem || 'ПЭН', paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, rowId, equipmentTypeId]
       );
 
       if (result.rowCount === 0) {
@@ -2494,6 +2550,7 @@ export function setupRoutes(app: Express): void {
       'Подразделение': department,
       'Код ТКО': okdpCode,
       'Наименование ТКО': tkoName,
+      'Тип': equipmentTypeName,
       'Вендор ТКО': vendorName,
       'Классификация ТКО': classification,
       'ЕРРП': errp = 'НЕТ',
@@ -2536,19 +2593,40 @@ export function setupRoutes(app: Express): void {
         return lookup.rows[0].id;
       };
       const okdpId = await resolveId('SELECT "GN_invest_okdp_tko_is_prit_id" AS id FROM "GN_invest_okdp_tko_is_prit" WHERE "GN_invest_okdp_tko_is_prit" = $1 LIMIT 1', okdpCode);
+      const equipmentTypeId = await resolveId('SELECT "GN_equipment_type_id" AS id FROM "GN_equipment_type" WHERE "GN_equipment_type" = $1 LIMIT 1', equipmentTypeName);
       const vendorId = await resolveId('SELECT "GN_equipment_manufacturer_id" AS id FROM "GN_equipment_manufacturer" WHERE "GN_equipment_manufacturer" = $1 LIMIT 1', vendorName);
       const result = await client.query(
         `INSERT INTO "GN_import_substitution" (
-           "Подразделение", "GN_import_substitution_okdp_fk", "Наименование ТКО", "GN_import_substitution_vendor_fk", "Классификация ТКО", "ЕРРП", "ЕРМТР", "Регистрационный номер ТКО", "Количество", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО", "Статья затрат ТКО", "Платеж ТР без НДС", "Год", "Примечание"
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+           "Подразделение", "GN_import_substitution_okdp_fk", "Наименование ТКО", "GN_import_substitution_vendor_fk", "Классификация ТКО", "ЕРРП", "ЕРМТР", "Регистрационный номер ТКО", "Количество", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО", "Статья затрат ТКО", "Платеж ТР без НДС", "Год", "Примечание", "GN_import_substitution_equipment_type_fk"
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING *`,
-        [department, okdpId, tkoName || null, vendorId, classification || null, errp, ermtr, registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem, paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null]
+        [department, okdpId, tkoName || null, vendorId, classification || null, errp, ermtr, registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem, paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, equipmentTypeId]
       );
 
       res.status(201).json(result.rows[0]);
     } catch (err) {
       console.error(err);
       res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create import-substitution data' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.post('/api/import-substitution/mark-missing', async (req: Request, res: Response): Promise<void> => {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+    const client = await createDbClient();
+    try {
+      await client.query(
+        `UPDATE "GN_import_substitution"
+         SET "is_deleted" = TRUE, "deleted_at" = NOW()
+         WHERE "is_deleted" = FALSE
+           AND NOT ("GN_import_substitution_id" = ANY($1::int[]))`,
+        [ids],
+      );
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to mark missing Excel rows' });
     } finally {
       await client.end();
     }

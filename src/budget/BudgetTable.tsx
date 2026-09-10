@@ -45,6 +45,23 @@ const COLUMN_TITLES: Record<string, string> = {
   БДР26: 'БДР26',
   БДР26корр: 'БДР26корр',
 };
+const BDR_CREATE_FIELD_BY_COLUMN: Record<string, string> = {
+  'Статья бюджета УС': 'pao_budget_item',
+  Подразделение: 'department',
+  Объект: 'object_name',
+  Договор: 'dogovor',
+  Контрагент: 'contractor',
+  'Статья бюджета': 'budget_item',
+  'Предмет договора': 'predmet_dogovora',
+  'Ед. изм.': 'ed_izm',
+  'Кол-во': 'kol_vo',
+  Лимит: 'limit',
+  БДР25корр: 'bdr25_corr',
+  БДР26: 'bdr26',
+  БДР26корр: 'bdr26_corr',
+  'Един. лимит': 'edin_limit',
+  Примечания: 'comments',
+};
 
 interface SortState {
   key: string;
@@ -458,11 +475,14 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
       const columnByExportTitle = Object.fromEntries(
         Object.entries(COLUMN_TITLES).map(([column, title]) => [title, column])
       );
-      let updatedRows = 0;
+      let savedRows = 0;
+      const existingIds = new Set(data.map((row) => Number(row.GN_bdr_ID)));
+      const updatedIds = new Set<number>();
+      const importedIds = new Set<number>();
 
       for (const row of rows) {
         const rowId = Number(row['№'] ?? row.GN_bdr_ID);
-        if (!Number.isInteger(rowId) || rowId <= 0) continue;
+        if (Number.isInteger(rowId) && rowId > 0) importedIds.add(rowId);
 
         const payload = Object.fromEntries(
           Object.entries(row).map(([column, value]) => [columnByExportTitle[column] ?? column, value])
@@ -470,27 +490,43 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
         delete payload['№'];
         delete payload.GN_bdr_ID;
 
-        const response = await fetch(`/api/gn/bdr/${rowId}`, {
-          method: 'PUT',
+        const shouldUpdate = Number.isInteger(rowId) && rowId > 0 && existingIds.has(rowId) && !updatedIds.has(rowId);
+        const createPayload = Object.fromEntries(
+          Object.entries(payload)
+            .filter(([column]) => BDR_CREATE_FIELD_BY_COLUMN[column])
+            .map(([column, value]) => [BDR_CREATE_FIELD_BY_COLUMN[column], value])
+        );
+        if (!shouldUpdate && !String(createPayload.department ?? '').trim()) continue;
+
+        const response = await fetch(shouldUpdate ? `/api/gn/bdr/${rowId}` : '/api/gn/bdr', {
+          method: shouldUpdate ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(shouldUpdate ? payload : createPayload),
         });
 
+        if (shouldUpdate) updatedIds.add(rowId);
         if (!response.ok) {
           const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
-          throw new Error(`Строка №${rowId}: ${errorPayload.error || formatHttpError(response.status)}`);
+          throw new Error(`Строка ${savedRows + 2}: ${errorPayload.error || formatHttpError(response.status)}`);
         }
 
-        updatedRows += 1;
+        savedRows += 1;
       }
 
-      if (updatedRows === 0) {
-        throw new Error('В файле не найдены строки с корректной колонкой №');
+      if (savedRows === 0) {
+        throw new Error('В файле не найдены строки для загрузки');
       }
+
+      const markMissingResponse = await fetch('/api/gn/bdr/mark-missing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [...importedIds] }),
+      });
+      if (!markMissingResponse.ok) throw new Error(formatHttpError(markMissingResponse.status));
 
       await loadData();
       localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()));
-      setImportMessage(`Загружено строк: ${updatedRows}.`);
+      setImportMessage(`Загружено строк: ${savedRows}.`);
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Не удалось загрузить файл Excel');
     } finally {

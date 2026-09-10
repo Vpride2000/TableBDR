@@ -5,6 +5,7 @@ export interface GnTableConfig {
   idColumn: string;
   editableColumns: string[];
   numericColumns?: string[];
+  supportsExcelImportDeletion?: boolean;
 }
 
 export interface LimitCalculationLineInput {
@@ -92,16 +93,19 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
     tableName: 'GN_invest_okdp_tko_is_prit',
     idColumn: 'GN_invest_okdp_tko_is_prit_id',
     editableColumns: ['GN_invest_okdp_tko_is_prit'],
+    supportsExcelImportDeletion: true,
   },
   'invest-ogruz-rekvizit': {
     tableName: 'GN_invest_ogruz_rekvizit',
     idColumn: 'GN_invest_ogruz_rekvizit_id',
     editableColumns: ['GN_invest_ogruz_rekvizit'],
+    supportsExcelImportDeletion: true,
   },
   'equipment-manufacturers': {
     tableName: 'GN_equipment_manufacturer',
     idColumn: 'GN_equipment_manufacturer_id',
     editableColumns: ['GN_equipment_manufacturer'],
+    supportsExcelImportDeletion: true,
   },
   'equipment-types': {
     tableName: 'GN_equipment_type',
@@ -126,6 +130,7 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
     tableName: 'GN_cellular_identifier',
     idColumn: 'GN_cellular_identifier_id',
     editableColumns: ['GN_cellular_identifier', 'GN_cellular_identifier_fio'],
+    supportsExcelImportDeletion: true,
   },
   'cellular-tariff-plans': {
     tableName: 'GN_cellular_tariff_plan',

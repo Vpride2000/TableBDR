@@ -1,7 +1,7 @@
 ﻿import 'dotenv/config';
 import express from 'express';
 import { setupRoutes } from './routes.js';
-import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable } from './db.js';
+import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable, ensureExcelImportDeletionColumns } from './db.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,6 +62,7 @@ async function start(): Promise<void> {
     await ensureSatellitesXmlTable(client);
     await ensureCellularTables(client);
     await ensureImportSubstitutionTable(client);
+    await ensureExcelImportDeletionColumns(client);
     await bootstrapCellularFromXlsx(client, PROJECT_ROOT);
   } finally {
     await client.end();

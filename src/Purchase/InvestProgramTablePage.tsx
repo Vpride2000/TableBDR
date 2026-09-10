@@ -76,6 +76,9 @@ export default function InvestProgramTablePage() {
   // Статусы загрузки и ошибки для основной таблицы и для справочников.
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [addingInvestRow, setAddingInvestRow] = useState(false)
+  const [addInvestRowError, setAddInvestRowError] = useState<string | null>(null)
+  const [investProgramRefreshKey, setInvestProgramRefreshKey] = useState(0)
   const [loadingLookups, setLoadingLookups] = useState(true)
   const [lookupError, setLookupError] = useState<string | null>(null)
   // Индексы для всплывающего окна деталей и редактирования строки.
@@ -135,7 +138,7 @@ export default function InvestProgramTablePage() {
     }
 
     void loadInvestProgram()
-  }, [isInvestProgramExpanded])
+  }, [isInvestProgramExpanded, investProgramRefreshKey])
 
   useEffect(() => {
     /**
@@ -325,38 +328,51 @@ export default function InvestProgramTablePage() {
   }
 
   async function addInvestRow(): Promise<void> {
-    const response = await fetch('/api/gn/invest-program', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        GN_invest_pf_npf: '',
-        GN_invest_name: 'Новая позиция',
-        GN_invest_quantity: 0,
-        GN_invest_okdp_fk: null,
-        GN_invest_supplier_fk: null,
-        GN_invest_ogruz_fk: null,
-        GN_invest_status: 'готово к заккупке',
-        GN_invest_payment: '',
-        GN_invest_in_budget: 'нет',
-        GN_invest_peo_code: '',
-        GN_invest_mtr_code: '',
-        GN_invest_pzp: '',
-        GN_invest_agent_report: '',
-        GN_invest_ap: '',
-        GN_invest_spec: '',
-        GN_invest_commissioning: '',
-        GN_invest_it_accounting: '',
-        GN_invest_sed_spec: '',
-        GN_invest_sed_agent_report: '',
-        GN_invest_state: '',
-        GN_invest_real_price_no_vat_per_unit: 0,
-        GN_invest_real_sum_no_vat_plus_agent_no_vat: 0,
-        GN_invest_sum_no_vat: 0,
-      }),
-    })
+    setAddingInvestRow(true)
+    setAddInvestRowError(null)
 
-    if (!response.ok) throw new Error(formatHttpError(response.status))
-    window.location.reload()
+    try {
+      const response = await fetch('/api/gn/invest-program', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          GN_invest_pf_npf: '',
+          GN_invest_name: 'Новая позиция',
+          GN_invest_quantity: 0,
+          GN_invest_okdp_fk: null,
+          GN_invest_supplier_fk: null,
+          GN_invest_ogruz_fk: null,
+          GN_invest_status: 'готово к заккупке',
+          GN_invest_payment: '',
+          GN_invest_in_budget: 'нет',
+          GN_invest_peo_code: '',
+          GN_invest_mtr_code: '',
+          GN_invest_pzp: '',
+          GN_invest_agent_report: '',
+          GN_invest_ap: '',
+          GN_invest_spec: '',
+          GN_invest_commissioning: '',
+          GN_invest_it_accounting: '',
+          GN_invest_sed_spec: '',
+          GN_invest_sed_agent_report: '',
+          GN_invest_state: '',
+          GN_invest_real_price_no_vat_per_unit: 0,
+          GN_invest_real_sum_no_vat_plus_agent_no_vat: 0,
+          GN_invest_sum_no_vat: 0,
+        }),
+      })
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string }
+        throw new Error(payload.error || formatHttpError(response.status))
+      }
+
+      setInvestProgramRefreshKey((value) => value + 1)
+    } catch (err) {
+      setAddInvestRowError(err instanceof Error ? err.message : 'Не удалось добавить строку')
+    } finally {
+      setAddingInvestRow(false)
+    }
   }
 
   async function deleteInvestRow(rowIndex: number): Promise<void> {
@@ -391,14 +407,20 @@ export default function InvestProgramTablePage() {
             <span aria-hidden="true">{isInvestProgramExpanded ? '▾' : '▸'}</span>
             Состояние закупок ОНМ
           </button>
-          <button type="button" className="invest-program-row-action-button" onClick={() => void addInvestRow()}>
-            ДОБАВИТЬ
-          </button>
         </h2>
         {isInvestProgramExpanded && (
           <>
+            <button
+              type="button"
+              className="invest-program-row-action-button"
+              onClick={() => void addInvestRow()}
+              disabled={addingInvestRow}
+            >
+              {addingInvestRow ? 'ДОБАВЛЕНИЕ...' : 'ДОБАВИТЬ'}
+            </button>
             {loading && <p className="hint">Загрузка данных...</p>}
             {error && <p className="hint hint--error">Ошибка: {error}</p>}
+            {addInvestRowError && <p className="hint hint--error">Ошибка добавления: {addInvestRowError}</p>}
             {loadingLookups && <p className="hint">Загрузка справочников...</p>}
             {lookupError && <p className="hint hint--error">Ошибка: {lookupError}</p>}
 

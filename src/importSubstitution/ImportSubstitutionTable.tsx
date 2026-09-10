@@ -14,11 +14,12 @@ interface SortState {
 const IMPORT_SUBSTITUTION_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> = {
   'Подразделение': { endpoint: '/api/gn/departments', labelKey: 'GN_department' },
   'Код ТКО': { endpoint: '/api/gn/invest-okdp-tko-is-prit', labelKey: 'GN_invest_okdp_tko_is_prit' },
+  'Тип': { endpoint: '/api/gn/equipment-types', labelKey: 'GN_equipment_type' },
   'Вендор ТКО': { endpoint: '/api/gn/equipment-manufacturers', labelKey: 'GN_equipment_manufacturer' },
 };
 
 const IMPORT_SUBSTITUTION_COLUMNS = [
-  'Подразделение', 'Код ТКО', 'Наименование ТКО', 'Вендор ТКО',
+  'Подразделение', 'Код ТКО', 'Тип', 'Наименование ТКО', 'Вендор ТКО',
   'Классификация ТКО', 'ЕРРП', 'ЕРМТР', 'Регистрационный номер ТКО', 'Количество',
   'Замещенное импортное ТКО', 'Кол-во выводенного импортного ТКО', 'Статья затрат ТКО',
   'Платеж ТР без НДС', 'Год', 'Примечание',
@@ -29,6 +30,13 @@ const SELECT_VALUE_OPTIONS: Record<string, string[]> = {
   'ЕРМТР': ['ДА', 'НЕТ'],
   'Статья затрат ТКО': ['ОНМ', 'ПЭН'],
 };
+const SERVICE_COLUMNS = new Set([
+  'Код ТКО',
+  'ЕРРП',
+  'ЕРМТР',
+  'Регистрационный номер ТКО',
+  'Замещенное импортное ТКО',
+]);
 const NUMERIC_COLUMNS = new Set(['Количество', 'Кол-во выводенного импортного ТКО', 'Платеж ТР без НДС', 'Год']);
 const DEFAULT_NEW_ROW: Row = { 'ЕРРП': 'НЕТ', 'ЕРМТР': 'НЕТ', 'Статья затрат ТКО': 'ПЭН' };
 
@@ -41,16 +49,6 @@ function parseComparable(value: unknown): number | string {
   }
   if (value == null) return '';
   return String(value).toLowerCase();
-}
-
-function parseNumericValue(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    const normalized = value.replace(/\s+/g, '').replace(',', '.');
-    const parsed = Number(normalized);
-    return Number.isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
 }
 
 export default function ImportSubstitutionTable(): React.ReactElement {
@@ -73,9 +71,34 @@ export default function ImportSubstitutionTable(): React.ReactElement {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [hideServiceColumns, setHideServiceColumns] = useState(true);
 
   function setFilter(column: string, value: string): void {
     setFilters((prev) => ({ ...prev, [column]: value }));
+  }
+
+  function startColumnResize(event: React.PointerEvent<HTMLSpanElement>, column: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const header = event.currentTarget.closest('th');
+    if (!header) return;
+
+    const startX = event.clientX;
+    const startWidth = header.getBoundingClientRect().width;
+    const resizeColumn = (moveEvent: PointerEvent): void => {
+      setColumnWidths((previous) => ({
+        ...previous,
+        [column]: Math.max(110, startWidth + moveEvent.clientX - startX),
+      }));
+    };
+    const stopResizing = (): void => {
+      window.removeEventListener('pointermove', resizeColumn);
+      window.removeEventListener('pointerup', stopResizing);
+    };
+
+    window.addEventListener('pointermove', resizeColumn);
+    window.addEventListener('pointerup', stopResizing);
   }
 
   function loadData(): Promise<void> {
@@ -115,6 +138,10 @@ export default function ImportSubstitutionTable(): React.ReactElement {
   }, []);
 
   const columns = useMemo(() => [...IMPORT_SUBSTITUTION_COLUMNS], []);
+  const visibleColumns = useMemo(
+    () => columns.filter((column) => !hideServiceColumns || !SERVICE_COLUMNS.has(column)),
+    [columns, hideServiceColumns]
+  );
 
   const sortedData = useMemo(() => {
     if (!sort) return data;
@@ -216,16 +243,22 @@ export default function ImportSubstitutionTable(): React.ReactElement {
 
       const rows = XLSX.utils.sheet_to_json<Row>(workbook.Sheets[sheetName], { defval: '' });
       let savedRows = 0;
+      const existingIds = new Set(data.map((row) => Number(row.GN_import_substitution_id)));
+      const updatedIds = new Set<number>();
+      const importedIds = new Set<number>();
       for (const row of rows) {
         const rowId = Number(row['№']);
+        if (Number.isInteger(rowId) && rowId > 0) importedIds.add(rowId);
         const payload = Object.fromEntries(columns.map((column) => [column, row[column] ?? '']));
         if (!String(payload['Подразделение']).trim()) continue;
+        const shouldUpdate = Number.isInteger(rowId) && rowId > 0 && existingIds.has(rowId) && !updatedIds.has(rowId);
 
-        const response = await fetch(Number.isInteger(rowId) && rowId > 0 ? `/api/import-substitution/${rowId}` : '/api/import-substitution', {
-          method: Number.isInteger(rowId) && rowId > 0 ? 'PUT' : 'POST',
+        const response = await fetch(shouldUpdate ? `/api/import-substitution/${rowId}` : '/api/import-substitution', {
+          method: shouldUpdate ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
+        if (shouldUpdate) updatedIds.add(rowId);
         if (!response.ok) {
           const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
           throw new Error(`Строка ${savedRows + 2}: ${errorPayload.error || formatHttpError(response.status)}`);
@@ -233,6 +266,13 @@ export default function ImportSubstitutionTable(): React.ReactElement {
         savedRows += 1;
       }
       if (savedRows === 0) throw new Error('В файле нет строк для загрузки');
+
+      const markMissingResponse = await fetch('/api/import-substitution/mark-missing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [...importedIds] }),
+      });
+      if (!markMissingResponse.ok) throw new Error(formatHttpError(markMissingResponse.status));
 
       await loadData();
       setImportMessage(`Загружено строк: ${savedRows}.`);
@@ -362,6 +402,15 @@ export default function ImportSubstitutionTable(): React.ReactElement {
       {importMessage && <p className="hint">{importMessage}</p>}
       {importError && <p className="hint hint--error">Ошибка загрузки из Excel: {importError}</p>}
 
+      <label className="form-checkbox">
+        <input
+          type="checkbox"
+          checked={hideServiceColumns}
+          onChange={(event) => setHideServiceColumns(event.target.checked)}
+        />
+        Скрыть служебные поля
+      </label>
+
       {isAddingNew && (
         <div className="new-row-form">
           <div className="new-row-form-fields">
@@ -420,10 +469,16 @@ export default function ImportSubstitutionTable(): React.ReactElement {
 
       <div className="guide-table-wrap invest-program-table-wrap--narrow">
         <table className="guide-table table-compact import-substitution-table">
+          <colgroup>
+            <col style={{ width: '64px' }} />
+            {visibleColumns.map((column) => <col key={column} style={{ width: `${columnWidths[column] ?? 180}px` }} />)}
+            <col style={{ width: '140px' }} />
+          </colgroup>
           <thead>
           <tr>
-            {columns.map((column) => (
-              <th key={column}>
+            <th className="import-substitution-row-number-header">№</th>
+            {visibleColumns.map((column) => (
+              <th key={column} className="import-substitution-resizable-header">
                 <div className="table-header-content">
                   <button
                     type="button"
@@ -445,19 +500,27 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                   value={filters[column] ?? ''}
                   onChange={(e) => setFilter(column, e.target.value)}
                 />
+                <span
+                  className="import-substitution-column-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={`Изменить ширину столбца ${column}`}
+                  onPointerDown={(event) => startColumnResize(event, column)}
+                />
               </th>
             ))}
             <th>Действия</th>
           </tr>
           </thead>
           <tbody>
-          {filteredData.map((row) => {
+          {filteredData.map((row, rowIndex) => {
             const rowId = Number(row['GN_import_substitution_id']);
             const isEditing = editingRowId === rowId;
 
             return (
               <tr key={rowId} className={isEditing ? 'editing' : ''}>
-                {columns.map((column) => (
+                <td className="import-substitution-row-number-cell">{rowIndex + 1}</td>
+                {visibleColumns.map((column) => (
                   <td key={column}>
                     {isEditing ? (
                       IMPORT_SUBSTITUTION_SELECT_CONFIG[column] || SELECT_VALUE_OPTIONS[column] ? (
@@ -466,7 +529,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                           onChange={(e) => updateDraft(column, e.target.value)}
                           className="invest-program-inline-input"
                         >
-                          <option value="">Выберите подразделение</option>
+                          <option value="">Выберите значение</option>
                           {(IMPORT_SUBSTITUTION_SELECT_CONFIG[column]
                             ? getSelectOptionsForColumn(column).map((option) => option.value)
                             : SELECT_VALUE_OPTIONS[column]

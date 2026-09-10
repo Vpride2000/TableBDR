@@ -450,6 +450,7 @@ export async function ensureImportSubstitutionTable(client: Client): Promise<voi
     `ALTER TABLE "GN_import_substitution"
        ADD COLUMN IF NOT EXISTS "GN_import_substitution_okdp_fk" INTEGER REFERENCES "GN_invest_okdp_tko_is_prit"("GN_invest_okdp_tko_is_prit_id") ON DELETE SET NULL,
        ADD COLUMN IF NOT EXISTS "Наименование ТКО" TEXT,
+       ADD COLUMN IF NOT EXISTS "GN_import_substitution_equipment_type_fk" INTEGER REFERENCES "GN_equipment_type"("GN_equipment_type_id") ON DELETE SET NULL,
        ADD COLUMN IF NOT EXISTS "GN_import_substitution_vendor_fk" INTEGER REFERENCES "GN_equipment_manufacturer"("GN_equipment_manufacturer_id") ON DELETE SET NULL,
        ADD COLUMN IF NOT EXISTS "Классификация ТКО" TEXT,
        ADD COLUMN IF NOT EXISTS "ЕРРП" TEXT NOT NULL DEFAULT 'НЕТ',
@@ -463,4 +464,20 @@ export async function ensureImportSubstitutionTable(client: Client): Promise<voi
        ADD COLUMN IF NOT EXISTS "Год" INTEGER,
        ADD COLUMN IF NOT EXISTS "Примечание" TEXT`
   );
+}
+
+export async function ensureExcelImportDeletionColumns(client: Client): Promise<void> {
+  const tables = [
+    'GN_bdr',
+    'GN_import_substitution',
+    'GN_cellular_identifier',
+    'GN_invest_okdp_tko_is_prit',
+    'GN_invest_ogruz_rekvizit',
+    'GN_equipment_manufacturer',
+  ];
+
+  for (const tableName of tables) {
+    await client.query(`ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "is_deleted" BOOLEAN NOT NULL DEFAULT FALSE`);
+    await client.query(`ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMPTZ`);
+  }
 }

@@ -18,6 +18,7 @@ import CellularTariffGuidePopup from './cellular/CellularTariffGuidePopup'
 import CellularIdentifierGuidePopup from './cellular/CellularIdentifierGuidePopup'
 import CellularAccountGuidePopup from './cellular/CellularAccountGuidePopup'
 import ImportSubstitutionPage from './importSubstitution/ImportSubstitutionPage'
+import ImportSubstitutionTable from './importSubstitution/ImportSubstitutionTable'
 import { Page } from './types/forecast'
 import { pageFromHash } from './utils/forecastUtils'
 
@@ -382,6 +383,10 @@ export default function App() {
   const isCellularTariffGuidePopup = window.location.hash === '#cellular-tariff-guide-window'
   const isCellularIdentifierGuidePopup = window.location.hash === '#cellular-identifier-guide-window'
   const isCellularAccountGuidePopup = window.location.hash === '#cellular-account-guide-window'
+  const isImportSubstitutionTablePopup = window.location.hash === '#import-substitution-table-window'
+  const guidePopupMatch = window.location.hash.match(/^#guide-window-([a-z-]+)$/)
+  const guidePopupEntity = guidePopupMatch ? guidePopupMatch[1] : null
+  const isGuidePopup = guidePopupEntity != null
   const limitPopupMatch = window.location.hash.match(/^#limit-window-(\d+)$/)
   const limitPopupRowId = limitPopupMatch ? Number(limitPopupMatch[1]) : null
   const isLimitPopup = limitPopupRowId != null && !Number.isNaN(limitPopupRowId)
@@ -410,6 +415,8 @@ export default function App() {
       if (window.location.hash === '#cellular-tariff-guide-window') return
       if (window.location.hash === '#cellular-identifier-guide-window') return
       if (window.location.hash === '#cellular-account-guide-window') return
+      if (window.location.hash === '#import-substitution-table-window') return
+      if (/^#guide-window-[a-z-]+$/.test(window.location.hash)) return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
       if (/^#object-window-\d+$/.test(window.location.hash)) return
@@ -682,6 +689,22 @@ export default function App() {
     )
   }
 
+  if (isImportSubstitutionTablePopup) {
+    return (
+      <main>
+        <ImportSubstitutionTable />
+      </main>
+    )
+  }
+
+  if (isGuidePopup && guidePopupEntity) {
+    return (
+      <main>
+        <Guide onlyEntities={[guidePopupEntity]} initialExpandedEntities={[guidePopupEntity]} />
+      </main>
+    )
+  }
+
   if (isLimitPopup && limitPopupRowId != null) {
     return (
       <main>
@@ -765,7 +788,7 @@ export default function App() {
         </div>
       </nav>
 
-      {page === 'guide' && <Guide />}
+      {page === 'guide' && <Guide directoryView />}
       {page === 'start' && (
         <div className="page-start-wrapper">
      
