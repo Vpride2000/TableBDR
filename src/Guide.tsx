@@ -35,12 +35,12 @@ const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: s
   { title: 'Статьи бюджета УС', endpoint: '/api/gn/pao-budget-items', entity: 'pao-budget-items', idColumn: 'PAO_b_id' },
   { title: 'Контрагенты', endpoint: '/api/gn/contractors', entity: 'contractors', idColumn: 'GN_c_id' },
   { title: 'Договоры', endpoint: '/api/gn/dogovors', entity: 'dogovors', idColumn: 'GN_dgv_id' },
-  { title: 'Объекты', endpoint: '/api/gn/objects', entity: 'objects', idColumn: 'GN_do_id' },
+  { title: 'Объекты', endpoint: '/api/gn/objects', entity: 'objects', idColumn: 'GN_do_id', columns: ['GN_departament_object', 'GN_department_FKs', 'УСЛУГИ СВЯЗИ', 'УЧЕТ ОБОРУДОВАНИЯ'] },
   { title: 'ОКДП ТКО для ИС ПРИТ', endpoint: '/api/gn/invest-okdp-tko-is-prit', entity: 'invest-okdp-tko-is-prit', idColumn: 'GN_invest_okdp_tko_is_prit_id' },
-  { title: 'Огрузочный реквизит', endpoint: '/api/gn/invest-ogruz-rekvizit', entity: 'invest-ogruz-rekvizit', idColumn: 'GN_invest_ogruz_rekvizit_id' },
-  { title: 'Производители оборудования', endpoint: '/api/gn/equipment-manufacturers', entity: 'equipment-manufacturers', idColumn: 'GN_equipment_manufacturer_id', columns: ['GN_equipment_manufacturer'] },
+  { title: 'Огрузочный реквизит', endpoint: '/api/gn/invest-ogruz-rekvizit', entity: 'invest-ogruz-rekvizit', idColumn: 'GN_invest_ogruz_rekvizit_id', columns: ['GN_invest_ogruz_rekvizit', 'GN_department_FK', 'GN_departament_object_FK', 'Почтовый адрес'] },
+  { title: 'Производители оборудования', endpoint: '/api/gn/equipment-manufacturers', entity: 'equipment-manufacturers', idColumn: 'GN_equipment_manufacturer_id', columns: ['GN_equipment_manufacturer_id', 'GN_equipment_manufacturer', 'Полное название', 'СТРАНА', 'Доп. информация'] },
   { title: 'Типы оборудования', endpoint: '/api/gn/equipment-types', entity: 'equipment-types', idColumn: 'GN_equipment_type_id', columns: ['GN_equipment_type'] },
-  { title: 'Модели оборудования', endpoint: '/api/gn/equipment-models', entity: 'equipment-models', idColumn: 'GN_equipment_model_id', columns: ['GN_equipment_model', 'GN_equipment_manufacturer_FK', 'GN_equipment_type_FK'] },
+  { title: 'Модели оборудования', endpoint: '/api/gn/equipment-models', entity: 'equipment-models', idColumn: 'GN_equipment_model_id', columns: ['GN_equipment_model', 'GN_equipment_manufacturer_FK', 'GN_equipment_type_FK', 'GN_equipment_department_FK', 'GN_equipment_budget_item_FK', 'GN_equipment_object_FK'] },
   { title: 'Номера ГТ для спутника', endpoint: '/api/gn/satellite-gt-numbers', entity: 'satellite-gt-numbers', idColumn: 'GN_satellite_gt_numbers_id', columns: ['GN_satellite_gt_number'] },
   {
     title: 'Справочник: Идентификатор',
@@ -74,10 +74,22 @@ const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: stri
     },
   },
   objects: {
+    GN_department_FKs: {
+      sourceEntity: 'departments',
+      valueKey: 'GN_Dep_id',
+      labelKey: 'GN_department',
+    },
+  },
+  'invest-ogruz-rekvizit': {
     GN_department_FK: {
       sourceEntity: 'departments',
       valueKey: 'GN_Dep_id',
       labelKey: 'GN_department',
+    },
+    GN_departament_object_FK: {
+      sourceEntity: 'objects',
+      valueKey: 'GN_do_id',
+      labelKey: 'GN_departament_object',
     },
   },
   'equipment-models': {
@@ -91,6 +103,21 @@ const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: stri
       valueKey: 'GN_equipment_type_id',
       labelKey: 'GN_equipment_type',
     },
+    GN_equipment_department_FK: {
+      sourceEntity: 'departments',
+      valueKey: 'GN_Dep_id',
+      labelKey: 'GN_department',
+    },
+    GN_equipment_budget_item_FK: {
+      sourceEntity: 'budget-items',
+      valueKey: 'GN_b_id',
+      labelKey: 'GN_budget_network_item',
+    },
+    GN_equipment_object_FK: {
+      sourceEntity: 'objects',
+      valueKey: 'GN_do_id',
+      labelKey: 'GN_departament_object',
+    },
   },
   'cellular-accounts': {
     GN_department_FK: {
@@ -102,6 +129,69 @@ const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: stri
 };
 
 const GUIDE_COLUMN_LABELS: Record<string, Record<string, string>> = {
+  departments: {
+    GN_Dep_id: '№',
+    GN_department: 'Подразделение',
+  },
+  'budget-items': {
+    GN_b_id: '№',
+    GN_budget_network_item: 'Статья бюджета',
+  },
+  'pao-budget-items': {
+    PAO_b_id: '№',
+    PAO__budget_network_item: 'Статья бюджета УС',
+  },
+  contractors: {
+    GN_c_id: '№',
+    GN_contarctor: 'Контрагент',
+  },
+  dogovors: {
+    GN_dgv_id: '№',
+    GN_dogovor: 'Договор',
+    GN_contarctor_FK: 'Контрагент',
+  },
+  objects: {
+    GN_do_id: '№',
+    GN_departament_object: 'Объект',
+    GN_department_FKs: 'Подразделение',
+    'УСЛУГИ СВЯЗИ': 'УСЛУГИ СВЯЗИ',
+    'УЧЕТ ОБОРУДОВАНИЯ': 'УЧЕТ ОБОРУДОВАНИЯ',
+  },
+  'invest-okdp-tko-is-prit': {
+    GN_invest_okdp_tko_is_prit_id: '№',
+    GN_invest_okdp_tko_is_prit: 'ОКДП ТКО',
+  },
+  'invest-ogruz-rekvizit': {
+    GN_invest_ogruz_rekvizit_id: '№',
+    GN_invest_ogruz_rekvizit: 'Огрузочный реквизит',
+    GN_department_FK: 'Подразделение',
+    GN_departament_object_FK: 'Объект',
+    'Почтовый адрес': 'Почтовый адрес',
+  },
+  'equipment-manufacturers': {
+    GN_equipment_manufacturer_id: '№',
+    GN_equipment_manufacturer: 'Производитель',
+    'Полное название': 'Полное название',
+    'СТРАНА': 'СТРАНА',
+    'Доп. информация': 'доп. информация',
+  },
+  'equipment-types': {
+    GN_equipment_type_id: '№',
+    GN_equipment_type: 'Тип оборудования',
+  },
+  'equipment-models': {
+    GN_equipment_model_id: '№',
+    GN_equipment_model: 'Модель оборудования',
+    GN_equipment_manufacturer_FK: 'Производитель',
+    GN_equipment_type_FK: 'Тип оборудования',
+    GN_equipment_department_FK: 'Подразделение',
+    GN_equipment_budget_item_FK: 'Статья бюджета',
+    GN_equipment_object_FK: 'Объект',
+  },
+  'satellite-gt-numbers': {
+    GN_satellite_gt_numbers_id: '№',
+    GN_satellite_gt_number: 'Номер ГТ',
+  },
   'cellular-accounts': {
     GN_cellular_account_id: '№',
     GN_cellular_account: 'Лицевой',
@@ -113,19 +203,39 @@ const GUIDE_COLUMN_LABELS: Record<string, Record<string, string>> = {
   },
   'cellular-identifiers': {
     GN_cellular_identifier_id: '№',
-    GN_cellular_identifier: 'номер',
+    GN_cellular_identifier: 'Номер',
     GN_cellular_identifier_fio: 'ФИО',
   },
   'cellular-tariff-plans': {
     GN_cellular_tariff_plan_id: '№',
-    GN_cellular_tariff_plan: 'тариф',
-    GN_cellular_tariff_plan_details: 'состав тарифа',
-    GN_cellular_tariff_plan_cost: 'стоимость',
+    GN_cellular_tariff_plan: 'Тариф',
+    GN_cellular_tariff_plan_details: 'Состав тарифа',
+    GN_cellular_tariff_plan_cost: 'Стоимость',
   },
 };
 
+const COMMON_COLUMN_LABELS: Record<string, string> = {
+  is_deleted: 'Удалено',
+  deleted_at: 'Дата удаления',
+  created_at: 'Дата создания',
+  updated_at: 'Дата изменения',
+};
+
+function getGuideColumnLabel(entity: string, column: string): string {
+  return GUIDE_COLUMN_LABELS[entity]?.[column] ?? COMMON_COLUMN_LABELS[column] ?? column;
+}
+
+function collectObjectNames(rows: Row[], column: string): Set<string> {
+  return new Set(rows.flatMap((row) => {
+    const rawValue = row[column];
+    const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+    return values.map((value) => String(value ?? '').trim()).filter(Boolean);
+  }));
+}
+
 // Столбцы, которые вычисляются на сервере и не редактируются вручную.
 const GUIDE_READONLY_COLUMNS: Record<string, string[]> = {
+  objects: ['УСЛУГИ СВЯЗИ', 'УЧЕТ ОБОРУДОВАНИЯ'],
   'cellular-accounts': ['GN_cellular_account_numbers_count', 'GN_cellular_account_active_numbers_count', 'GN_cellular_account_total_cost'],
 };
 
@@ -146,11 +256,15 @@ function DataTable({
   onSectionRowsUpdate,
   fkOptions,
   rowFilter,
+  objectsUsedInCommunication,
+  objectsUsedInEquipment,
 }: {
   section: TableSection
   onSectionRowsUpdate: (endpoint: string, rows: Row[]) => void
   fkOptions: Record<string, SelectOption[]>
   rowFilter?: (row: Row) => boolean
+  objectsUsedInCommunication: Set<string>
+  objectsUsedInEquipment: Set<string>
 }) {
   const [editingRowId, setEditingRowId] = useState<number | null>(null);
   const [draft, setDraft] = useState<Row>({});
@@ -163,26 +277,36 @@ function DataTable({
   const [importError, setImportError] = useState<string | null>(null);
   const [accountDepartmentFilter, setAccountDepartmentFilter] = useState('');
   const [accountSort, setAccountSort] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
+  const [guideSort, setGuideSort] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
+  const [columnSearch, setColumnSearch] = useState<Record<string, string>>({});
+  const [actionMenuRowId, setActionMenuRowId] = useState<number | null>(null);
   const readonlyColumns = GUIDE_READONLY_COLUMNS[section.entity] ?? [];
 
-  const columns = section.data.length > 0
+  const columns = section.columns ?? (section.data.length > 0
     ? Object.keys(section.data[0])
-    : section.columns ?? [section.idColumn];
+    : [section.idColumn]);
   const isCellularAccounts = section.entity === 'cellular-accounts';
   const supportsExcelImportExport = EXCEL_IMPORT_EXPORT_ENTITIES.has(section.entity);
   const accountDepartmentOptions = fkOptions.GN_department_FK ?? [];
+  const isMultiSelectColumn = (column: string): boolean => section.entity === 'objects' && column === 'GN_department_FKs';
+  const activeSort = isCellularAccounts ? accountSort : guideSort;
   const displayRows = useMemo(() => {
     const filteredRows = rowFilter ? section.data.filter(rowFilter) : section.data;
     const departmentFilteredRows = !isCellularAccounts || !accountDepartmentFilter
       ? filteredRows
       : filteredRows.filter((row) => String(row.GN_department_FK ?? '') === accountDepartmentFilter);
+    const searchedRows = departmentFilteredRows.filter((row) => columns.every((column) => {
+      const search = (columnSearch[column] ?? '').trim().toLocaleLowerCase('ru');
+      if (!search) return true;
+      return renderCellValue(column, row).toLocaleLowerCase('ru').includes(search);
+    }));
 
-    if (!isCellularAccounts || !accountSort) return departmentFilteredRows;
+    if (!activeSort) return searchedRows;
 
-    const order = accountSort.direction === 'asc' ? 1 : -1;
-    return [...departmentFilteredRows].sort((left, right) => {
-      const leftValue = renderCellValue(accountSort.column, left);
-      const rightValue = renderCellValue(accountSort.column, right);
+    const order = activeSort.direction === 'asc' ? 1 : -1;
+    return [...searchedRows].sort((left, right) => {
+      const leftValue = renderCellValue(activeSort.column, left);
+      const rightValue = renderCellValue(activeSort.column, right);
       const leftNumber = Number(leftValue);
       const rightNumber = Number(rightValue);
       const comparison = Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
@@ -191,10 +315,18 @@ function DataTable({
 
       return comparison * order;
     });
-  }, [accountDepartmentFilter, accountSort, isCellularAccounts, rowFilter, section.data, fkOptions]);
+  }, [accountDepartmentFilter, activeSort, columnSearch, columns, isCellularAccounts, rowFilter, section.data, fkOptions]);
 
   function toggleAccountSort(column: string): void {
     setAccountSort((previous) => (
+      previous?.column === column
+        ? { column, direction: previous.direction === 'asc' ? 'desc' : 'asc' }
+        : { column, direction: 'asc' }
+    ));
+  }
+
+  function toggleGuideSort(column: string): void {
+    setGuideSort((previous) => (
       previous?.column === column
         ? { column, direction: previous.direction === 'asc' ? 'desc' : 'asc' }
         : { column, direction: 'asc' }
@@ -205,6 +337,7 @@ function DataTable({
   if (section.error)   return <p className="hint hint--error">Ошибка: {section.error}</p>;
 
   function startEdit(row: Row): void {
+    setActionMenuRowId(null);
     setEditingRowId(Number(row[section.idColumn]));
     setDraft({ ...row });
     setSaveError(null);
@@ -216,6 +349,10 @@ function DataTable({
     setSaveError(null);
   }
 
+  function toggleActionMenu(rowId: number): void {
+    setActionMenuRowId((previous) => previous === rowId ? null : rowId);
+  }
+
   function updateDraft(column: string, value: string): void {
     setDraft((prev) => ({ ...prev, [column]: value }));
   }
@@ -225,7 +362,7 @@ function DataTable({
     setCreateError(null);
     setNewRow(columns.reduce((acc, column) => {
       if (column === section.idColumn || readonlyColumns.includes(column)) return acc;
-      return { ...acc, [column]: '' };
+      return { ...acc, [column]: isMultiSelectColumn(column) ? [] : '' };
     }, {} as Row));
   }
 
@@ -237,6 +374,11 @@ function DataTable({
 
   function updateNewRow(column: string, value: string): void {
     setNewRow((prev) => ({ ...prev, [column]: value }));
+  }
+
+  function updateMultiSelect(column: string, values: string[], target: 'draft' | 'new'): void {
+    if (target === 'draft') setDraft((prev) => ({ ...prev, [column]: values }));
+    else setNewRow((prev) => ({ ...prev, [column]: values }));
   }
 
   async function saveNewRow(): Promise<void> {
@@ -266,6 +408,10 @@ function DataTable({
   }
 
   async function deleteRow(rowId: number): Promise<void> {
+    const confirmed = window.confirm('Удалить выбранную запись?');
+    if (!confirmed) return;
+
+    setActionMenuRowId(null);
     setSaving(true);
     setSaveError(null);
 
@@ -324,12 +470,20 @@ function DataTable({
 
   function resolveFkLabel(column: string, value: unknown): string {
     if (!fkOptions[column] || value == null) return String(value ?? '');
+    if (Array.isArray(value)) {
+      return value.map((item) => resolveFkLabel(column, item)).filter(Boolean).join(', ');
+    }
     const stringValue = String(value);
     const option = fkOptions[column].find((item) => item.value === stringValue);
     return option ? option.label : stringValue;
   }
 
   function renderCellValue(col: string, row: Row): string {
+    if (section.entity === 'objects') {
+      const objectName = String(row.GN_departament_object ?? '').trim();
+      if (col === 'УСЛУГИ СВЯЗИ') return objectsUsedInCommunication.has(objectName) ? 'ДА' : 'НЕТ';
+      if (col === 'УЧЕТ ОБОРУДОВАНИЯ') return objectsUsedInEquipment.has(objectName) ? 'ДА' : 'НЕТ';
+    }
     if (section.entity === 'cellular-accounts' && col === 'GN_cellular_account_active_numbers_count') {
       const active = Number(row.GN_cellular_account_active_numbers_count ?? 0);
       const total = Number(row.GN_cellular_account_numbers_count ?? 0);
@@ -355,7 +509,7 @@ function DataTable({
 
   function exportAccountsToExcel(): void {
     const labels = GUIDE_COLUMN_LABELS[section.entity] ?? {};
-    const header = columns.map((col) => labels[col] ?? col);
+    const header = columns.map((col) => labels[col] ?? getGuideColumnLabel(section.entity, col));
     const rows = displayRows.map((row) => columns.map((col) => renderCellValue(col, row)));
 
     const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
@@ -523,7 +677,6 @@ function DataTable({
         )}
         {section.entity === 'cellular-identifiers' && (
           <>
-            <button type="button" className="page-action-btn page-action-btn--secondary" onClick={exportIdentifiersToExcel}>Экспорт в Excel</button>
             <label className="page-action-btn page-action-btn--secondary" style={{ cursor: importing ? 'default' : 'pointer' }}>
               {importing ? 'Загрузка...' : 'Загрузить из Excel'}
               <input
@@ -569,11 +722,14 @@ function DataTable({
           <div className="guide-new-row-fields">
             {columns.filter((col) => col !== section.idColumn && !readonlyColumns.includes(col)).map((col) => (
               <label key={col}>
-                <div>{col}</div>
+                <div>{getGuideColumnLabel(section.entity, col)}</div>
                 {fkOptions[col] ? (
                   <select
-                    value={String(newRow[col] ?? '')}
-                    onChange={(event) => updateNewRow(col, event.target.value)}
+                    multiple={isMultiSelectColumn(col)}
+                    value={isMultiSelectColumn(col) ? (Array.isArray(newRow[col]) ? newRow[col].map(String) : []) : String(newRow[col] ?? '')}
+                    onChange={(event) => isMultiSelectColumn(col)
+                      ? updateMultiSelect(col, [...event.target.selectedOptions].map((option) => option.value), 'new')
+                      : updateNewRow(col, event.target.value)}
                   >
                     <option value="">Выберите значение</option>
                     {fkOptions[col].map((option) => (
@@ -601,23 +757,38 @@ function DataTable({
       <table className="guide-table table-compact">
         <thead>
           <tr>
-            {columns.map((col, index) => {
-              const isSortable = isCellularAccounts && index > 0 && index < columns.length - 1;
-              const sortMarker = accountSort?.column === col ? (accountSort.direction === 'asc' ? ' ▲' : ' ▼') : '';
+            {columns.map((col) => {
+              const sortMarker = activeSort?.column === col ? (activeSort.direction === 'asc' ? ' ▲' : ' ▼') : '';
 
               return (
                 <th key={col}>
-                  {isSortable ? (
-                    <button type="button" className="guide-sort-button" onClick={() => toggleAccountSort(col)}>
-                      {GUIDE_COLUMN_LABELS[section.entity]?.[col] ?? col}{sortMarker}
-                    </button>
-                  ) : (
-                    GUIDE_COLUMN_LABELS[section.entity]?.[col] ?? col
-                  )}
+                  <button
+                    type="button"
+                    className="guide-sort-button"
+                    onClick={() => isCellularAccounts ? toggleAccountSort(col) : toggleGuideSort(col)}
+                  >
+                    {getGuideColumnLabel(section.entity, col)}{sortMarker}
+                  </button>
                 </th>
               );
             })}
             <th>Действия</th>
+          </tr>
+          <tr className="guide-search-row">
+            {columns.map((column) => (
+              <th key={column}>
+                {column === section.idColumn ? null : (
+                  <input
+                    type="search"
+                    placeholder="Поиск..."
+                    aria-label={`Поиск по столбцу ${getGuideColumnLabel(section.entity, column)}`}
+                    value={columnSearch[column] ?? ''}
+                    onChange={(event) => setColumnSearch((previous) => ({ ...previous, [column]: event.target.value }))}
+                  />
+                )}
+              </th>
+            ))}
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -626,13 +797,19 @@ function DataTable({
             const isEditing = editingRowId === rowId;
 
             return (
-              <tr key={i} className={isEditing ? 'editing' : ''}>
+              <tr
+                key={i}
+                className={isEditing ? 'editing' : ''}
+              >
                 {columns.map((col) => (
                   <td key={col}>
                     {isEditing && col !== section.idColumn && !readonlyColumns.includes(col) && fkOptions[col] ? (
                       <select
-                        value={String(draft[col] ?? '')}
-                        onChange={(event) => updateDraft(col, event.target.value)}
+                        multiple={isMultiSelectColumn(col)}
+                        value={isMultiSelectColumn(col) ? (Array.isArray(draft[col]) ? draft[col].map(String) : []) : String(draft[col] ?? '')}
+                        onChange={(event) => isMultiSelectColumn(col)
+                          ? updateMultiSelect(col, [...event.target.selectedOptions].map((option) => option.value), 'draft')
+                          : updateDraft(col, event.target.value)}
                       >
                         <option value="">Выберите значение</option>
                         {fkOptions[col].map((option) => (
@@ -653,10 +830,26 @@ function DataTable({
                 ))}
                 <td>
                   {!isEditing ? (
-                    <>
-                      <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => startEdit(row)}>испр</button>
-                      <button type="button" className="page-action-btn page-action-btn--danger" onClick={() => void deleteRow(rowId)} disabled={saving}>удал</button>
-                    </>
+                    <div className="guide-row-actions">
+                      <button
+                        type="button"
+                        className="page-action-btn page-action-btn--secondary"
+                        onClick={() => toggleActionMenu(rowId)}
+                        aria-expanded={actionMenuRowId === rowId}
+                      >
+                        ИЗМ
+                      </button>
+                      {actionMenuRowId === rowId && (
+                        <div className="guide-row-actions-menu">
+                          <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => startEdit(row)}>
+                            ИСПР
+                          </button>
+                          <button type="button" className="page-action-btn page-action-btn--danger" onClick={() => void deleteRow(rowId)} disabled={saving}>
+                            УДАЛ
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <>
                       <button type="button" className="page-action-btn page-action-btn--success" onClick={() => void saveEdit()} disabled={saving}>сохр</button>
@@ -685,7 +878,13 @@ export default function Guide({
   const visibleDefs = onlyEntities && onlyEntities.length > 0
     ? TABLE_DEFS.filter((def) => onlyEntities.includes(def.entity))
     : TABLE_DEFS;
-  const defs = [...visibleDefs, ...TABLE_DEFS.filter((def) => lookupEntities.includes(def.entity) && !visibleDefs.some((item) => item.entity === def.entity))];
+  const requiredLookupEntities = visibleDefs.flatMap((def) => Object.values(GUIDE_FK_SELECT_CONFIG[def.entity] ?? {})
+    .map((config) => config.sourceEntity));
+  const lookupEntityNames = new Set([...lookupEntities, ...requiredLookupEntities]);
+  const defs = [
+    ...visibleDefs,
+    ...TABLE_DEFS.filter((def) => lookupEntityNames.has(def.entity) && !visibleDefs.some((item) => item.entity === def.entity)),
+  ];
 
   const [sections, setSections] = useState<TableSection[]>(
     defs.map((def) => ({
@@ -701,13 +900,42 @@ export default function Guide({
   const [selectedCellularAccount, setSelectedCellularAccount] = useState('');
   const [allowedTariffPlanIds, setAllowedTariffPlanIds] = useState<Set<string> | null>(null);
   const [hideUnknownIdentifiers, setHideUnknownIdentifiers] = useState(true);
+  const [objectsUsedInCommunication, setObjectsUsedInCommunication] = useState<Set<string>>(new Set());
+  const [objectsUsedInEquipment, setObjectsUsedInEquipment] = useState<Set<string>>(new Set());
+  const shouldLoadObjectUsage = visibleDefs.some((def) => def.entity === 'objects');
+
+  useEffect(() => {
+    if (!shouldLoadObjectUsage) return;
+
+    void Promise.all([
+      fetch('/api/gn/bdr', { cache: 'no-store' }),
+      fetch('/api/import-substitution', { cache: 'no-store' }),
+    ])
+      .then(async ([bdrResponse, equipmentResponse]) => {
+        if (!bdrResponse.ok || !equipmentResponse.ok) {
+          throw new Error('Не удалось загрузить данные использования объектов');
+        }
+        const [bdrRows, equipmentRows] = await Promise.all([
+          bdrResponse.json() as Promise<Row[]>,
+          equipmentResponse.json() as Promise<Row[]>,
+        ]);
+        setObjectsUsedInCommunication(collectObjectNames(bdrRows, 'Объект'));
+        setObjectsUsedInEquipment(collectObjectNames(equipmentRows, 'ОБЪЕКТ'));
+      })
+      .catch(() => {
+        setObjectsUsedInCommunication(new Set());
+        setObjectsUsedInEquipment(new Set());
+      });
+  }, [shouldLoadObjectUsage]);
 
   // Загружаем секции, которые должны быть раскрыты сразу при инициализации.
   useEffect(() => {
+    const entitiesToLoad = new Set([
+      ...initialExpandedEntities,
+      ...requiredLookupEntities,
+    ]);
     defs.forEach((def) => {
-      if (initialExpandedEntities.includes(def.entity)) {
-        loadSectionData(def.endpoint);
-      }
+      if (entitiesToLoad.has(def.entity)) loadSectionData(def.endpoint);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -914,6 +1142,8 @@ export default function Guide({
                   section={section}
                   onSectionRowsUpdate={onSectionRowsUpdate}
                   fkOptions={buildFkOptions(section)}
+                  objectsUsedInCommunication={objectsUsedInCommunication}
+                  objectsUsedInEquipment={objectsUsedInEquipment}
                   rowFilter={
                     enableCellularAccountFilter && section.entity === 'cellular-tariff-plans' && allowedTariffPlanIds
                       ? (row: Row) => allowedTariffPlanIds.has(String(row.GN_cellular_tariff_plan_id ?? ''))

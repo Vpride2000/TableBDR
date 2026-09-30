@@ -10,4 +10,10 @@ export declare function ensureSatelliteColumns(client: Client): Promise<void>;
 export declare function ensureCellularTables(client: Client): Promise<void>;
 export declare function bootstrapCellularFromXlsx(client: Client, projectRoot: string): Promise<void>;
 export declare function ensureImportSubstitutionTable(client: Client): Promise<void>;
+export declare function ensureOgruzReferenceColumns(client: Client): Promise<void>;
+export declare function ensureEquipmentModelReferenceColumns(client: Client): Promise<void>;
+export declare function ensureObjectDepartmentColumns(client: Client): Promise<void>;
+export declare function ensureReferenceTables(client: Client): Promise<void>;
+export declare function ensureReferenceSequences(client: Client): Promise<void>;
+export declare function ensureExcelImportDeletionColumns(client: Client): Promise<void>;
 //# sourceMappingURL=db.d.ts.map

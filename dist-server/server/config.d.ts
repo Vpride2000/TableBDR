@@ -3,6 +3,8 @@ export interface GnTableConfig {
     idColumn: string;
     editableColumns: string[];
     numericColumns?: string[];
+    arrayColumns?: string[];
+    supportsExcelImportDeletion?: boolean;
 }
 export interface LimitCalculationLineInput {
     quantity: number;

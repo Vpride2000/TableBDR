@@ -51,6 +51,14 @@ function parseComparable(value: unknown): number | string {
   return String(value).toLowerCase();
 }
 
+function formatCellValue(column: string, value: unknown): string {
+  if (column === 'Год') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? String(Math.trunc(parsed)) : '';
+  }
+  return String(value ?? '');
+}
+
 export default function ImportSubstitutionTable(): React.ReactElement {
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,7 +97,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     const resizeColumn = (moveEvent: PointerEvent): void => {
       setColumnWidths((previous) => ({
         ...previous,
-        [column]: Math.max(110, startWidth + moveEvent.clientX - startX),
+        [column]: Math.max(60, startWidth + moveEvent.clientX - startX),
       }));
     };
     const stopResizing = (): void => {
@@ -192,6 +200,25 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     setEditingRowId(null);
     setDraft({});
     setSaveError(null);
+  }
+
+  async function deleteRow(rowId: number): Promise<void> {
+    if (!window.confirm('Удалить строку?')) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const response = await fetch(`/api/import-substitution/${rowId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      setData((previous) => previous.filter((row) => Number(row['GN_import_substitution_id']) !== rowId));
+      if (editingRowId === rowId) cancelEdit();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Не удалось удалить строку');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function updateDraft(column: string, value: string): void {
@@ -412,8 +439,8 @@ export default function ImportSubstitutionTable(): React.ReactElement {
       </label>
 
       {isAddingNew && (
-        <div className="new-row-form">
-          <div className="new-row-form-fields">
+        <div className="new-row-form import-substitution-new-row-form">
+          <div className="new-row-form-fields import-substitution-new-row-form-fields">
             {columns.map((column) => (
               <div className="form-field" key={column}>
                 <label>{column}:</label>
@@ -441,7 +468,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
               </div>
             ))}
           </div>
-          <div className="new-row-form-actions">
+          <div className="new-row-form-actions import-substitution-new-row-form-actions">
             <button
               type="button"
               className="action-btn action-btn--save"
@@ -467,11 +494,11 @@ export default function ImportSubstitutionTable(): React.ReactElement {
         </div>
       )}
 
-      <div className="guide-table-wrap invest-program-table-wrap--narrow">
+      <div className="guide-table-wrap invest-program-table-wrap--narrow import-substitution-table-wrap">
         <table className="guide-table table-compact import-substitution-table">
           <colgroup>
             <col style={{ width: '64px' }} />
-            {visibleColumns.map((column) => <col key={column} style={{ width: `${columnWidths[column] ?? 180}px` }} />)}
+            {visibleColumns.map((column) => <col key={column} style={{ width: `${columnWidths[column] ?? 90}px` }} />)}
             <col style={{ width: '140px' }} />
           </colgroup>
           <thead>
@@ -545,7 +572,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                         />
                       )
                     ) : (
-                      <span>{String(row[column] ?? '')}</span>
+                      <span>{formatCellValue(column, row[column])}</span>
                     )}
                   </td>
                 ))}
@@ -568,6 +595,14 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                       >
                         Отмена
                       </button>
+                      <button
+                        type="button"
+                        className="invest-program-row-action-button invest-program-row-action-button--secondary"
+                        onClick={() => void deleteRow(rowId)}
+                        disabled={saving}
+                      >
+                        Удалить
+                      </button>
                       {saveError && <p className="error-message">{saveError}</p>}
                     </>
                   ) : (
@@ -576,7 +611,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
                       className="invest-program-row-action-button"
                       onClick={() => startEdit(row)}
                     >
-                      Редактировать
+                      ИЗМ
                     </button>
                   )}
                 </td>

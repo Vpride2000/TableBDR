@@ -31,6 +31,15 @@ export default function ImportSubstitutionPage(): React.ReactElement {
     if (popup) popup.focus();
   }
 
+  function openEquipmentAccountingWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#equipment-accounting-window`,
+      'equipment-accounting-window',
+      'popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes'
+    );
+    if (popup) popup.focus();
+  }
+
   return (
     <section className="page-section">
       <div className="page-header">
@@ -45,6 +54,13 @@ export default function ImportSubstitutionPage(): React.ReactElement {
             onClick={openTableWindow}
           >
             Открыть полную таблицу ИС ПРИТ
+          </button>
+          <button
+            type="button"
+            className="page-action-btn page-action-btn--secondary"
+            onClick={openEquipmentAccountingWindow}
+          >
+            Учет оборудования
           </button>
         </div>
         {loading && <p className="hint">Загрузка данных...</p>}

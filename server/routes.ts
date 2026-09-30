@@ -2038,12 +2038,20 @@ export function setupRoutes(app: Express): void {
     }
 
     const fields = config.editableColumns.filter((column) => req.body[column] !== undefined);
+    if (entity === 'objects' && Array.isArray(req.body.GN_department_FKs)) {
+      if (!fields.includes('GN_department_FK')) fields.push('GN_department_FK');
+    }
     if (fields.length === 0) {
       res.status(400).json({ error: 'No fields provided for creation' });
       return;
     }
 
     const values = fields.map((column) => {
+      if (entity === 'objects' && column === 'GN_department_FK' && Array.isArray(req.body.GN_department_FKs)) {
+        const firstDepartmentId = Number(req.body.GN_department_FKs[0]);
+        if (!Number.isInteger(firstDepartmentId)) throw new Error(`Invalid value for ${column}`);
+        return firstDepartmentId;
+      }
       if (column.endsWith('_FK')) {
         if (req.body[column] === null) return null;
         const numericValue = Number(req.body[column]);
@@ -2051,6 +2059,12 @@ export function setupRoutes(app: Express): void {
           throw new Error(`Invalid value for ${column}`);
         }
         return numericValue;
+      }
+      if (config.arrayColumns?.includes(column)) {
+        if (!Array.isArray(req.body[column])) throw new Error(`Invalid value for ${column}`);
+        const values = req.body[column].map(Number);
+        if (values.some((value: number) => !Number.isInteger(value))) throw new Error(`Invalid value for ${column}`);
+        return values;
       }
       if (config.numericColumns?.includes(column)) {
         if (req.body[column] === null || req.body[column] === '') return null;
@@ -2065,6 +2079,23 @@ export function setupRoutes(app: Express): void {
 
     const client = await createDbClient();
     try {
+      const sequenceConfig: Record<string, { table: string; idColumn: string }> = {
+        objects: { table: 'GN_departament_object', idColumn: 'GN_do_id' },
+        departments: { table: 'GN_department', idColumn: 'GN_Dep_id' },
+        contractors: { table: 'GN_contractor', idColumn: 'GN_c_id' },
+      };
+      const sequence = sequenceConfig[entity];
+      if (sequence) {
+        await client.query(
+          `SELECT setval(
+             pg_get_serial_sequence($1, $2),
+             COALESCE(MAX("${sequence.idColumn}"), 1),
+             COUNT(*) > 0
+           )
+           FROM "${sequence.table}"`,
+          [sequence.table, sequence.idColumn],
+        );
+      }
       const result = await client.query(
         `INSERT INTO "${config.tableName}" (${fields.map((column) => `"${column}"`).join(', ')}) VALUES (${fields.map((_, index) => `$${index + 1}`).join(', ')}) RETURNING *`,
         values,
@@ -2158,6 +2189,9 @@ export function setupRoutes(app: Express): void {
     }
 
     const updates = config.editableColumns.filter((column) => req.body[column] !== undefined);
+    if (entity === 'objects' && Array.isArray(req.body.GN_department_FKs)) {
+      if (!updates.includes('GN_department_FK')) updates.push('GN_department_FK');
+    }
     if (updates.length === 0) {
       res.status(400).json({ error: 'No editable fields provided' });
       return;
@@ -2167,12 +2201,23 @@ export function setupRoutes(app: Express): void {
       .map((column, index) => `"${column}" = $${index + 1}`)
       .join(', ');
     const values = updates.map((column) => {
+      if (entity === 'objects' && column === 'GN_department_FK' && Array.isArray(req.body.GN_department_FKs)) {
+        const firstDepartmentId = Number(req.body.GN_department_FKs[0]);
+        if (!Number.isInteger(firstDepartmentId)) throw new Error(`Invalid value for ${column}`);
+        return firstDepartmentId;
+      }
       if (column.endsWith('_FK')) {
         const numericValue = Number(req.body[column]);
         if (Number.isNaN(numericValue)) {
           throw new Error(`Invalid value for ${column}`);
         }
         return numericValue;
+      }
+      if (config.arrayColumns?.includes(column)) {
+        if (!Array.isArray(req.body[column])) throw new Error(`Invalid value for ${column}`);
+        const values = req.body[column].map(Number);
+        if (values.some((value: number) => !Number.isInteger(value))) throw new Error(`Invalid value for ${column}`);
+        return values;
       }
       if (config.numericColumns?.includes(column)) {
         if (req.body[column] === null || req.body[column] === '') return null;
@@ -2439,16 +2484,40 @@ export function setupRoutes(app: Express): void {
            i."ЕРМТР",
            i."Регистрационный номер ТКО",
            i."Количество",
+           i."Выведен из эксплуатации",
+           i."Инвентарный",
            i."Замещенное импортное ТКО",
            i."Кол-во выводенного импортного ТКО",
            i."Статья затрат ТКО",
+           i."СЧЕТ УЧЕТА",
+           i."Статус закупки",
            i."Платеж ТР без НДС",
            i."Год",
-           i."Примечание"
+           i."Примечание",
+           i."ЭКСПЛ",
+           i."ПЛАН",
+           i."ГРУППА",
+           COALESCE(
+             (
+               SELECT ARRAY_AGG(object_ref."GN_departament_object" ORDER BY object_ref."GN_departament_object")
+               FROM unnest(i."GN_import_substitution_object_fks") AS selected_object(object_id)
+               JOIN "GN_departament_object" object_ref ON object_ref."GN_do_id" = selected_object.object_id
+             ),
+             CASE WHEN obj."GN_departament_object" IS NOT NULL
+               THEN ARRAY[obj."GN_departament_object"]
+               ELSE ARRAY[]::TEXT[]
+             END
+           ) AS "ОБЪЕКТ",
+           supplier."GN_contarctor" AS "Поставщик",
+           ogruz."GN_invest_ogruz_rekvizit" AS "Огрузочный реквизит",
+           i."оплата"
          FROM "GN_import_substitution" i
          LEFT JOIN "GN_invest_okdp_tko_is_prit" okdp ON i."GN_import_substitution_okdp_fk" = okdp."GN_invest_okdp_tko_is_prit_id"
          LEFT JOIN "GN_equipment_type" etype ON i."GN_import_substitution_equipment_type_fk" = etype."GN_equipment_type_id"
          LEFT JOIN "GN_equipment_manufacturer" vendor ON i."GN_import_substitution_vendor_fk" = vendor."GN_equipment_manufacturer_id"
+         LEFT JOIN "GN_departament_object" obj ON i."GN_import_substitution_object_fk" = obj."GN_do_id"
+         LEFT JOIN "GN_contractor" supplier ON i."GN_import_substitution_supplier_fk" = supplier."GN_c_id"
+         LEFT JOIN "GN_invest_ogruz_rekvizit" ogruz ON i."GN_import_substitution_ogruz_fk" = ogruz."GN_invest_ogruz_rekvizit_id"
          WHERE i."is_deleted" = FALSE
          ORDER BY "Подразделение" ASC`
       );
@@ -2474,12 +2543,23 @@ export function setupRoutes(app: Express): void {
       'ЕРМТР': ermtr,
       'Регистрационный номер ТКО': registrationNumber,
       'Количество': quantity,
+      'Выведен из эксплуатации': decommissioned,
+      'Инвентарный': inventoryNumber,
       'Замещенное импортное ТКО': replacedImportTko,
       'Кол-во выводенного импортного ТКО': decommissionedQuantity,
       'Статья затрат ТКО': costItem,
+      'СЧЕТ УЧЕТА': accountingNumber,
+      'Статус закупки': purchaseStatus,
       'Платеж ТР без НДС': paymentWithoutVat,
       'Год': year,
       'Примечание': note,
+      'ЭКСПЛ': ekspl,
+      'ПЛАН': plan,
+      'ГРУППА': group,
+      'ОБЪЕКТ': objectName,
+      'Поставщик': supplierName,
+      'Огрузочный реквизит': ogruzName,
+      'оплата': payment,
     } = req.body;
 
     const rowId = Number(id);
@@ -2501,8 +2581,25 @@ export function setupRoutes(app: Express): void {
       res.status(400).json({ error: 'ЕРРП и ЕРМТР могут принимать только значения ДА или НЕТ' });
       return;
     }
+    if (![undefined, 'ДА', 'НЕТ'].includes(ekspl)) {
+      res.status(400).json({ error: 'ЭКСПЛ может принимать только значения ДА или НЕТ' });
+      return;
+    }
+    if (![undefined, 'ЭКСПЛ', 'РЕЗЕРВ', 'СПИСАНИЕ'].includes(plan)) {
+      res.status(400).json({ error: 'ПЛАН может принимать только значения ЭКСПЛ, РЕЗЕРВ или СПИСАНИЕ' });
+      return;
+    }
+    const decommissionedNumber = decommissioned === undefined || decommissioned === '' ? 0 : Number(decommissioned);
+    if (!Number.isInteger(decommissionedNumber) || decommissionedNumber < 0) {
+      res.status(400).json({ error: 'Выведен из эксплуатации должно быть целым неотрицательным числом' });
+      return;
+    }
     if (costItem && !['ОНМ', 'ПЭН'].includes(costItem)) {
       res.status(400).json({ error: 'Некорректная статья затрат ТКО' });
+      return;
+    }
+    if (purchaseStatus && !['план', 'согласован', 'в закупе', 'поставка', 'поставленно'].includes(purchaseStatus)) {
+      res.status(400).json({ error: 'Некорректный статус закупки' });
       return;
     }
 
@@ -2518,6 +2615,15 @@ export function setupRoutes(app: Express): void {
       const okdpId = await resolveId('SELECT "GN_invest_okdp_tko_is_prit_id" AS id FROM "GN_invest_okdp_tko_is_prit" WHERE "GN_invest_okdp_tko_is_prit" = $1 LIMIT 1', okdpCode);
       const equipmentTypeId = await resolveId('SELECT "GN_equipment_type_id" AS id FROM "GN_equipment_type" WHERE "GN_equipment_type" = $1 LIMIT 1', equipmentTypeName);
       const vendorId = await resolveId('SELECT "GN_equipment_manufacturer_id" AS id FROM "GN_equipment_manufacturer" WHERE "GN_equipment_manufacturer" = $1 LIMIT 1', vendorName);
+      const objectNames = Array.isArray(objectName) ? objectName : objectName ? [objectName] : [];
+      const objectIds: number[] = [];
+      for (const name of objectNames) {
+        const resolvedId = await resolveId('SELECT "GN_do_id" AS id FROM "GN_departament_object" WHERE "GN_departament_object" = $1 LIMIT 1', name);
+        if (resolvedId != null && !objectIds.includes(resolvedId)) objectIds.push(resolvedId);
+      }
+      const objectId = objectIds[0] ?? null;
+      const supplierId = await resolveId('SELECT "GN_c_id" AS id FROM "GN_contractor" WHERE "GN_contarctor" = $1 LIMIT 1', supplierName);
+      const ogruzId = await resolveId('SELECT "GN_invest_ogruz_rekvizit_id" AS id FROM "GN_invest_ogruz_rekvizit" WHERE "GN_invest_ogruz_rekvizit" = $1 LIMIT 1', ogruzName);
       const result = await client.query(
         `UPDATE "GN_import_substitution"
          SET "Подразделение" = $1, "GN_import_substitution_okdp_fk" = $2, "Наименование ТКО" = $3,
@@ -2525,10 +2631,15 @@ export function setupRoutes(app: Express): void {
            "ЕРМТР" = $7, "Регистрационный номер ТКО" = $8, "Количество" = $9,
            "Замещенное импортное ТКО" = $10, "Кол-во выводенного импортного ТКО" = $11,
            "Статья затрат ТКО" = $12, "Платеж ТР без НДС" = $13, "Год" = $14, "Примечание" = $15,
-           "GN_import_substitution_equipment_type_fk" = $17, "updated_at" = NOW()
+           "GN_import_substitution_equipment_type_fk" = $17, "GN_import_substitution_supplier_fk" = $18,
+           "GN_import_substitution_ogruz_fk" = $19, "оплата" = $20,
+           "Выведен из эксплуатации" = $21, "Инвентарный" = $22, "Статус закупки" = $23,
+            "ЭКСПЛ" = $24, "ПЛАН" = $25, "GN_import_substitution_object_fk" = $26, "ГРУППА" = $27,
+            "СЧЕТ УЧЕТА" = COALESCE($28, "СЧЕТ УЧЕТА", CASE WHEN $12 = 'ПЭН' THEN 'МЦ400201' END),
+            "GN_import_substitution_object_fks" = $29::INTEGER[], "updated_at" = NOW()
          WHERE "GN_import_substitution_id" = $16
          RETURNING *`,
-        [department, okdpId, tkoName || null, vendorId, classification || null, errp || 'НЕТ', ermtr || 'НЕТ', registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem || 'ПЭН', paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, rowId, equipmentTypeId]
+          [department, okdpId, tkoName || null, vendorId, classification || null, errp || 'НЕТ', ermtr || 'НЕТ', registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem || 'ПЭН', paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, rowId, equipmentTypeId, supplierId, ogruzId, payment || null, decommissionedNumber, inventoryNumber || null, purchaseStatus || 'план', ekspl || 'НЕТ', plan || 'РЕЗЕРВ', objectId, group || 'офис', accountingNumber === undefined ? null : String(accountingNumber), objectIds]
       );
 
       if (result.rowCount === 0) {
@@ -2557,12 +2668,23 @@ export function setupRoutes(app: Express): void {
       'ЕРМТР': ermtr = 'НЕТ',
       'Регистрационный номер ТКО': registrationNumber,
       'Количество': quantity,
+      'Выведен из эксплуатации': decommissioned = 0,
+      'Инвентарный': inventoryNumber,
       'Замещенное импортное ТКО': replacedImportTko,
       'Кол-во выводенного импортного ТКО': decommissionedQuantity,
       'Статья затрат ТКО': costItem = 'ПЭН',
+      'СЧЕТ УЧЕТА': accountingNumber,
+      'Статус закупки': purchaseStatus = 'план',
       'Платеж ТР без НДС': paymentWithoutVat,
       'Год': year,
       'Примечание': note,
+      'ЭКСПЛ': ekspl = 'НЕТ',
+      'ПЛАН': plan = 'РЕЗЕРВ',
+      'ГРУППА': group = 'офис',
+      'ОБЪЕКТ': objectName,
+      'Поставщик': supplierName,
+      'Огрузочный реквизит': ogruzName,
+      'оплата': payment,
     } = req.body;
 
     if (!department) {
@@ -2578,8 +2700,25 @@ export function setupRoutes(app: Express): void {
       res.status(400).json({ error: 'ЕРРП и ЕРМТР могут принимать только значения ДА или НЕТ' });
       return;
     }
+    if (!['ДА', 'НЕТ'].includes(ekspl)) {
+      res.status(400).json({ error: 'ЭКСПЛ может принимать только значения ДА или НЕТ' });
+      return;
+    }
+    if (!['ЭКСПЛ', 'РЕЗЕРВ', 'СПИСАНИЕ'].includes(plan)) {
+      res.status(400).json({ error: 'ПЛАН может принимать только значения ЭКСПЛ, РЕЗЕРВ или СПИСАНИЕ' });
+      return;
+    }
+    const decommissionedNumber = Number(decommissioned);
+    if (!Number.isInteger(decommissionedNumber) || decommissionedNumber < 0) {
+      res.status(400).json({ error: 'Выведен из эксплуатации должно быть целым неотрицательным числом' });
+      return;
+    }
     if (!['ОНМ', 'ПЭН'].includes(costItem)) {
       res.status(400).json({ error: 'Некорректная статья затрат ТКО' });
+      return;
+    }
+    if (!['план', 'согласован', 'в закупе', 'поставка', 'поставленно'].includes(purchaseStatus)) {
+      res.status(400).json({ error: 'Некорректный статус закупки' });
       return;
     }
 
@@ -2595,18 +2734,133 @@ export function setupRoutes(app: Express): void {
       const okdpId = await resolveId('SELECT "GN_invest_okdp_tko_is_prit_id" AS id FROM "GN_invest_okdp_tko_is_prit" WHERE "GN_invest_okdp_tko_is_prit" = $1 LIMIT 1', okdpCode);
       const equipmentTypeId = await resolveId('SELECT "GN_equipment_type_id" AS id FROM "GN_equipment_type" WHERE "GN_equipment_type" = $1 LIMIT 1', equipmentTypeName);
       const vendorId = await resolveId('SELECT "GN_equipment_manufacturer_id" AS id FROM "GN_equipment_manufacturer" WHERE "GN_equipment_manufacturer" = $1 LIMIT 1', vendorName);
+      const objectNames = Array.isArray(objectName) ? objectName : objectName ? [objectName] : [];
+      const objectIds: number[] = [];
+      for (const name of objectNames) {
+        const resolvedId = await resolveId('SELECT "GN_do_id" AS id FROM "GN_departament_object" WHERE "GN_departament_object" = $1 LIMIT 1', name);
+        if (resolvedId != null && !objectIds.includes(resolvedId)) objectIds.push(resolvedId);
+      }
+      const objectId = objectIds[0] ?? null;
+      const supplierId = await resolveId('SELECT "GN_c_id" AS id FROM "GN_contractor" WHERE "GN_contarctor" = $1 LIMIT 1', supplierName);
+      const ogruzId = await resolveId('SELECT "GN_invest_ogruz_rekvizit_id" AS id FROM "GN_invest_ogruz_rekvizit" WHERE "GN_invest_ogruz_rekvizit" = $1 LIMIT 1', ogruzName);
       const result = await client.query(
         `INSERT INTO "GN_import_substitution" (
-           "Подразделение", "GN_import_substitution_okdp_fk", "Наименование ТКО", "GN_import_substitution_vendor_fk", "Классификация ТКО", "ЕРРП", "ЕРМТР", "Регистрационный номер ТКО", "Количество", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО", "Статья затрат ТКО", "Платеж ТР без НДС", "Год", "Примечание", "GN_import_substitution_equipment_type_fk"
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+           "Подразделение", "GN_import_substitution_okdp_fk", "Наименование ТКО", "GN_import_substitution_vendor_fk", "Классификация ТКО", "ЕРРП", "ЕРМТР", "Регистрационный номер ТКО", "Количество", "Выведен из эксплуатации", "Инвентарный", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО", "Статья затрат ТКО", "Статус закупки", "Платеж ТР без НДС", "Год", "Примечание", "ЭКСПЛ", "ПЛАН", "GN_import_substitution_object_fk", "GN_import_substitution_equipment_type_fk", "GN_import_substitution_supplier_fk", "GN_import_substitution_ogruz_fk", "оплата", "ГРУППА", "СЧЕТ УЧЕТА", "GN_import_substitution_object_fks"
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
          RETURNING *`,
-        [department, okdpId, tkoName || null, vendorId, classification || null, errp, ermtr, registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem, paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, equipmentTypeId]
+        [department, okdpId, tkoName || null, vendorId, classification || null, errp, ermtr, registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), decommissionedNumber, inventoryNumber || null, replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem, purchaseStatus, paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, ekspl, plan, objectId, equipmentTypeId, supplierId, ogruzId, payment || null, group, accountingNumber ?? (costItem === 'ПЭН' ? 'МЦ400201' : null), objectIds]
       );
 
       res.status(201).json(result.rows[0]);
     } catch (err) {
       console.error(err);
       res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to create import-substitution data' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.post('/api/import-substitution/:id/copy', async (req: Request, res: Response): Promise<void> => {
+    const rowId = Number(req.params.id);
+    const quantityToCopy = Number(req.body?.quantity);
+    if (!Number.isInteger(rowId) || rowId <= 0) {
+      res.status(400).json({ error: 'Некорректный номер строки' });
+      return;
+    }
+    if (!Number.isInteger(quantityToCopy) || quantityToCopy <= 0) {
+      res.status(400).json({ error: 'Количество для копирования должно быть положительным целым числом' });
+      return;
+    }
+
+    const client = await createDbClient();
+    let transactionStarted = false;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const sourceResult = await client.query<{ 'Количество': string | number | null; 'Выведен из эксплуатации': string | number | null }>(
+        `SELECT "Количество", "Выведен из эксплуатации"
+         FROM "GN_import_substitution"
+         WHERE "GN_import_substitution_id" = $1 AND "is_deleted" = FALSE
+         FOR UPDATE`,
+        [rowId],
+      );
+      if (sourceResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        res.status(404).json({ error: 'Строка не найдена' });
+        return;
+      }
+
+      const availableQuantity = Number(sourceResult.rows[0]['Количество'] ?? 0);
+      const decommissionedQuantity = Number(sourceResult.rows[0]['Выведен из эксплуатации'] ?? 0);
+      const copyableQuantity = Math.max(0, availableQuantity - decommissionedQuantity);
+      if (!Number.isFinite(copyableQuantity) || quantityToCopy > copyableQuantity) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        res.status(400).json({ error: `Доступно для копирования: ${Number.isFinite(copyableQuantity) ? copyableQuantity : 0}` });
+        return;
+      }
+
+      await client.query(
+        `UPDATE "GN_import_substitution"
+         SET "Количество" = COALESCE("Количество", 0) - $2, "updated_at" = NOW()
+         WHERE "GN_import_substitution_id" = $1`,
+        [rowId, quantityToCopy],
+      );
+      const copiedResult = await client.query(
+        `INSERT INTO "GN_import_substitution" (
+           "Подразделение", "GN_import_substitution_okdp_fk", "Наименование ТКО", "GN_import_substitution_vendor_fk",
+           "Классификация ТКО", "ЕРРП", "ЕРМТР", "Регистрационный номер ТКО", "Количество",
+           "Выведен из эксплуатации", "Инвентарный", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО",
+           "Статья затрат ТКО", "Статус закупки", "Платеж ТР без НДС", "Год", "Примечание", "ЭКСПЛ", "ПЛАН",
+           "GN_import_substitution_object_fk", "GN_import_substitution_equipment_type_fk", "GN_import_substitution_supplier_fk",
+           "GN_import_substitution_ogruz_fk", "оплата", "ГРУППА", "СЧЕТ УЧЕТА", "GN_import_substitution_object_fks"
+         )
+         SELECT
+           source."Подразделение", source."GN_import_substitution_okdp_fk", source."Наименование ТКО",
+           source."GN_import_substitution_vendor_fk", source."Классификация ТКО", source."ЕРРП", source."ЕРМТР",
+           source."Регистрационный номер ТКО", $2, 0, source."Инвентарный", source."Замещенное импортное ТКО", 0,
+           source."Статья затрат ТКО", source."Статус закупки", 0, source."Год",
+           BTRIM(COALESCE(source."Примечание", '') || ' COPY'), source."ЭКСПЛ", source."ПЛАН",
+           source."GN_import_substitution_object_fk", source."GN_import_substitution_equipment_type_fk",
+           source."GN_import_substitution_supplier_fk", source."GN_import_substitution_ogruz_fk", source."оплата",
+           source."ГРУППА", source."СЧЕТ УЧЕТА", source."GN_import_substitution_object_fks"
+         FROM "GN_import_substitution" source
+         WHERE source."GN_import_substitution_id" = $1
+         RETURNING "GN_import_substitution_id"`,
+        [rowId, quantityToCopy],
+      );
+      await client.query('COMMIT');
+      transactionStarted = false;
+      res.status(201).json({ success: true, copiedRowId: copiedResult.rows[0]?.GN_import_substitution_id });
+    } catch (err) {
+      if (transactionStarted) await client.query('ROLLBACK').catch(() => undefined);
+      console.error('Failed to split import-substitution row', err);
+      res.status(500).json({ error: 'Не удалось создать копию строки' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.delete('/api/import-substitution/:id', async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `UPDATE "GN_import_substitution"
+         SET "is_deleted" = TRUE, "deleted_at" = NOW()
+         WHERE "GN_import_substitution_id" = $1 AND "is_deleted" = FALSE
+         RETURNING "GN_import_substitution_id"`,
+        [id],
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Row not found' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to delete import-substitution row' });
     } finally {
       await client.end();
     }

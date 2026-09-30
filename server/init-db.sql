@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS "GN_departament_object" (
   "GN_do_id" SERIAL NOT NULL UNIQUE,
   "GN_departament_object" TEXT NOT NULL,
   "GN_department_FK" INTEGER NOT NULL,
+  "GN_department_FKs" INTEGER[],
   PRIMARY KEY("GN_do_id")
 );
 
@@ -61,6 +62,9 @@ COMMENT ON TABLE "GN_invest_okdp_tko_is_prit" IS 'ОКДП ТКО для ИС П
 CREATE TABLE IF NOT EXISTS "GN_invest_ogruz_rekvizit" (
   "GN_invest_ogruz_rekvizit_id" SERIAL NOT NULL UNIQUE,
   "GN_invest_ogruz_rekvizit" TEXT NOT NULL,
+  "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+  "GN_departament_object_FK" INTEGER REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL,
+  "Почтовый адрес" TEXT,
   PRIMARY KEY("GN_invest_ogruz_rekvizit_id")
 );
 
@@ -69,6 +73,9 @@ COMMENT ON TABLE "GN_invest_ogruz_rekvizit" IS 'Огрузочный рекви�
 CREATE TABLE IF NOT EXISTS "GN_equipment_manufacturer" (
   "GN_equipment_manufacturer_id" SERIAL NOT NULL UNIQUE,
   "GN_equipment_manufacturer" TEXT NOT NULL,
+  "Полное название" TEXT,
+  "СТРАНА" TEXT,
+  "Доп. информация" TEXT,
   PRIMARY KEY("GN_equipment_manufacturer_id")
 );
 
@@ -87,6 +94,9 @@ CREATE TABLE IF NOT EXISTS "GN_equipment_model" (
   "GN_equipment_model" TEXT NOT NULL,
   "GN_equipment_manufacturer_FK" INTEGER NOT NULL REFERENCES "GN_equipment_manufacturer"("GN_equipment_manufacturer_id") ON DELETE NO ACTION,
   "GN_equipment_type_FK" INTEGER NOT NULL REFERENCES "GN_equipment_type"("GN_equipment_type_id") ON DELETE NO ACTION,
+  "GN_equipment_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+  "GN_equipment_budget_item_FK" INTEGER REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE SET NULL,
+  "GN_equipment_object_FK" INTEGER REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL,
   PRIMARY KEY("GN_equipment_model_id")
 );
 

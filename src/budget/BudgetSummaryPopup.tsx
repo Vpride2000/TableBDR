@@ -3,13 +3,14 @@ import { formatHttpError } from '../utils/forecastUtils';
 import BudgetSummaryByDepartment from './BudgetSummaryByDepartment';
 import BudgetSummaryByPaoItem from './BudgetSummaryByPaoItem';
 import BudgetSummaryByBudgetItemDepartment from './BudgetSummaryByBudgetItemDepartment';
+import BudgetSummaryByContractPaoItem from './BudgetSummaryByContractPaoItem';
 
 // Попап-страница для отображения одной из сводных таблиц бюджета.
 // Загружает данные самостоятельно и рендерит нужный вид без ленивой загрузки.
 
 type Row = Record<string, unknown>;
 
-export type BudgetSummaryView = 'dept' | 'pao' | 'matrix';
+export type BudgetSummaryView = 'dept' | 'pao' | 'matrix' | 'contractPao';
 
 interface Props {
   view: BudgetSummaryView;
@@ -29,12 +30,14 @@ const VIEW_TITLES: Record<BudgetSummaryView, string> = {
   dept: 'Свод по лимитам по подразделениям',
   pao: 'Свод по лимитам по статьям бюджета УС',
   matrix: 'Свод лимитов: подразделения × статьи бюджета',
+  contractPao: 'Свод: договоры и статьи бюджета',
 };
 
 export default function BudgetSummaryPopup({ view }: Props) {
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [swapContractPao, setSwapContractPao] = useState(false);
 
   useEffect(() => {
     fetch('/api/gn/bdr')
@@ -110,6 +113,29 @@ export default function BudgetSummaryPopup({ view }: Props) {
     return { departments, rows, totalsByDepartment, total };
   }, [data]);
 
+  const summaryByContractPaoItem = useMemo(() => {
+    const groupKeyName = swapContractPao ? 'Статья бюджета' : 'Договор';
+    const itemKeyName = swapContractPao ? 'Договор' : 'Статья бюджета';
+    const groupFallback = swapContractPao ? 'Без статьи бюджета' : 'Без договора';
+    const itemFallback = swapContractPao ? 'Без договора' : 'Без статьи бюджета';
+
+    const byGroup = new Map<string, Set<string>>();
+    data.forEach((row) => {
+      const groupValue = String(row[groupKeyName] ?? '').trim() || groupFallback;
+      const itemValue = String(row[itemKeyName] ?? '').trim() || itemFallback;
+      const items = byGroup.get(groupValue) ?? new Set<string>();
+      items.add(itemValue);
+      byGroup.set(groupValue, items);
+    });
+    const groups = [...byGroup.keys()]
+      .sort((a, b) => a.localeCompare(b, 'ru'))
+      .map((label) => ({
+        label,
+        items: [...(byGroup.get(label) ?? new Set<string>())].sort((a, b) => a.localeCompare(b, 'ru')),
+      }));
+    return { groupHeader: groupKeyName, itemsHeader: itemKeyName, groups };
+  }, [data, swapContractPao]);
+
   return (
     <section className="budget">
       <h2 style={{ padding: '12px 16px', marginBottom: '8px' }}>{VIEW_TITLES[view]}</h2>
@@ -141,6 +167,24 @@ export default function BudgetSummaryPopup({ view }: Props) {
             rows={summaryByBudgetItemDepartment.rows}
             totalsByDepartment={summaryByBudgetItemDepartment.totalsByDepartment}
             total={summaryByBudgetItemDepartment.total}
+          />
+        </div>
+      )}
+
+      {!loading && !error && view === 'contractPao' && (
+        <div className="guide-table-wrap budget-summary-wrap">
+          <label className="budget-summary-swap-toggle" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0 16px 12px' }}>
+            <input
+              type="checkbox"
+              checked={swapContractPao}
+              onChange={(event) => setSwapContractPao(event.target.checked)}
+            />
+            Поменять местами
+          </label>
+          <BudgetSummaryByContractPaoItem
+            groupHeader={summaryByContractPaoItem.groupHeader}
+            itemsHeader={summaryByContractPaoItem.itemsHeader}
+            groups={summaryByContractPaoItem.groups}
           />
         </div>
       )}

@@ -10,6 +10,7 @@ import ContractorDetailsPage from './budget/ContractorDetailsPage'
 import ContractDetailsPage from './contract/ContractDetailsPage'
 import ContractsPage from './contract/ContractsPage'
 import InvestProgramTablePage from './Purchase/InvestProgramTablePage'
+import EquipmentOrderPopup from './Purchase/EquipmentOrderPopup'
 import SatellitesPage from './satellites/SatellitesPage'
 import SatellitesControlPage from './satellites/SatellitesControlPage'
 import SatellitesDetailsPage from './satellites/SatellitesDetailsPage'
@@ -19,6 +20,7 @@ import CellularIdentifierGuidePopup from './cellular/CellularIdentifierGuidePopu
 import CellularAccountGuidePopup from './cellular/CellularAccountGuidePopup'
 import ImportSubstitutionPage from './importSubstitution/ImportSubstitutionPage'
 import ImportSubstitutionTable from './importSubstitution/ImportSubstitutionTable'
+import EquipmentAccountingTable from './importSubstitution/EquipmentAccountingTable'
 import { Page } from './types/forecast'
 import { pageFromHash } from './utils/forecastUtils'
 
@@ -46,6 +48,21 @@ interface DashboardSummary {
   satelliteDepartmentCount: number
   satelliteDirectionCount: number
   topServices: Array<{ name: string; budget: number }>
+  purchaseRows: number
+  purchaseQuantity: number
+  purchaseOnmQuantity: number
+  purchasePenQuantity: number
+  purchaseInProgressQuantity: number
+  purchaseDeliveredQuantity: number
+  purchaseInProgressOnmQuantity: number
+  purchaseInProgressPenQuantity: number
+  purchaseDeliveredOnmQuantity: number
+  purchaseDeliveredPenQuantity: number
+  importRows: number
+  importQuantity: number
+  importRegistryQuantity: number
+  importWithdrawnQuantity: number
+  importRegistryPercent: number
 }
 
 function StartDashboard() {
@@ -58,12 +75,13 @@ function StartDashboard() {
 
     async function loadSummary(): Promise<void> {
       try {
-        const [bdrResponse, contractsResponse, agreementsResponse, cellularResponse, satellitesResponse] = await Promise.all([
+        const [bdrResponse, contractsResponse, agreementsResponse, cellularResponse, satellitesResponse, importSubstitutionResponse] = await Promise.all([
           fetch('/api/gn/bdr'),
           fetch('/api/gn/contracts'),
           fetch('/api/gn/contract-additional-agreements'),
           fetch('/api/gn/cellular'),
           fetch('/api/satellites/summary'),
+          fetch('/api/import-substitution', { cache: 'no-store' }),
         ])
 
         if (!bdrResponse.ok) throw new Error(`BDR HTTP ${bdrResponse.status}`)
@@ -71,11 +89,13 @@ function StartDashboard() {
         if (!agreementsResponse.ok) throw new Error(`Agreements HTTP ${agreementsResponse.status}`)
         if (!cellularResponse.ok) throw new Error(`Cellular HTTP ${cellularResponse.status}`)
         if (!satellitesResponse.ok) throw new Error(`Satellites HTTP ${satellitesResponse.status}`)
+        if (!importSubstitutionResponse.ok) throw new Error(`Import substitution HTTP ${importSubstitutionResponse.status}`)
 
         const bdrRows = (await bdrResponse.json()) as Array<Record<string, unknown>>
         const contractRows = (await contractsResponse.json()) as Array<Record<string, unknown>>
         const agreementRows = (await agreementsResponse.json()) as Array<Record<string, unknown>>
         const cellularRows = (await cellularResponse.json()) as Array<Record<string, unknown>>
+        const importSubstitutionRows = (await importSubstitutionResponse.json()) as Array<Record<string, unknown>>
         const satellitesSummary = (await satellitesResponse.json()) as {
           satelliteCount: number
           activeSatelliteCount: number
@@ -105,6 +125,47 @@ function StartDashboard() {
         }
 
         const normalizeStatus = (value: unknown): string => String(value ?? 'не указано').trim() || 'не указано'
+        const purchaseRows = importSubstitutionRows.filter((row) => Number(row['Год']) === 2026)
+        const purchaseQuantity = purchaseRows.reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseOnmQuantity = purchaseRows
+          .filter((row) => String(row['Статья затрат ТКО'] ?? '').trim() === 'ОНМ')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchasePenQuantity = purchaseRows
+          .filter((row) => String(row['Статья затрат ТКО'] ?? '').trim() === 'ПЭН')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseInProgressQuantity = purchaseRows
+          .filter((row) => ['в закупе', 'в закупке'].includes(String(row['Статус закупки'] ?? '').trim().toLowerCase()))
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseDeliveredQuantity = purchaseRows
+          .filter((row) => String(row['Статус закупки'] ?? '').trim().toLowerCase() === 'поставленно')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const isPurchaseInProgress = (row: Record<string, unknown>): boolean => (
+          ['в закупе', 'в закупке'].includes(String(row['Статус закупки'] ?? '').trim().toLowerCase())
+        )
+        const isPurchaseDelivered = (row: Record<string, unknown>): boolean => (
+          String(row['Статус закупки'] ?? '').trim().toLowerCase() === 'поставленно'
+        )
+        const purchaseInProgressOnmQuantity = purchaseRows
+          .filter((row) => isPurchaseInProgress(row) && String(row['Статья затрат ТКО'] ?? '').trim() === 'ОНМ')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseInProgressPenQuantity = purchaseRows
+          .filter((row) => isPurchaseInProgress(row) && String(row['Статья затрат ТКО'] ?? '').trim() === 'ПЭН')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseDeliveredOnmQuantity = purchaseRows
+          .filter((row) => isPurchaseDelivered(row) && String(row['Статья затрат ТКО'] ?? '').trim() === 'ОНМ')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseDeliveredPenQuantity = purchaseRows
+          .filter((row) => isPurchaseDelivered(row) && String(row['Статья затрат ТКО'] ?? '').trim() === 'ПЭН')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const importQuantity = importSubstitutionRows.reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const importRegistryQuantity = importSubstitutionRows
+          .filter((row) => String(row['Классификация ТКО'] ?? '').trim() === 'РФ в реестре')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const importWithdrawnQuantity = importSubstitutionRows.reduce(
+          (sum, row) => sum + Math.round(parseNumber(row['Выведен из эксплуатации'])),
+          0,
+        )
+        const importAdjustedQuantity = importQuantity - importWithdrawnQuantity
         const contractStatusCounts = contractRows.reduce<Record<string, number>>((acc, row) => {
           const status = normalizeStatus(row['GN_contract_approval_status'] ?? row['GN_contract_state'])
           acc[status] = (acc[status] ?? 0) + 1
@@ -147,6 +208,21 @@ function StartDashboard() {
             .sort((a, b) => b[1] - a[1])
             .slice(0, 3)
             .map(([name, budget]) => ({ name, budget })),
+          purchaseRows: purchaseRows.length,
+          purchaseQuantity,
+          purchaseOnmQuantity,
+          purchasePenQuantity,
+          purchaseInProgressQuantity,
+          purchaseDeliveredQuantity,
+          purchaseInProgressOnmQuantity,
+          purchaseInProgressPenQuantity,
+          purchaseDeliveredOnmQuantity,
+          purchaseDeliveredPenQuantity,
+          importRows: importSubstitutionRows.length,
+          importQuantity,
+          importRegistryQuantity,
+          importWithdrawnQuantity,
+          importRegistryPercent: importAdjustedQuantity > 0 ? (importRegistryQuantity / importAdjustedQuantity) * 100 : 0,
         })
       } catch (err) {
         if (!isMounted) return
@@ -172,6 +248,9 @@ function StartDashboard() {
   const formatPercent = (value: number): string => new Intl.NumberFormat('ru-RU', {
     maximumFractionDigits: 1,
   }).format(value) + '%'
+  const formatQuantity = (value: number): string => new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 2,
+  }).format(value)
 
   if (loading) {
     return <p className="hint">Загрузка сводной информации...</p>
@@ -211,7 +290,7 @@ function StartDashboard() {
       </div>
 
       <div className="dashboard-grid">
-        <div className="dashboard-card">
+        <a className="dashboard-card dashboard-card--link" href="#budget">
           <h3>Услуги связи</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
@@ -219,11 +298,7 @@ function StartDashboard() {
               <strong>{formatCount(summary.serviceLines)}</strong>
             </li>
             <li className="dashboard-stat-item">
-              <span>Уникальных услуг</span>
-              <strong>{formatCount(summary.serviceTypes)}</strong>
-            </li>
-            <li className="dashboard-stat-item">
-              <span>Общий лимит</span>
+              <span>БДР25</span>
               <strong>{formatMoney(summary.totalServiceBudget)}</strong>
             </li>
           </ul>
@@ -235,16 +310,16 @@ function StartDashboard() {
               </li>
             ))}
           </ul>
-        </div>
+        </a>
 
-        <div className="dashboard-card">
+        <a className="dashboard-card dashboard-card--link" href="#contracts">
           <h3>Договоры</h3>
           <p className="dashboard-card-value">Всего договоров: <strong>{formatCount(summary.contractCount)}</strong></p>
           {renderStatusItems(summary.contractStatusCounts)}
           <p className="dashboard-card-value dashboard-card-value--spaced">Всего доп. соглашений: <strong>{formatCount(summary.agreementCount)}</strong></p>
           {renderStatusItems(summary.agreementStatusCounts)}
-        </div>
-        <div className="dashboard-card">
+        </a>
+        <a className="dashboard-card dashboard-card--link" href="#cellular">
           <h3>Сотовая связь</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
@@ -252,25 +327,25 @@ function StartDashboard() {
               <strong>{formatCount(summary.cellularCount)}</strong>
             </li>
             <li className="dashboard-stat-item">
-              <span>Действующие</span>
-              <strong>{formatCount(summary.cellularActiveCount)}</strong>
+              <span>Действующие (с ГЛОНАСС)</span>
+              <strong>
+                {formatCount(summary.cellularActiveCount)} ({formatPercent(summary.cellularCount > 0
+                  ? (summary.cellularActiveCount / summary.cellularCount) * 100
+                  : 0)})
+              </strong>
             </li>
             <li className="dashboard-stat-item">
               <span>С тарифом Глонасс</span>
               <strong>{formatCount(summary.cellularGlonassCount)}</strong>
             </li>
             <li className="dashboard-stat-item">
-              <span>Незаблокированные</span>
-              <strong>{formatPercent(summary.cellularNonBlockedPercent)}</strong>
-            </li>
-            <li className="dashboard-stat-item">
               <span>Лицевые счета</span>
               <strong>{formatCount(summary.cellularAccountCount)}</strong>
             </li>
           </ul>
-        </div>
+        </a>
 
-        <div className="dashboard-card">
+        <a className="dashboard-card dashboard-card--link" href="#satellites">
           <h3>Спутники (ГКС)</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
@@ -279,18 +354,70 @@ function StartDashboard() {
             </li>
             <li className="dashboard-stat-item">
               <span>Активные станции</span>
-              <strong>{formatCount(summary.satelliteActiveCount)}</strong>
+              <strong>
+                {formatCount(summary.satelliteActiveCount)} ({formatPercent(summary.satelliteCount > 0
+                  ? (summary.satelliteActiveCount / summary.satelliteCount) * 100
+                  : 0)})
+              </strong>
             </li>
             <li className="dashboard-stat-item">
-              <span>Подразделения</span>
+              <span>Филиалы</span>
               <strong>{formatCount(summary.satelliteDepartmentCount)}</strong>
             </li>
+          </ul>
+        </a>
+
+        <a className="dashboard-card dashboard-card--link" href="#invest-program-table">
+          <h3>Закупки</h3>
+          <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
-              <span>Направления</span>
-              <strong>{formatCount(summary.satelliteDirectionCount)}</strong>
+              <span>Строк за 2026 год</span>
+              <strong>{formatCount(summary.purchaseRows)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Всего оборудования</span>
+              <strong>{formatQuantity(summary.purchaseQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>ОНМ / ПЭН</span>
+              <strong>{formatQuantity(summary.purchaseOnmQuantity)} / {formatQuantity(summary.purchasePenQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>В закупке / поставленно</span>
+              <strong>{formatQuantity(summary.purchaseInProgressQuantity)} / {formatQuantity(summary.purchaseDeliveredQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>В закупке: ОНМ / ПЭН</span>
+              <strong>{formatQuantity(summary.purchaseInProgressOnmQuantity)} / {formatQuantity(summary.purchaseInProgressPenQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Поставленно: ОНМ / ПЭН</span>
+              <strong>{formatQuantity(summary.purchaseDeliveredOnmQuantity)} / {formatQuantity(summary.purchaseDeliveredPenQuantity)}</strong>
+            </li>
+          </ul>          
+        </a>
+
+        <a className="dashboard-card dashboard-card--link" href="#import-substitution">
+          <h3>Импортозамещение</h3>
+          <ul className="dashboard-stat-list">
+            <li className="dashboard-stat-item">
+              <span>Позиций</span>
+              <strong>{formatCount(summary.importRows)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Общий объем</span>
+              <strong>{formatQuantity(summary.importQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>РФ в реестре</span>
+              <strong>{formatQuantity(summary.importRegistryQuantity)} ({formatPercent(summary.importRegistryPercent)})</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Выведено из эксплуатации</span>
+              <strong>{formatQuantity(summary.importWithdrawnQuantity)}</strong>
             </li>
           </ul>
-        </div>
+                  </a>
 
         <div className="dashboard-card dashboard-card--links">
           <h3>Полезные ссылки</h3>
@@ -315,12 +442,14 @@ function BudgetSectionPage({
   onOpenBudgetDept,
   onOpenBudgetPao,
   onOpenBudgetMatrix,
+  onOpenBudgetContractPao,
   onOpenBudgetMain,
   onOpenSatellitesDetails,
 }: {
   onOpenBudgetDept: () => void
   onOpenBudgetPao: () => void
   onOpenBudgetMatrix: () => void
+  onOpenBudgetContractPao: () => void
   onOpenBudgetMain: () => void
   onOpenSatellitesDetails: () => void
 }) {
@@ -356,8 +485,11 @@ function BudgetSectionPage({
           <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetMatrix}>
             Свод лимитов: подразделения × статьи бюджета
           </button>
+          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetContractPao}>
+            Свод: договоры и статьи бюджета
+          </button>
           <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetMain}>
-            Таблица лимитов по услугам связи
+            Полная таблица услуг связи
           </button>
         </div>
       )}
@@ -379,11 +511,14 @@ export default function App() {
   const isBudgetDeptPopup = window.location.hash === '#budget-dept-window'
   const isBudgetPaoPopup = window.location.hash === '#budget-pao-window'
   const isBudgetMatrixPopup = window.location.hash === '#budget-matrix-window'
+  const isBudgetContractPaoPopup = window.location.hash === '#budget-contract-pao-window'
   const isBudgetMainPopup = window.location.hash === '#budget-main-window'
   const isCellularTariffGuidePopup = window.location.hash === '#cellular-tariff-guide-window'
   const isCellularIdentifierGuidePopup = window.location.hash === '#cellular-identifier-guide-window'
   const isCellularAccountGuidePopup = window.location.hash === '#cellular-account-guide-window'
   const isImportSubstitutionTablePopup = window.location.hash === '#import-substitution-table-window'
+  const isEquipmentAccountingPopup = window.location.hash === '#equipment-accounting-window'
+  const isEquipmentOrderPopup = window.location.hash === '#equipment-order-window'
   const guidePopupMatch = window.location.hash.match(/^#guide-window-([a-z-]+)$/)
   const guidePopupEntity = guidePopupMatch ? guidePopupMatch[1] : null
   const isGuidePopup = guidePopupEntity != null
@@ -411,11 +546,14 @@ export default function App() {
       if (window.location.hash === '#budget-dept-window') return
       if (window.location.hash === '#budget-pao-window') return
       if (window.location.hash === '#budget-matrix-window') return
+      if (window.location.hash === '#budget-contract-pao-window') return
       if (window.location.hash === '#budget-main-window') return
       if (window.location.hash === '#cellular-tariff-guide-window') return
       if (window.location.hash === '#cellular-identifier-guide-window') return
       if (window.location.hash === '#cellular-account-guide-window') return
       if (window.location.hash === '#import-substitution-table-window') return
+      if (window.location.hash === '#equipment-accounting-window') return
+      if (window.location.hash === '#equipment-order-window') return
       if (/^#guide-window-[a-z-]+$/.test(window.location.hash)) return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
@@ -599,6 +737,16 @@ export default function App() {
     if (popup) popup.focus()
   }
 
+  // Открывает попап-окно сводной таблицы по договорам и статьям бюджета УС.
+  function openBudgetContractPaoWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#budget-contract-pao-window`,
+      'budget-contract-pao-window',
+      'popup=yes,width=1200,height=800,resizable=yes,scrollbars=yes'
+    )
+    if (popup) popup.focus()
+  }
+
   // Открывает попап-окно основной таблицы лимитов.
   function openBudgetMainWindow(): void {
     const popup = window.open(
@@ -629,6 +777,14 @@ export default function App() {
     return (
       <main>
         <BudgetSummaryPopup view="matrix" />
+      </main>
+    )
+  }
+
+  if (isBudgetContractPaoPopup) {
+    return (
+      <main>
+        <BudgetSummaryPopup view="contractPao" />
       </main>
     )
   }
@@ -693,6 +849,18 @@ export default function App() {
     return (
       <main>
         <ImportSubstitutionTable />
+      </main>
+    )
+  }
+
+  if (isEquipmentAccountingPopup) {
+    return <EquipmentAccountingTable />
+  }
+
+  if (isEquipmentOrderPopup) {
+    return (
+      <main>
+        <EquipmentOrderPopup />
       </main>
     )
   }
@@ -803,6 +971,7 @@ export default function App() {
           onOpenBudgetDept={openBudgetDeptWindow}
           onOpenBudgetPao={openBudgetPaoWindow}
           onOpenBudgetMatrix={openBudgetMatrixWindow}
+          onOpenBudgetContractPao={openBudgetContractPaoWindow}
           onOpenBudgetMain={openBudgetMainWindow}
           onOpenSatellitesDetails={openSatellitesDetailsWindow}
         />

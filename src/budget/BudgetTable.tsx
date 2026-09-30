@@ -345,7 +345,12 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
       if (Number.isNaN(departmentId)) return [];
 
       return rows
-        .filter((row) => Number(row.GN_department_FK) === departmentId)
+        .filter((row) => {
+          const departmentIds = Array.isArray(row.GN_department_FKs)
+            ? row.GN_department_FKs.map(Number)
+            : [Number(row.GN_department_FK)];
+          return departmentIds.includes(departmentId);
+        })
         .map((row) => {
           const label = String(row[config.labelKey] ?? '');
           return { value: label, label };

@@ -8,7 +8,7 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, 'dist'),
     filename: 'bundle.[contenthash].js',
-    publicPath: './',
+    publicPath: '/',
     clean: true,
     assetModuleFilename: 'assets/[name].[contenthash][ext]',
   },
@@ -61,9 +61,8 @@ module.exports = {
     }),
   ],
   devServer: {
-    static: {
-      directory: path.join(__dirname, 'dist'),
-    },
+    static: false,
+    historyApiFallback: true,
     compress: true,
     port: 3005,
     proxy: [

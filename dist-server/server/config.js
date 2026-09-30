@@ -27,7 +27,8 @@ export const GN_TABLE_CONFIGS = {
     objects: {
         tableName: 'GN_departament_object',
         idColumn: 'GN_do_id',
-        editableColumns: ['GN_departament_object', 'GN_department_FK'],
+        editableColumns: ['GN_departament_object', 'GN_department_FK', 'GN_department_FKs'],
+        arrayColumns: ['GN_department_FKs'],
     },
     contracts: {
         tableName: 'GN_contracts',
@@ -49,16 +50,19 @@ export const GN_TABLE_CONFIGS = {
         tableName: 'GN_invest_okdp_tko_is_prit',
         idColumn: 'GN_invest_okdp_tko_is_prit_id',
         editableColumns: ['GN_invest_okdp_tko_is_prit'],
+        supportsExcelImportDeletion: true,
     },
     'invest-ogruz-rekvizit': {
         tableName: 'GN_invest_ogruz_rekvizit',
         idColumn: 'GN_invest_ogruz_rekvizit_id',
-        editableColumns: ['GN_invest_ogruz_rekvizit'],
+        editableColumns: ['GN_invest_ogruz_rekvizit', 'GN_department_FK', 'GN_departament_object_FK', 'Почтовый адрес'],
+        supportsExcelImportDeletion: true,
     },
     'equipment-manufacturers': {
         tableName: 'GN_equipment_manufacturer',
         idColumn: 'GN_equipment_manufacturer_id',
-        editableColumns: ['GN_equipment_manufacturer'],
+        editableColumns: ['GN_equipment_manufacturer', 'Полное название', 'СТРАНА', 'Доп. информация'],
+        supportsExcelImportDeletion: true,
     },
     'equipment-types': {
         tableName: 'GN_equipment_type',
@@ -72,6 +76,9 @@ export const GN_TABLE_CONFIGS = {
             'GN_equipment_model',
             'GN_equipment_manufacturer_FK',
             'GN_equipment_type_FK',
+            'GN_equipment_department_FK',
+            'GN_equipment_budget_item_FK',
+            'GN_equipment_object_FK',
         ],
     },
     'satellite-gt-numbers': {
@@ -83,6 +90,7 @@ export const GN_TABLE_CONFIGS = {
         tableName: 'GN_cellular_identifier',
         idColumn: 'GN_cellular_identifier_id',
         editableColumns: ['GN_cellular_identifier', 'GN_cellular_identifier_fio'],
+        supportsExcelImportDeletion: true,
     },
     'cellular-tariff-plans': {
         tableName: 'GN_cellular_tariff_plan',

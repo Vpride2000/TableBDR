@@ -329,17 +329,130 @@ export async function ensureImportSubstitutionTable(client) {
     await client.query(`ALTER TABLE "GN_import_substitution"
        ADD COLUMN IF NOT EXISTS "GN_import_substitution_okdp_fk" INTEGER REFERENCES "GN_invest_okdp_tko_is_prit"("GN_invest_okdp_tko_is_prit_id") ON DELETE SET NULL,
        ADD COLUMN IF NOT EXISTS "Наименование ТКО" TEXT,
+       ADD COLUMN IF NOT EXISTS "GN_import_substitution_equipment_type_fk" INTEGER REFERENCES "GN_equipment_type"("GN_equipment_type_id") ON DELETE SET NULL,
        ADD COLUMN IF NOT EXISTS "GN_import_substitution_vendor_fk" INTEGER REFERENCES "GN_equipment_manufacturer"("GN_equipment_manufacturer_id") ON DELETE SET NULL,
        ADD COLUMN IF NOT EXISTS "Классификация ТКО" TEXT,
        ADD COLUMN IF NOT EXISTS "ЕРРП" TEXT NOT NULL DEFAULT 'НЕТ',
        ADD COLUMN IF NOT EXISTS "ЕРМТР" TEXT NOT NULL DEFAULT 'НЕТ',
        ADD COLUMN IF NOT EXISTS "Регистрационный номер ТКО" TEXT,
        ADD COLUMN IF NOT EXISTS "Количество" NUMERIC(18,2),
+      ADD COLUMN IF NOT EXISTS "Выведен из эксплуатации" NUMERIC(18,0) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS "Инвентарный" TEXT,
        ADD COLUMN IF NOT EXISTS "Замещенное импортное ТКО" TEXT,
        ADD COLUMN IF NOT EXISTS "Кол-во выводенного импортного ТКО" NUMERIC(18,2),
        ADD COLUMN IF NOT EXISTS "Статья затрат ТКО" TEXT NOT NULL DEFAULT 'ПЭН',
+      ADD COLUMN IF NOT EXISTS "СЧЕТ УЧЕТА" TEXT,
+      ADD COLUMN IF NOT EXISTS "Статус закупки" TEXT NOT NULL DEFAULT 'план',
        ADD COLUMN IF NOT EXISTS "Платеж ТР без НДС" NUMERIC(18,2),
        ADD COLUMN IF NOT EXISTS "Год" INTEGER,
-       ADD COLUMN IF NOT EXISTS "Примечание" TEXT`);
+       ADD COLUMN IF NOT EXISTS "Примечание" TEXT,
+       ADD COLUMN IF NOT EXISTS "ЭКСПЛ" TEXT NOT NULL DEFAULT 'НЕТ',
+      ADD COLUMN IF NOT EXISTS "ПЛАН" TEXT NOT NULL DEFAULT 'РЕЗЕРВ',
+      ADD COLUMN IF NOT EXISTS "ГРУППА" TEXT NOT NULL DEFAULT 'офис',
+       ADD COLUMN IF NOT EXISTS "GN_import_substitution_object_fk" INTEGER REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS "GN_import_substitution_object_fks" INTEGER[],
+       ADD COLUMN IF NOT EXISTS "GN_import_substitution_supplier_fk" INTEGER REFERENCES "GN_contractor"("GN_c_id") ON DELETE SET NULL,
+       ADD COLUMN IF NOT EXISTS "GN_import_substitution_ogruz_fk" INTEGER REFERENCES "GN_invest_ogruz_rekvizit"("GN_invest_ogruz_rekvizit_id") ON DELETE SET NULL,
+       ADD COLUMN IF NOT EXISTS "оплата" TEXT`);
+    await client.query(`UPDATE "GN_import_substitution"
+     SET "СЧЕТ УЧЕТА" = 'МЦ400201'
+     WHERE "Статья затрат ТКО" = 'ПЭН'
+       AND NULLIF(TRIM("СЧЕТ УЧЕТА"), '') IS NULL`);
+    await client.query(`UPDATE "GN_import_substitution"
+     SET "GN_import_substitution_object_fks" = ARRAY["GN_import_substitution_object_fk"]
+     WHERE "GN_import_substitution_object_fks" IS NULL
+       AND "GN_import_substitution_object_fk" IS NOT NULL`);
+    await client.query(`ALTER TABLE "GN_import_substitution"
+       ALTER COLUMN "Выведен из эксплуатации" DROP DEFAULT,
+       ALTER COLUMN "Выведен из эксплуатации" TYPE NUMERIC(18,0)
+         USING CASE
+           WHEN LOWER(TRIM("Выведен из эксплуатации"::TEXT)) = 'да' THEN 1
+           WHEN LOWER(TRIM("Выведен из эксплуатации"::TEXT)) = 'нет' THEN 0
+           WHEN NULLIF(TRIM("Выведен из эксплуатации"::TEXT), '') IS NULL THEN 0
+           ELSE ROUND("Выведен из эксплуатации"::NUMERIC)
+         END,
+       ALTER COLUMN "Выведен из эксплуатации" SET DEFAULT 0`);
+}
+export async function ensureOgruzReferenceColumns(client) {
+    await client.query(`ALTER TABLE "GN_invest_ogruz_rekvizit"
+       ADD COLUMN IF NOT EXISTS "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+       ADD COLUMN IF NOT EXISTS "GN_departament_object_FK" INTEGER REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL,
+       ADD COLUMN IF NOT EXISTS "Почтовый адрес" TEXT`);
+}
+export async function ensureEquipmentModelReferenceColumns(client) {
+    await client.query(`ALTER TABLE "GN_equipment_model"
+       ADD COLUMN IF NOT EXISTS "GN_equipment_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+       ADD COLUMN IF NOT EXISTS "GN_equipment_budget_item_FK" INTEGER REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE SET NULL,
+       ADD COLUMN IF NOT EXISTS "GN_equipment_object_FK" INTEGER REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL`);
+}
+export async function ensureObjectDepartmentColumns(client) {
+    const tableExists = await client.query('SELECT to_regclass($1) IS NOT NULL AS exists', ['public.GN_departament_object']);
+    if (!tableExists.rows[0]?.exists)
+        return;
+    await client.query(`ALTER TABLE "GN_departament_object"
+       ADD COLUMN IF NOT EXISTS "GN_department_FKs" INTEGER[]`);
+    await client.query(`UPDATE "GN_departament_object"
+        SET "GN_department_FKs" = ARRAY["GN_department_FK"]::INTEGER[]
+      WHERE "GN_department_FKs" IS NULL
+        AND "GN_department_FK" IS NOT NULL`);
+}
+export async function ensureReferenceTables(client) {
+    await client.query(`CREATE TABLE IF NOT EXISTS "GN_department" (
+       "GN_Dep_id" SERIAL PRIMARY KEY,
+       "GN_department" TEXT NOT NULL
+     )`);
+    await client.query(`CREATE TABLE IF NOT EXISTS "GN_contractor" (
+       "GN_c_id" SERIAL PRIMARY KEY,
+       "GN_contarctor" TEXT NOT NULL
+     )`);
+    await client.query(`CREATE TABLE IF NOT EXISTS "GN_equipment_manufacturer" (
+       "GN_equipment_manufacturer_id" SERIAL PRIMARY KEY,
+       "GN_equipment_manufacturer" TEXT NOT NULL,
+       "Полное название" TEXT,
+       "СТРАНА" TEXT,
+       "Доп. информация" TEXT
+     )`);
+    await client.query(`ALTER TABLE "GN_equipment_manufacturer"
+       ADD COLUMN IF NOT EXISTS "Полное название" TEXT,
+       ADD COLUMN IF NOT EXISTS "СТРАНА" TEXT,
+       ADD COLUMN IF NOT EXISTS "Доп. информация" TEXT`);
+    await client.query(`CREATE TABLE IF NOT EXISTS "GN_departament_object" (
+       "GN_do_id" SERIAL PRIMARY KEY,
+       "GN_departament_object" TEXT NOT NULL,
+       "GN_department_FK" INTEGER NOT NULL,
+       "GN_department_FKs" INTEGER[]
+     )`);
+}
+export async function ensureReferenceSequences(client) {
+    const sequences = [
+        ['GN_departament_object', 'GN_do_id'],
+        ['GN_department', 'GN_Dep_id'],
+        ['GN_contractor', 'GN_c_id'],
+    ];
+    for (const [tableName, idColumn] of sequences) {
+        const tableExists = await client.query('SELECT to_regclass($1) IS NOT NULL AS exists', [`public.${tableName}`]);
+        if (!tableExists.rows[0]?.exists)
+            continue;
+        await client.query(`SELECT setval(
+         pg_get_serial_sequence($1, $2),
+         COALESCE(MAX("${idColumn}"), 1),
+         COUNT(*) > 0
+       )
+       FROM "${tableName}"`, [tableName, idColumn]);
+    }
+}
+export async function ensureExcelImportDeletionColumns(client) {
+    const tables = [
+        'GN_bdr',
+        'GN_import_substitution',
+        'GN_cellular_identifier',
+        'GN_invest_okdp_tko_is_prit',
+        'GN_invest_ogruz_rekvizit',
+        'GN_equipment_manufacturer',
+    ];
+    for (const tableName of tables) {
+        await client.query(`ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "is_deleted" BOOLEAN NOT NULL DEFAULT FALSE`);
+        await client.query(`ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMPTZ`);
+    }
 }
 //# sourceMappingURL=db.js.map
