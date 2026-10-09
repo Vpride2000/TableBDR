@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { formatErrorMessage, formatHttpError } from '../utils/forecastUtils'
+import ExcelActionToolbar from '../components/ExcelActionToolbar'
 
 type Row = Record<string, unknown>;
 type SortDirection = 'asc' | 'desc';
@@ -64,6 +66,36 @@ const COLUMNS: EquipmentColumn[] = [
   'Примечание',
 ];
 
+const EQUIPMENT_EXCEL_COLUMNS = [
+  'Подразделение',
+  'Код ТКО',
+  'Наименование ТКО',
+  'Тип',
+  'Вендор ТКО',
+  'Классификация ТКО',
+  'ЕРРП',
+  'ЕРМТР',
+  'Регистрационный номер ТКО',
+  'Количество',
+  'Выведен из эксплуатации',
+  'Инвентарный',
+  'Замещенное импортное ТКО',
+  'Кол-во выводенного импортного ТКО',
+  'Статья затрат ТКО',
+  'СЧЕТ УЧЕТА',
+  'Статус закупки',
+  'Платеж ТР без НДС',
+  'Год',
+  'Примечание',
+  'ЭКСПЛ',
+  'ПЛАН',
+  'ГРУППА',
+  'ОБЪЕКТ',
+  'Поставщик',
+  'Огрузочный реквизит',
+  'оплата',
+];
+
 function compareValues(left: unknown, right: unknown): number {
   const leftNumber = Number(left);
   const rightNumber = Number(right);
@@ -115,15 +147,15 @@ function readEquipmentAccountingViewState(): EquipmentAccountingViewState {
   }
 }
 
-export default function EquipmentAccountingTable(): React.ReactElement {
+export default function EquipmentAccountingTable({ requiredType }: { requiredType?: string } = {}): React.ReactElement {
   const savedViewState = readEquipmentAccountingViewState();
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Record<string, string>>(savedViewState.filters ?? {});
   const [multiFilters, setMultiFilters] = useState<Record<string, string[]>>(savedViewState.multiFilters ?? {});
-  const [hideDepartment, setHideDepartment] = useState(savedViewState.hideDepartment ?? false);
-  const [disableQuantitySumming, setDisableQuantitySumming] = useState(savedViewState.disableQuantitySumming ?? false);
+  const [hideDepartment, setHideDepartment] = useState(requiredType ? false : savedViewState.hideDepartment ?? false);
+  const [disableQuantitySumming, setDisableQuantitySumming] = useState(requiredType ? true : savedViewState.disableQuantitySumming ?? false);
   const [departmentFilters, setDepartmentFilters] = useState<string[]>(
     savedViewState.departmentFilters ?? (savedViewState.departmentFilter ? [savedViewState.departmentFilter] : []),
   );
@@ -136,6 +168,9 @@ export default function EquipmentAccountingTable(): React.ReactElement {
   const [newRow, setNewRow] = useState<Row>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [excelImporting, setExcelImporting] = useState(false);
+  const [excelImportError, setExcelImportError] = useState<string | null>(null);
+  const [excelImportMessage, setExcelImportMessage] = useState<string | null>(null);
   const [copyDialogOpen, setCopyDialogOpen] = useState(false);
   const [copyQuantity, setCopyQuantity] = useState('');
   const [copyAvailableQuantity, setCopyAvailableQuantity] = useState(0);
@@ -145,8 +180,16 @@ export default function EquipmentAccountingTable(): React.ReactElement {
     column: 'Подразделение',
     direction: 'asc',
   });
+  const scopedData = useMemo(
+    () => requiredType
+      ? data.filter((row) => String(row['Тип'] ?? '').trim() === requiredType)
+      : data,
+    [data, requiredType],
+  );
 
   useEffect(() => {
+    if (requiredType) return;
+
     const viewState: EquipmentAccountingViewState = {
       filters,
       multiFilters,
@@ -158,7 +201,7 @@ export default function EquipmentAccountingTable(): React.ReactElement {
       sort,
     };
     window.localStorage.setItem(EQUIPMENT_ACCOUNTING_STORAGE_KEY, JSON.stringify(viewState));
-  }, [columnWidths, departmentFilters, disableQuantitySumming, filters, hideDepartment, multiFilters, planAvailabilityFilter, sort]);
+  }, [columnWidths, departmentFilters, disableQuantitySumming, filters, hideDepartment, multiFilters, planAvailabilityFilter, requiredType, sort]);
 
   useEffect(() => {
     fetch('/api/import-substitution', { cache: 'no-store' })
@@ -191,7 +234,7 @@ export default function EquipmentAccountingTable(): React.ReactElement {
   const summaryRows = useMemo<EquipmentSummaryRow[]>(() => {
     const grouped = new Map<string, EquipmentSummaryRow>();
 
-    const rowsForSummary = data.filter((row) => {
+    const rowsForSummary = scopedData.filter((row) => {
       if (departmentFilters.length > 0
         && !departmentFilters.includes(String(row['Подразделение'] ?? '').trim())) return false;
       if (!planAvailabilityFilter) return true;
@@ -262,7 +305,7 @@ export default function EquipmentAccountingTable(): React.ReactElement {
     });
 
     return [...grouped.values()];
-  }, [data, departmentFilters, disableQuantitySumming, hideDepartment, planAvailabilityFilter]);
+  }, [departmentFilters, disableQuantitySumming, hideDepartment, planAvailabilityFilter, scopedData]);
 
   const filteredAndSortedData = useMemo(() => {
     const filtered = summaryRows.filter((row) => COLUMNS.every((column) => {
@@ -459,7 +502,14 @@ export default function EquipmentAccountingTable(): React.ReactElement {
   function startCreate(): void {
     setCreatingRow(true);
     setSaveError(null);
-    setNewRow({ 'ЭКСПЛ': 'НЕТ', 'ПЛАН': 'РЕЗЕРВ', 'ГРУППА': 'офис', 'Выведен из эксплуатации': 0, 'СЧЕТ УЧЕТА': 'МЦ400201' });
+    setNewRow({
+      ...(requiredType ? { 'Тип': requiredType } : {}),
+      'ЭКСПЛ': 'НЕТ',
+      'ПЛАН': 'РЕЗЕРВ',
+      'ГРУППА': 'офис',
+      'Выведен из эксплуатации': 0,
+      'СЧЕТ УЧЕТА': 'МЦ400201',
+    });
   }
 
   function cancelCreate(): void {
@@ -521,8 +571,8 @@ export default function EquipmentAccountingTable(): React.ReactElement {
       return;
     }
     const quantityToCopy = Number(copyQuantity);
-    if (!Number.isInteger(quantityToCopy) || quantityToCopy <= 0 || quantityToCopy > copyAvailableQuantity) {
-      setCopyError(`Укажите целое количество от 1 до ${formatQuantity(copyAvailableQuantity)}`);
+    if (!Number.isInteger(quantityToCopy) || quantityToCopy < 0 || quantityToCopy > copyAvailableQuantity) {
+      setCopyError(`Укажите целое количество от 0 до ${formatQuantity(copyAvailableQuantity)}`);
       return;
     }
 
@@ -608,11 +658,102 @@ export default function EquipmentAccountingTable(): React.ReactElement {
     setDraft((previous) => ({ ...previous, [column]: value }));
   }
 
+  function resetAllFilters(): void {
+    setFilters({});
+    setMultiFilters({});
+    setDepartmentFilters([]);
+    setPlanAvailabilityFilter('');
+  }
+
+  function exportToExcel(): void {
+    const header = ['№', ...EQUIPMENT_EXCEL_COLUMNS];
+    const rows = scopedData.map((row) => [
+      row['GN_import_substitution_id'] ?? '',
+      ...EQUIPMENT_EXCEL_COLUMNS.map((column) => {
+        const value = row[column];
+        return Array.isArray(value) ? JSON.stringify(value) : value ?? '';
+      }),
+    ]);
+    const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    worksheet['!autofilter'] = {
+      ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: header.length - 1 } }),
+    };
+    worksheet['!cols'] = header.map((title, index) => ({
+      wch: Math.min(44, Math.max(12, ...[title, ...rows.map((row) => String(row[index] ?? ''))].map((value) => value.length + 2))),
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Учет оборудования');
+    XLSX.writeFile(workbook, 'Учет_оборудования.xlsx');
+  }
+
+  async function importFromExcel(file: File): Promise<void> {
+    setExcelImporting(true);
+    setExcelImportError(null);
+    setExcelImportMessage(null);
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName) throw new Error('В файле отсутствуют листы');
+
+      const rows = XLSX.utils.sheet_to_json<Row>(workbook.Sheets[sheetName], { defval: '' });
+      if (rows.length === 0) throw new Error('В файле нет строк для загрузки');
+
+      const existingIds = new Set(data.map((row) => Number(row['GN_import_substitution_id'])));
+      const updatedIds = new Set<number>();
+      let savedRows = 0;
+      for (const [index, row] of rows.entries()) {
+        const rawId = row['№'] ?? row['GN_import_substitution_id'];
+        const rowId = Number(rawId);
+        const shouldUpdate = Number.isInteger(rowId) && rowId > 0
+          && existingIds.has(rowId) && !updatedIds.has(rowId);
+        const payload: Row = Object.fromEntries(EQUIPMENT_EXCEL_COLUMNS.map((column) => [column, row[column] ?? '']));
+        const rawObjects = payload['ОБЪЕКТ'];
+        if (typeof rawObjects === 'string') {
+          const normalizedObjects = rawObjects.trim();
+          if (!normalizedObjects) {
+            payload['ОБЪЕКТ'] = [];
+          } else if (normalizedObjects.startsWith('[')) {
+            const parsedObjects: unknown = JSON.parse(normalizedObjects);
+            if (!Array.isArray(parsedObjects)) throw new Error(`Строка ${index + 2}: некорректный список объектов`);
+            payload['ОБЪЕКТ'] = parsedObjects.map(String);
+          } else {
+            payload['ОБЪЕКТ'] = [normalizedObjects];
+          }
+        }
+        if (!String(payload['Подразделение'] ?? '').trim()) {
+          throw new Error(`Строка ${index + 2}: не заполнено подразделение`);
+        }
+
+        const response = await fetch(shouldUpdate ? `/api/import-substitution/${rowId}` : '/api/import-substitution', {
+          method: shouldUpdate ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (shouldUpdate) updatedIds.add(rowId);
+        if (!response.ok) {
+          const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(`Строка ${index + 2}: ${errorPayload.error || formatHttpError(response.status)}`);
+        }
+        savedRows += 1;
+      }
+
+      const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
+      if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
+      setData((await refreshed.json()) as Row[]);
+      setExcelImportMessage(`Загружено строк: ${savedRows}.`);
+    } catch (requestError) {
+      setExcelImportError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить Excel-файл');
+    } finally {
+      setExcelImporting(false);
+    }
+  }
+
   if (loading) return <main><p className="hint">Загрузка данных...</p></main>;
   if (error) return <main><p className="hint hint--error">Ошибка: {error}</p></main>;
 
   const visibleColumns = columnOrder.filter((column) => (
     column !== 'Классификация ТКО'
+      && (!requiredType || (column !== 'Тип' && column !== 'Вендор ТКО'))
       && (!hideDepartment || (column !== 'Подразделение' && column !== 'ОБЪЕКТ'))
   ));
 
@@ -622,50 +763,66 @@ export default function EquipmentAccountingTable(): React.ReactElement {
         <div className="page-header">
           <h2>Учет оборудования</h2>
         </div>
-        <label className="form-checkbox" style={{ display: 'flex', justifyContent: 'flex-start' }}>
-          <input
-            type="checkbox"
-            checked={hideDepartment}
-            onChange={(event) => setHideDepartment(event.target.checked)}
-          />
-          Скрыть подразделение
-        </label>
-        <label className="form-checkbox" style={{ display: 'flex', justifyContent: 'flex-start' }}>
-          <input
-            type="checkbox"
-            checked={disableQuantitySumming}
-            onChange={(event) => setDisableQuantitySumming(event.target.checked)}
-          />
-          Убрать суммирование по полю Количество для редактирования строк
-        </label>
-        <label className="equipment-group-filter equipment-department-filter">
-          Подразделение
-          <div className="equipment-department-filter__resizable">
-            <select
-              multiple
-              size={4}
-              aria-label="Фильтр по подразделениям"
-              value={departmentFilters.length > 0 ? departmentFilters : ['']}
-              onChange={(event) => setDepartmentFilters(
-                [...event.target.selectedOptions].map((option) => option.value).filter(Boolean),
-              )}
-            >
-              <option value="">Все подразделения</option>
-              {(lookupRows['Подразделение'] ?? [])
-                .map((row) => String(row.GN_department ?? '').trim())
-                .filter(Boolean)
-                .map((department) => <option key={department} value={department}>{department}</option>)}
-            </select>
-          </div>
-        </label>
-        <label className="equipment-group-filter">
-          ПЛАН/НАЛИЧИЕ
-          <select value={planAvailabilityFilter} onChange={(event) => setPlanAvailabilityFilter(event.target.value)}>
-            <option value="">Все</option>
-            <option value="fact">Факт</option>
-            <option value="plan">План</option>
-          </select>
-        </label>
+        <ExcelActionToolbar
+          onReset={resetAllFilters}
+          onExport={exportToExcel}
+          onUpload={(file) => void importFromExcel(file)}
+          uploading={excelImporting}
+        />
+        {excelImportMessage && <p className="hint">{excelImportMessage}</p>}
+        {excelImportError && <p className="hint hint--error">Ошибка загрузки из Excel: {excelImportError}</p>}
+        {!requiredType && (
+          <>
+            <label className="form-checkbox" style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <input
+                type="checkbox"
+                checked={hideDepartment}
+                onChange={(event) => setHideDepartment(event.target.checked)}
+              />
+              Скрыть подразделение
+            </label>
+            <label className="form-checkbox" style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <input
+                type="checkbox"
+                checked={disableQuantitySumming}
+                onChange={(event) => setDisableQuantitySumming(event.target.checked)}
+              />
+              Убрать суммирование по полю Количество для редактирования строк
+            </label>
+          </>
+        )}
+        {!requiredType && (
+          <>
+            <label className="equipment-group-filter equipment-department-filter">
+              Подразделение
+              <div className="equipment-department-filter__resizable">
+                <select
+                  multiple
+                  size={4}
+                  aria-label="Фильтр по подразделениям"
+                  value={departmentFilters.length > 0 ? departmentFilters : ['']}
+                  onChange={(event) => setDepartmentFilters(
+                    [...event.target.selectedOptions].map((option) => option.value).filter(Boolean),
+                  )}
+                >
+                  <option value="">Все подразделения</option>
+                  {(lookupRows['Подразделение'] ?? [])
+                    .map((row) => String(row.GN_department ?? '').trim())
+                    .filter(Boolean)
+                    .map((department) => <option key={department} value={department}>{department}</option>)}
+                </select>
+              </div>
+            </label>
+            <label className="equipment-group-filter">
+              ПЛАН/НАЛИЧИЕ
+              <select value={planAvailabilityFilter} onChange={(event) => setPlanAvailabilityFilter(event.target.value)}>
+                <option value="">Все</option>
+                <option value="fact">Факт</option>
+                <option value="plan">План</option>
+              </select>
+            </label>
+          </>
+        )}
         {creatingRow && (
           <div className="guide-new-row equipment-new-row">
             {COLUMNS.filter((column) => column !== 'Количество'
@@ -768,7 +925,7 @@ export default function EquipmentAccountingTable(): React.ReactElement {
                           onChange={(event) => setFilters((previous) => ({ ...previous, [column]: event.target.value }))}
                         />
                       )}
-                      {column === 'Количество' && (
+                      {column === 'Количество' && !requiredType && (
                         <span className="equipment-accounting-column-total">
                           {formatIntegerQuantity(displayedQuantityTotal)}
                         </span>
@@ -787,7 +944,7 @@ export default function EquipmentAccountingTable(): React.ReactElement {
                   <span>Действие</span>
                   <button
                     type="button"
-                    className="page-action-btn page-action-btn--secondary"
+                    className="page-text-link"
                     onClick={startCreate}
                     disabled={creatingRow}
                   >
@@ -910,7 +1067,7 @@ export default function EquipmentAccountingTable(): React.ReactElement {
                   Количество
                   <input
                     type="number"
-                    min="1"
+                    min="0"
                     max={copyAvailableQuantity}
                     step="1"
                     autoFocus
@@ -929,7 +1086,7 @@ export default function EquipmentAccountingTable(): React.ReactElement {
               </div>
               {copyError && <p className="hint hint--error">{copyError}</p>}
               <div className="equipment-copy-dialog__actions">
-                <button type="submit" className="page-action-btn page-action-btn--success" disabled={saving || copyAvailableQuantity < 1}>
+                <button type="submit" className="page-action-btn page-action-btn--success" disabled={saving}>
                   {saving ? 'Сохранение...' : 'Сохранить'}
                 </button>
                 <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => setCopyDialogOpen(false)} disabled={saving}>

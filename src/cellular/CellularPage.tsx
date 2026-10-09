@@ -544,40 +544,40 @@ export default function CellularPage() {
                   <h3> Справочник абонентов служебной сотовой связи </h3>
                 </div>
                 
-                <div className="guide-table-actions" style={{ justifyContent: 'flex-start', marginBottom: '8px' }}>
+                <div className="guide-table-actions cellular-main-actions" style={{ justifyContent: 'flex-start', marginBottom: '8px' }}>
                 <button
                   type="button"
-                  className="page-action-btn page-action-btn--secondary"
+                  className="page-text-link"
                   onClick={openIdentifierGuideWindow}
                 >
                   Справочник абонентов краткий
                 </button>
                 <button
                   type="button"
-                  className="page-action-btn page-action-btn--secondary"
+                  className="page-text-link"
                   onClick={openTariffGuideWindow}
                 >
                   Тарифы
                 </button>
                 <button
                   type="button"
-                  className="page-action-btn page-action-btn--secondary"
+                  className="page-text-link"
                   onClick={openAccountGuideWindow}
                 >
                   Лицевые счета
                 </button>               
-                  <span className="page-action-btn page-action-btn--secondary" style={{ display: 'inline-block' }}>
+                  <label className="page-text-link" style={{ display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
                     {uploading ? 'Загрузка...' : 'Загрузить обновленный отчет из XLSX'}
-                  </span>
-                  <input
-                    type="file"
-                    accept=".xlsx"
-                    onChange={(event) => {
-                      void handleXlsxUpload(event)
-                    }}
-                    style={{ display: 'none' }}
-                    disabled={uploading}
-                  />
+                    <input
+                      type="file"
+                      accept=".xlsx"
+                      onChange={(event) => {
+                        void handleXlsxUpload(event)
+                      }}
+                      style={{ display: 'none' }}
+                      disabled={uploading}
+                    />
+                  </label>
                   <span style={{ marginLeft: '12px' }}>Последняя загрузка: <strong>{lastUploadDisplay}</strong></span>
               </div>  
           

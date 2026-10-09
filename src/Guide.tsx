@@ -656,7 +656,7 @@ function DataTable({
   }
 
   return (
-    <div className="guide-table-wrap">
+    <div className="guide-table-wrap guide-reference-table-wrap">
       <div className="guide-table-actions">
         <button type="button" className="page-action-btn page-action-btn--secondary" onClick={startCreate} disabled={creatingRow}>Добавить</button>
         {isCellularAccounts && (
@@ -754,7 +754,7 @@ function DataTable({
           {createError && <p className="hint hint--error">Ошибка добавления: {createError}</p>}
         </div>
       )}
-      <table className="guide-table table-compact">
+      <table className="guide-table table-compact guide-reference-table">
         <thead>
           <tr>
             {columns.map((col) => {
@@ -842,7 +842,7 @@ function DataTable({
                       {actionMenuRowId === rowId && (
                         <div className="guide-row-actions-menu">
                           <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => startEdit(row)}>
-                            ИСПР
+                            ИЗМ
                           </button>
                           <button type="button" className="page-action-btn page-action-btn--danger" onClick={() => void deleteRow(rowId)} disabled={saving}>
                             УДАЛ

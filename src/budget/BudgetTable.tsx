@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
 import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils';
 import MainBudgetTableContent from './MainBudgetTableContent';
+import ExcelActionToolbar from '../components/ExcelActionToolbar';
 
 // Компонент таблицы лимитов по услугам связи.
 // Загружает список BDR-строк, поддерживает сортировку, фильтрацию и редактирование строк.
@@ -19,6 +20,7 @@ interface BudgetTableProps {
 }
 type SortDirection = 'asc' | 'desc';
 const BDR_UPDATED_EVENT_KEY = 'bdr:last-update';
+const BDR_FILTERS_STORAGE_KEY = 'bdr:full-table-filters';
 type SelectOption = { value: string; label: string };
 const FINANCIAL_NUMBER_FORMATTER = new Intl.NumberFormat('ru-RU', {
   minimumFractionDigits: 2,
@@ -37,9 +39,10 @@ const BDR_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> 
 const LOCKED_EDIT_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Лимит', 'Един. лимит']);
 const EXTRA_NUMERIC_COLUMNS = new Set(['БДР25корр', 'БДР26', 'БДР26корр']);
 const FINANCIAL_EXPORT_COLUMNS = new Set(['Лимит', 'БДР25корр', 'БДР26', 'БДР26корр', 'Един. лимит']);
-const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Един. лимит', 'Предмет договора', 'Примечания']);
+const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Един. лимит', 'Предмет договора', 'Примечания']);
 const COLUMN_TITLES: Record<string, string> = {
   GN_bdr_ID: '№',
+  'Кол-во': 'Количество',
   Лимит: 'БДР25',
   БДР25корр: 'БДР25корр',
   БДР26: 'БДР26',
@@ -50,6 +53,7 @@ const BDR_CREATE_FIELD_BY_COLUMN: Record<string, string> = {
   Подразделение: 'department',
   Объект: 'object_name',
   Договор: 'dogovor',
+  РАСЧЕТ: 'calculation',
   Контрагент: 'contractor',
   'Статья бюджета': 'budget_item',
   'Предмет договора': 'predmet_dogovora',
@@ -111,6 +115,18 @@ function toExcelNumber(value: unknown): number | string {
   return Number.isFinite(parsed) ? parsed : text;
 }
 
+function readSavedBdrFilters(): Record<string, string> {
+  try {
+    const storedFilters = localStorage.getItem(BDR_FILTERS_STORAGE_KEY);
+    if (!storedFilters) return {};
+    const parsed: unknown = JSON.parse(storedFilters);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  } catch {
+    return {};
+  }
+}
+
 interface BudgetTableProps {
   onAddRow: () => void;
   onOpenLimit: (rowId: number) => void;
@@ -135,7 +151,7 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lookupRows, setLookupRows] = useState<Record<string, Row[]>>({});
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState<Record<string, string>>(readSavedBdrFilters);
   const [contractsLookup, setContractsLookup] = useState<Record<string, number>>({});
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -144,6 +160,14 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
   function setFilter(column: string, value: string): void {
     setFilters((prev) => ({ ...prev, [column]: value }));
   }
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BDR_FILTERS_STORAGE_KEY, JSON.stringify(filters));
+    } catch {
+      return;
+    }
+  }, [filters]);
 
   function loadData(): Promise<void> {
     setLoading(true);
@@ -273,6 +297,15 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
     () => filteredData.reduce((sum, row) => sum + parseNumericValue(row['Лимит']), 0),
     [filteredData]
   );
+  const filteredNumericTotals = useMemo(
+    () => Object.fromEntries(
+      [...EXTRA_NUMERIC_COLUMNS].map((column) => [
+        column,
+        filteredData.reduce((sum, row) => sum + parseNumericValue(row[column]), 0),
+      ])
+    ),
+    [filteredData]
+  );
 
   function toggleSort(column: string): void {
     setSort((prev) => {
@@ -354,7 +387,8 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
         .map((row) => {
           const label = String(row[config.labelKey] ?? '');
           return { value: label, label };
-        });
+        })
+        .sort((a, b) => a.label.localeCompare(b.label, 'ru', { sensitivity: 'base' }));
     }
 
     if (column === 'Договор') {
@@ -412,6 +446,54 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
     } finally {
       setSaving(false);
     }
+  }
+
+  async function deleteEdit(): Promise<void> {
+    if (editingRowId == null || !window.confirm('Удалить выбранную строку?')) return;
+
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const response = await fetch(`/api/gn/bdr/${editingRowId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+
+      setData((prev) => prev.filter((row) => Number(row['GN_bdr_ID']) !== editingRowId));
+      localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()));
+      cancelEdit();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Не удалось удалить строку');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function copyPreviousColumn(targetColumn: string, sourceColumn: string): Promise<void> {
+    if (!window.confirm('Точно хотите скопировать цифры с левого столбца?')) return;
+
+    setSaveError(null);
+    for (const row of filteredData) {
+      const rowId = Number(row['GN_bdr_ID']);
+      try {
+        const response = await fetch(`/api/gn/bdr/${rowId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [targetColumn]: row[sourceColumn] ?? '' }),
+        });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+        const updatedRow = (await response.json()) as Row;
+        setData((prev) => prev.map((item) => Number(item['GN_bdr_ID']) === rowId ? updatedRow : item));
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : 'Не удалось скопировать значения');
+        return;
+      }
+    }
+    localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()));
   }
 
   function exportToXlsx(): void {
@@ -485,37 +567,54 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
       const updatedIds = new Set<number>();
       const importedIds = new Set<number>();
 
-      for (const row of rows) {
-        const rowId = Number(row['№'] ?? row.GN_bdr_ID);
-        if (Number.isInteger(rowId) && rowId > 0) importedIds.add(rowId);
+      const batchSize = 5;
+      for (let startIndex = 0; startIndex < rows.length; startIndex += batchSize) {
+        const batch = rows.slice(startIndex, startIndex + batchSize);
+        const results = await Promise.all(batch.map(async (row, batchIndex) => {
+          const rowNumber = startIndex + batchIndex + 2;
+          try {
+            const rowId = Number(row['№'] ?? row.GN_bdr_ID);
+            if (Number.isInteger(rowId) && rowId > 0) importedIds.add(rowId);
 
-        const payload = Object.fromEntries(
-          Object.entries(row).map(([column, value]) => [columnByExportTitle[column] ?? column, value])
-        );
-        delete payload['№'];
-        delete payload.GN_bdr_ID;
+            const payload = Object.fromEntries(
+              Object.entries(row).map(([column, value]) => [columnByExportTitle[column] ?? column, value])
+            );
+            delete payload['№'];
+            delete payload.GN_bdr_ID;
 
-        const shouldUpdate = Number.isInteger(rowId) && rowId > 0 && existingIds.has(rowId) && !updatedIds.has(rowId);
-        const createPayload = Object.fromEntries(
-          Object.entries(payload)
-            .filter(([column]) => BDR_CREATE_FIELD_BY_COLUMN[column])
-            .map(([column, value]) => [BDR_CREATE_FIELD_BY_COLUMN[column], value])
-        );
-        if (!shouldUpdate && !String(createPayload.department ?? '').trim()) continue;
+            const shouldUpdate = Number.isInteger(rowId) && rowId > 0 && existingIds.has(rowId) && !updatedIds.has(rowId);
+            if (shouldUpdate) updatedIds.add(rowId);
+            const createPayload = Object.fromEntries(
+              Object.entries(payload)
+                .filter(([column]) => BDR_CREATE_FIELD_BY_COLUMN[column])
+                .map(([column, value]) => [BDR_CREATE_FIELD_BY_COLUMN[column], value])
+            );
+            if (!shouldUpdate && !String(createPayload.department ?? '').trim()) {
+              return { status: 'skipped' as const };
+            }
 
-        const response = await fetch(shouldUpdate ? `/api/gn/bdr/${rowId}` : '/api/gn/bdr', {
-          method: shouldUpdate ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(shouldUpdate ? payload : createPayload),
-        });
+            const response = await fetch(shouldUpdate ? `/api/gn/bdr/${rowId}` : '/api/gn/bdr', {
+              method: shouldUpdate ? 'PUT' : 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(shouldUpdate ? payload : createPayload),
+            });
 
-        if (shouldUpdate) updatedIds.add(rowId);
-        if (!response.ok) {
-          const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
-          throw new Error(`Строка ${savedRows + 2}: ${errorPayload.error || formatHttpError(response.status)}`);
-        }
+            if (!response.ok) {
+              const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
+              throw new Error(`Строка ${rowNumber}: ${errorPayload.error || formatHttpError(response.status)}`);
+            }
+            return { status: 'saved' as const };
+          } catch (err) {
+            return {
+              status: 'error' as const,
+              message: err instanceof Error ? err.message : `Строка ${rowNumber}: ошибка загрузки`,
+            };
+          }
+        }));
 
-        savedRows += 1;
+        savedRows += results.filter((result) => result.status === 'saved').length;
+        const failedResult = results.find((result) => result.status === 'error');
+        if (failedResult?.status === 'error') throw new Error(failedResult.message);
       }
 
       if (savedRows === 0) {
@@ -547,34 +646,20 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
 
       {!loading && !error && data.length > 0 && showMainTable && (
         <>
-          <div className="budget-actions budget-actions--top-right">
-            <button type="button" className="page-action-btn" onClick={onAddRowProp}>
-              Добавить строку
-            </button>
-            <button type="button" className="page-action-btn page-action-btn--secondary" onClick={exportToXlsx}>
-              Выгрузить в Excel
-            </button>
-            <label className="page-action-btn page-action-btn--secondary" style={{ cursor: importing ? 'default' : 'pointer' }}>
-              {importing ? 'Загрузка...' : 'Загрузить из Excel'}
-              <input
-                type="file"
-                accept=".xlsx"
-                style={{ display: 'none' }}
-                disabled={importing}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = '';
-                  if (file) void importFromXlsx(file);
-                }}
-              />
-            </label>
-          </div>
+          <ExcelActionToolbar
+            onReset={() => setFilters({})}
+            onExport={exportToXlsx}
+            onUpload={(file) => void importFromXlsx(file)}
+            uploading={importing}
+          />
           {importMessage && <p className="hint">{importMessage}</p>}
           {importError && <p className="hint hint--error">Ошибка загрузки из Excel: {importError}</p>}
           <MainBudgetTableContent
+            onAddRow={onAddRowProp}
             visibleMainColumns={visibleMainColumns}
             filteredData={filteredData}
             filteredLimitTotal={filteredLimitTotal}
+            filteredNumericTotals={filteredNumericTotals}
             sort={sort}
             editingRowId={editingRowId}
             draft={draft}
@@ -592,6 +677,8 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
             onSetFilter={setFilter}
             onStartEdit={startEdit}
             onSaveEdit={saveEdit}
+            onDeleteEdit={deleteEdit}
+            onCopyPreviousColumn={copyPreviousColumn}
             onCancelEdit={cancelEdit}
             onUpdateDraft={updateDraft}
             onGetSelectOptions={getSelectOptionsForColumn}

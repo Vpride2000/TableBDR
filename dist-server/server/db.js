@@ -454,5 +454,6 @@ export async function ensureExcelImportDeletionColumns(client) {
         await client.query(`ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "is_deleted" BOOLEAN NOT NULL DEFAULT FALSE`);
         await client.query(`ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMPTZ`);
     }
+    await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_calculation" TEXT NOT NULL DEFAULT ''`);
 }
 //# sourceMappingURL=db.js.map

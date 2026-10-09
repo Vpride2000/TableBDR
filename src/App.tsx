@@ -1,4 +1,5 @@
 import { useRef, useState, useMemo, useEffect } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import BudgetTable from './budget/BudgetTable'
 import BudgetSummaryPopup from './budget/BudgetSummaryPopup'
 import Guide from './Guide'
@@ -65,8 +66,40 @@ interface DashboardSummary {
   importRegistryPercent: number
 }
 
+interface ObjectUsageSummaryRow {
+  department: string
+  objectName: string
+  communicationServices: string[]
+  communicationServiceCostTotal: number
+  equipmentTypes: Array<{ type: string; quantity: number }>
+  equipmentCostTotal: number
+}
+
+type ObjectUsageSortKey = 'department' | 'objectName' | 'communicationServices' | 'communicationServiceCostTotal' | 'equipmentTypes' | 'equipmentCostTotal'
+
 function StartDashboard() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
+  const [objectUsageSummary, setObjectUsageSummary] = useState<ObjectUsageSummaryRow[]>([])
+  const [objectSummaryFilters, setObjectSummaryFilters] = useState<Record<ObjectUsageSortKey, string>>({
+    department: '',
+    objectName: '',
+    communicationServices: '',
+    communicationServiceCostTotal: '',
+    equipmentTypes: '',
+    equipmentCostTotal: '',
+  })
+  const [objectSummarySort, setObjectSummarySort] = useState<{ key: ObjectUsageSortKey; direction: 'asc' | 'desc' }>({
+    key: 'department',
+    direction: 'asc',
+  })
+  const [objectSummaryColumnWidths, setObjectSummaryColumnWidths] = useState<Record<ObjectUsageSortKey, number>>({
+    department: 120,
+    objectName: 130,
+    communicationServices: 250,
+    communicationServiceCostTotal: 130,
+    equipmentTypes: 230,
+    equipmentCostTotal: 190,
+  })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -178,7 +211,66 @@ function StartDashboard() {
           return acc
         }, {})
 
+        const objectUsage = new Map<string, {
+          department: string
+          objectName: string
+          communicationServices: Set<string>
+          communicationServiceCostTotal: number
+          equipmentTypes: Map<string, number>
+          equipmentCostTotal: number
+        }>()
+        const getObjectUsage = (department: string, objectName: string) => {
+          const key = `${department}\u0000${objectName}`
+          const existing = objectUsage.get(key)
+          if (existing) return existing
+          const next = {
+            department,
+            objectName,
+            communicationServices: new Set<string>(),
+            communicationServiceCostTotal: 0,
+            equipmentTypes: new Map<string, number>(),
+            equipmentCostTotal: 0,
+          }
+          objectUsage.set(key, next)
+          return next
+        }
+
+        bdrRows.forEach((row) => {
+          const department = String(row['Подразделение'] ?? '').trim() || 'Не указано'
+          const objectName = String(row['Объект'] ?? '').trim() || 'Не указан'
+          const serviceItem = String(row['Статья бюджета УС'] ?? '').trim() || 'Статья не указана'
+          const contract = String(row['Договор'] ?? '').trim() || 'Договор не указан'
+          const contractor = String(row['Контрагент'] ?? '').trim() || 'Контрагент не указан'
+          const usage = getObjectUsage(department, objectName)
+          usage.communicationServices.add(`${serviceItem} — ${contract} — ${contractor}`)
+          usage.communicationServiceCostTotal += parseNumber(row['Лимит'])
+        })
+
+        importSubstitutionRows.forEach((row) => {
+          const department = String(row['Подразделение'] ?? '').trim() || 'Не указано'
+          const rawObjects = Array.isArray(row['ОБЪЕКТ']) ? row['ОБЪЕКТ'] : [row['ОБЪЕКТ']]
+          const objectNames = rawObjects.map((value) => String(value ?? '').trim()).filter(Boolean)
+          const equipmentType = String(row['Тип'] ?? '').trim()
+          const quantity = parseNumber(row['Количество'])
+          objectNames.forEach((objectName) => {
+            const usage = getObjectUsage(department, objectName)
+            if (equipmentType) usage.equipmentTypes.set(equipmentType, (usage.equipmentTypes.get(equipmentType) ?? 0) + quantity)
+            usage.equipmentCostTotal += parseNumber(row['Платеж ТР без НДС'])
+          })
+        })
+
         if (!isMounted) return
+
+        setObjectUsageSummary([...objectUsage.values()]
+          .map((row) => ({
+            ...row,
+            communicationServices: [...row.communicationServices].sort((left, right) => left.localeCompare(right, 'ru')),
+            equipmentTypes: [...row.equipmentTypes.entries()]
+              .map(([type, quantity]) => ({ type, quantity }))
+              .sort((left, right) => left.type.localeCompare(right.type, 'ru')),
+          }))
+          .sort((left, right) => left.department.localeCompare(right.department, 'ru')
+            || left.objectName.localeCompare(right.objectName, 'ru')))
 
         setSummary({
           serviceLines: bdrRows.length,
@@ -251,6 +343,70 @@ function StartDashboard() {
   const formatQuantity = (value: number): string => new Intl.NumberFormat('ru-RU', {
     maximumFractionDigits: 2,
   }).format(value)
+
+  const objectSummaryColumns: Array<{ key: ObjectUsageSortKey; label: string }> = [
+    { key: 'department', label: 'Подразделение' },
+    { key: 'objectName', label: 'Объект' },
+    { key: 'communicationServices', label: 'Услуги связи' },
+    { key: 'communicationServiceCostTotal', label: 'ЗАТРАТЫ В ГОД' },
+    { key: 'equipmentTypes', label: 'ОБОРУДОВАНИЕ' },
+    { key: 'equipmentCostTotal', label: 'СТОИМОСТЬ ВСЕГО ОБОРУДОВАНИЯ' },
+  ]
+  const objectSummaryTableWidth = Object.values(objectSummaryColumnWidths).reduce((total, width) => total + width, 0)
+
+  const getObjectSummarySortValue = (row: ObjectUsageSummaryRow, key: ObjectUsageSortKey): string | number => {
+    if (key === 'department') return row.department
+    if (key === 'objectName') return row.objectName
+    if (key === 'communicationServices') return row.communicationServices.join(' ')
+    if (key === 'communicationServiceCostTotal') return row.communicationServiceCostTotal
+    if (key === 'equipmentTypes') return row.equipmentTypes.map(({ type, quantity }) => `${type} ${quantity}`).join(' ')
+    return row.equipmentCostTotal
+  }
+
+  const filteredAndSortedObjectUsageSummary = objectUsageSummary
+    .filter((row) => objectSummaryColumns.every(({ key }) => (
+      String(getObjectSummarySortValue(row, key)).toLocaleLowerCase()
+        .includes(objectSummaryFilters[key].trim().toLocaleLowerCase())
+    )))
+    .sort((left, right) => {
+      const leftValue = getObjectSummarySortValue(left, objectSummarySort.key)
+      const rightValue = getObjectSummarySortValue(right, objectSummarySort.key)
+      const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+        ? leftValue - rightValue
+        : String(leftValue).localeCompare(String(rightValue), 'ru', { numeric: true, sensitivity: 'base' })
+      return objectSummarySort.direction === 'asc' ? comparison : -comparison
+    })
+
+  function toggleObjectSummarySort(key: ObjectUsageSortKey): void {
+    setObjectSummarySort((previous) => previous.key === key
+      ? { key, direction: previous.direction === 'asc' ? 'desc' : 'asc' }
+      : { key, direction: 'asc' })
+  }
+
+  function startObjectSummaryColumnResize(event: ReactPointerEvent<HTMLSpanElement>, key: ObjectUsageSortKey): void {
+    event.preventDefault()
+    event.stopPropagation()
+    const header = event.currentTarget.closest('th')
+    if (!header) return
+
+    const startX = event.clientX
+    const startWidth = header.getBoundingClientRect().width
+    const resizeColumn = (moveEvent: PointerEvent): void => {
+      setObjectSummaryColumnWidths((previous) => ({
+        ...previous,
+        [key]: Math.max(64, startWidth + moveEvent.clientX - startX),
+      }))
+    }
+    const stopResizing = (): void => {
+      window.removeEventListener('pointermove', resizeColumn)
+      window.removeEventListener('pointerup', stopResizing)
+      window.removeEventListener('pointercancel', stopResizing)
+    }
+
+    window.addEventListener('pointermove', resizeColumn)
+    window.addEventListener('pointerup', stopResizing)
+    window.addEventListener('pointercancel', stopResizing)
+  }
 
   if (loading) {
     return <p className="hint">Загрузка сводной информации...</p>
@@ -432,6 +588,88 @@ function StartDashboard() {
           </ul>
         </div>
       </div>
+      <section className="dashboard-object-summary">
+        <h2>Сводка по подразделениям и объектам</h2>
+        <div className="guide-table-wrap dashboard-object-summary__table-wrap">
+          <table
+            className="guide-table table-compact dashboard-object-summary__table"
+            style={{ width: objectSummaryTableWidth, minWidth: objectSummaryTableWidth, tableLayout: 'fixed' }}
+          >
+            <colgroup>
+              {objectSummaryColumns.map(({ key }) => (
+                <col key={key} style={{ width: `${objectSummaryColumnWidths[key]}px` }} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr>
+                {objectSummaryColumns.map(({ key, label }) => (
+                  <th
+                    key={key}
+                    className="dashboard-object-summary__resizable-header"
+                    style={{ width: objectSummaryColumnWidths[key] }}
+                  >
+                    <button
+                      type="button"
+                      className="dashboard-object-summary__sort-button"
+                      onClick={() => toggleObjectSummarySort(key)}
+                    >
+                      {label}{objectSummarySort.key === key ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                    </button>
+                    <input
+                      className="dashboard-object-summary__filter"
+                      type="search"
+                      aria-label={`Фильтр: ${label}`}
+                      value={objectSummaryFilters[key]}
+                      onChange={(event) => setObjectSummaryFilters((previous) => ({
+                        ...previous,
+                        [key]: event.target.value,
+                      }))}
+                    />
+                    <span
+                      className="dashboard-object-summary__resizer"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={`Изменить ширину столбца ${label}`}
+                      onPointerDown={(event) => startObjectSummaryColumnResize(event, key)}
+                    />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredAndSortedObjectUsageSummary.map((row) => (
+                <tr key={`${row.department}\u0000${row.objectName}`}>
+                  <td>{row.department}</td>
+                  <td>{row.objectName}</td>
+                  <td>
+                    {row.communicationServices.length > 0 ? (
+                      <ul className="dashboard-object-summary__list">
+                        {row.communicationServices.map((service) => <li key={service}>{service}</li>)}
+                      </ul>
+                    ) : '—'}
+                  </td>
+                  <td>{formatMoney(row.communicationServiceCostTotal)}</td>
+                  <td>
+                    {row.equipmentTypes.length > 0 ? (
+                      <ul className="dashboard-object-summary__list">
+                        {row.equipmentTypes.map(({ type, quantity }) => (
+                          <li key={type}>{type} — {formatQuantity(quantity)} шт.</li>
+                        ))}
+                      </ul>
+                    ) : '—'}
+                  </td>
+                  <td>{formatMoney(row.equipmentCostTotal)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filteredAndSortedObjectUsageSummary.length === 0 && (
+            <p className="hint">
+              {objectUsageSummary.length === 0 ? 'Нет данных по объектам.' : 'По заданным фильтрам данные не найдены.'}
+            </p>
+          )}
+        </div>
+      </section>
     </section>
   )
 }
@@ -476,19 +714,19 @@ function BudgetSectionPage({
 
       {activeTab === 'budget' && (
         <div className="budget-popup-links">
-          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetDept}>
+          <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetDept}>
             Свод по лимитам по подразделениям
           </button>
-          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetPao}>
+          <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetPao}>
             Свод по лимитам по статьям бюджета УС
           </button>
-          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetMatrix}>
+          <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetMatrix}>
             Свод лимитов: подразделения × статьи бюджета
           </button>
-          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetContractPao}>
+          <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetContractPao}>
             Свод: договоры и статьи бюджета
           </button>
-          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenBudgetMain}>
+          <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetMain}>
             Полная таблица услуг связи
           </button>
         </div>
@@ -496,7 +734,7 @@ function BudgetSectionPage({
 
       {activeTab === 'details' && (
         <div className="budget-popup-links">
-          <button type="button" className="page-action-btn page-action-btn--secondary budget-popup-link-btn" onClick={onOpenSatellitesDetails}>
+          <button type="button" className="budget-popup-link-btn" onClick={onOpenSatellitesDetails}>
             Спутники: Сделать детализацию из XML первички
           </button>
         </div>
@@ -518,6 +756,7 @@ export default function App() {
   const isCellularAccountGuidePopup = window.location.hash === '#cellular-account-guide-window'
   const isImportSubstitutionTablePopup = window.location.hash === '#import-substitution-table-window'
   const isEquipmentAccountingPopup = window.location.hash === '#equipment-accounting-window'
+  const isMseAccountingPopup = window.location.hash === '#mse-accounting-window'
   const isEquipmentOrderPopup = window.location.hash === '#equipment-order-window'
   const guidePopupMatch = window.location.hash.match(/^#guide-window-([a-z-]+)$/)
   const guidePopupEntity = guidePopupMatch ? guidePopupMatch[1] : null
@@ -553,6 +792,7 @@ export default function App() {
       if (window.location.hash === '#cellular-account-guide-window') return
       if (window.location.hash === '#import-substitution-table-window') return
       if (window.location.hash === '#equipment-accounting-window') return
+      if (window.location.hash === '#mse-accounting-window') return
       if (window.location.hash === '#equipment-order-window') return
       if (/^#guide-window-[a-z-]+$/.test(window.location.hash)) return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
@@ -857,6 +1097,10 @@ export default function App() {
     return <EquipmentAccountingTable />
   }
 
+  if (isMseAccountingPopup) {
+    return <EquipmentAccountingTable requiredType="МСЭ" />
+  }
+
   if (isEquipmentOrderPopup) {
     return (
       <main>
@@ -946,7 +1190,7 @@ export default function App() {
             Сотовая
           </a>
           <a href="#import-substitution" onClick={(event) => { event.preventDefault(); goTo('import-substitution') }}>
-            Импортозамещение
+            Оборудование
           </a>
         </div>        
         <div className="app-nav-guide">

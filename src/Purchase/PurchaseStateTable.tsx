@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils'
 
 const PURCHASE_COLUMNS = [
-  'Подразделение', 'Тип', 'Наименование ТКО', 'Вендор ТКО', 'Количество', 'Примечание', 'Статус закупки',
+  'Подразделение', 'Тип', 'Наименование ТКО', 'Вендор ТКО', 'Количество', 'Примечание', 'Статус закупки', 'Платеж ТР без НДС',
 ] as const
 const SORTABLE_COLUMNS = [...PURCHASE_COLUMNS, 'Поставщик', 'Огрузочный реквизит', 'оплата'] as const
 
@@ -13,11 +13,14 @@ type Row = Record<string, unknown>
 type SortColumn = typeof SORTABLE_COLUMNS[number]
 type SortDirection = 'asc' | 'desc'
 const PURCHASE_STATUS_OPTIONS = ['план', 'согласован', 'в закупе', 'поставка', 'поставленно'] as const
-const NUMERIC_COLUMNS = new Set(['Количество'])
+const NUMERIC_COLUMNS = new Set(['Количество', 'Платеж ТР без НДС'])
+const PAYMENT_TOTAL_FORMATTER = new Intl.NumberFormat('ru-RU', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
 const COMPACT_HIDDEN_COLUMNS = new Set([
   'Тип',
   'Примечание',
-  'Статус закупки',
   'Поставщик',
   'Огрузочный реквизит',
   'оплата',
@@ -29,6 +32,12 @@ type PurchaseStateTableProps = {
   contractorOptions: LookupOption[]
   ogruzOptions: LookupOption[]
   loadingLookups: boolean
+}
+
+function parseNumericValue(value: unknown): number {
+  const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 // Свёрнутая по умолчанию таблица «Состояние закупок …», данные грузятся лениво
@@ -166,6 +175,10 @@ export default function PurchaseStateTable({
       : leftValue.localeCompare(rightValue, 'ru', { numeric: true, sensitivity: 'base' })
     return sort.direction === 'asc' ? comparison : -comparison
   })
+  const paymentTotal = rows.reduce(
+    (total, row) => total + parseNumericValue(row['Платеж ТР без НДС']),
+    0
+  )
   const visiblePurchaseColumns = compact
     ? PURCHASE_COLUMNS.filter((column) => !COMPACT_HIDDEN_COLUMNS.has(column))
     : PURCHASE_COLUMNS
@@ -178,7 +191,7 @@ export default function PurchaseStateTable({
       <h2>
         <button
           type="button"
-          className="invest-program-section-toggle"
+          className="invest-program-section-toggle page-text-link"
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
         >
@@ -218,6 +231,11 @@ export default function PurchaseStateTable({
                           {column === 'Статус закупки' ? 'СТАТУС' : column}
                           {sort.column === column && (sort.direction === 'asc' ? ' ▲' : ' ▼')}
                         </button>
+                        {column === 'Платеж ТР без НДС' && (
+                          <span className="purchase-column-total">
+                            Итого: {PAYMENT_TOTAL_FORMATTER.format(paymentTotal)}
+                          </span>
+                        )}
                       </th>
                     ))}
                     <th>Действия</th>

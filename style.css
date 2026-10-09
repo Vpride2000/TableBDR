@@ -174,6 +174,35 @@ p {
   margin: 0 0 16px;
 }
 
+.budget-excel-actions {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 16px;
+}
+
+.budget-excel-actions .budget-excel-action {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0c4a6e;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  text-decoration: none;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.budget-excel-actions .budget-excel-action:hover {
+  background: transparent;
+  color: #075985;
+  text-decoration: underline;
+}
+
 .budget-actions--center {
   justify-content: center;
   margin: 0 0 16px;
@@ -769,6 +798,148 @@ p {
   min-width: 0;
 }
 
+.budget-main-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.guide-table.budget-main-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+.budget-main-table th,
+.budget-main-table td {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.budget-main-table .table-sort-button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.budget-main-header-content {
+  display: flex;
+  min-height: 68px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.budget-main-header-title {
+  display: block;
+  width: 100%;
+  padding: 0;
+  line-height: 1.15;
+}
+
+.guide-table.budget-main-table th .budget-main-header-content > button.budget-main-header-title {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0c4a6e;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 600;
+  transition: none;
+}
+
+.budget-main-header-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  margin-top: auto;
+}
+
+.budget-main-header-controls .column-filter-input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 3px;
+  font-size: 0.68rem;
+}
+
+.budget-main-table .budget-main-header-controls .budget-copy-button {
+  flex: 0 0 auto;
+}
+
+.budget-main-table .column-filter-input {
+  min-width: 0;
+}
+
+.budget-main-table .budget-main-table-edit-field {
+  box-sizing: border-box;
+  width: min(100%, 90px);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.budget-main-table .budget-main-table-note-field {
+  width: 100%;
+  max-width: 100%;
+}
+
+.budget-main-table .budget-resizable-header {
+  position: relative;
+  padding-right: 13px;
+}
+
+.budget-column-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.budget-column-resizer:hover {
+  background: rgba(59, 130, 246, 0.3);
+}
+
+.budget-main-table .budget-copy-button {
+  margin: 0 0 0 4px !important;
+  padding: 1px 5px !important;
+  border-radius: 3px !important;
+  line-height: 1.2;
+}
+
+.budget-main-table .budget-delete-button {
+  background: #b42318 !important;
+}
+
+.guide-table.budget-main-table td button.budget-row-edit-button,
+.guide-table.budget-main-table td button.budget-row-edit-button:last-child {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0c4a6e;
+  font: inherit;
+  font-weight: 600;
+  box-shadow: none;
+  transition: none;
+}
+
+.guide-table.budget-main-table td button.budget-row-edit-button:hover,
+.guide-table.budget-main-table td button.budget-row-edit-button:last-child:hover {
+  background: transparent;
+  color: #075985;
+  text-decoration: underline;
+}
+
 .forecast-table .number-cell {
   text-align: right;
   white-space: nowrap;
@@ -1037,6 +1208,28 @@ p {
   min-width: 0;
 }
 
+.guide-reference-table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+}
+
+.guide-directory .guide-section .guide-reference-table-wrap .guide-reference-table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.guide-reference-table td input,
+.guide-reference-table td select {
+  width: min(100%, 90px);
+  min-width: 0;
+  max-width: 100%;
+}
+
 .guide-directory-action-link {
   color: inherit;
   text-decoration: none;
@@ -1072,6 +1265,58 @@ p {
   display: flex;
   justify-content: flex-start;
   margin-bottom: 12px;
+}
+
+.cellular-main-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.import-substitution-page-actions {
+  align-items: center;
+  gap: 18px;
+}
+
+.import-substitution-popup-actions,
+.excel-action-toolbar {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 0 0 12px;
+}
+
+.excel-action-toolbar__icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.excel-action-toolbar__icon svg {
+  display: block;
+  width: 28px;
+  height: 28px;
+}
+
+.excel-action-toolbar__icon:hover {
+  background: transparent;
+  filter: brightness(0.9);
+}
+
+.excel-action-toolbar__icon:focus-visible {
+  outline: 2px solid #217346;
+  outline-offset: 2px;
 }
 
 .guide-new-row-fields {
@@ -1363,6 +1608,106 @@ p {
   gap: 12px;
 }
 
+.dashboard-object-summary {
+  margin-top: 24px;
+}
+
+.dashboard-object-summary h2 {
+  margin: 0 0 12px;
+  color: #111827;
+  font-size: 1.15rem;
+}
+
+.dashboard-object-summary__table-wrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.dashboard-object-summary__table {
+  width: 1050px;
+  min-width: 1050px;
+  table-layout: fixed;
+}
+
+.dashboard-object-summary__table th,
+.dashboard-object-summary__table td {
+  padding: 4px 6px;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.dashboard-object-summary__resizable-header {
+  position: relative;
+  padding-right: 12px !important;
+}
+
+.dashboard-object-summary__resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.dashboard-object-summary__resizer:hover {
+  background: rgba(59, 130, 246, 0.3);
+}
+
+.dashboard-object-summary__sort-button {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.guide-table.dashboard-object-summary__table th button.dashboard-object-summary__sort-button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0c4a6e;
+  box-shadow: none;
+  transition: none;
+}
+
+.guide-table.dashboard-object-summary__table th button.dashboard-object-summary__sort-button:hover {
+  background: transparent;
+  color: #075985;
+  text-decoration: underline;
+}
+
+.dashboard-object-summary__filter {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin-top: 5px;
+  padding: 2px 4px;
+  font-size: 0.68rem;
+}
+
+.dashboard-object-summary__list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.dashboard-object-summary__list li + li {
+  margin-top: 3px;
+}
+
 @media (max-width: 1100px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1556,9 +1901,15 @@ p {
 .equipment-accounting-table-wrap {
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-gutter: stable;
+}
+
+.equipment-accounting-table {
+  width: max-content;
+  min-width: 0;
 }
 
 .equipment-accounting-table th,
@@ -1578,6 +1929,13 @@ p {
   display: block;
   margin-top: 3px;
   width: 100%;
+}
+
+.equipment-accounting-table .invest-program-inline-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .equipment-accounting-table .import-substitution-resizable-header {
@@ -2548,8 +2906,49 @@ p {
 }
 
 .budget-popup-link-btn {
+  display: block;
   text-align: left;
   width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0c4a6e;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.budget-popup-link-btn:hover {
+  background: transparent;
+  color: #075985;
+  text-decoration: underline;
+}
+
+.page-text-link {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0c4a6e;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  text-decoration: none;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.page-text-link:hover {
+  background: transparent;
+  color: #075985;
+  text-decoration: underline;
 }
 
 /* ===== Фильтры в шапке таблицы (специфичность выше .guide-table input) ===== */

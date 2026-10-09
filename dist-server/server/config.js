@@ -155,6 +155,7 @@ export const BDR_SELECT_FIELDS = `SELECT
   dep."GN_department"               AS "Подразделение",
   obj."GN_departament_object"       AS "Объект",
   dgv."GN_dogovor"                  AS "Договор",
+  b."GN_bdr_calculation"            AS "РАСЧЕТ",
   cnt."GN_contarctor"               AS "Контрагент",
   bni."GN_budget_network_item"      AS "Статья бюджета",
   b."GN_bdr_predmet_dogovora"       AS "Предмет договора",

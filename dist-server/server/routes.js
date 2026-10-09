@@ -1554,6 +1554,9 @@ export function setupRoutes(app) {
             if (payload['Предмет договора'] !== undefined) {
                 updates.push({ column: 'GN_bdr_predmet_dogovora', value: String(payload['Предмет договора']) });
             }
+            if (payload['РАСЧЕТ'] !== undefined) {
+                updates.push({ column: 'GN_bdr_calculation', value: String(payload['РАСЧЕТ']) });
+            }
             if (payload['Ед. изм.'] !== undefined) {
                 updates.push({ column: 'GN_bdr_ed.izm', value: String(payload['Ед. изм.']) });
             }
@@ -1637,8 +1640,38 @@ export function setupRoutes(app) {
             await client.end();
         }
     });
-    app.post('/api/gn/:entity', async (req, res) => {
+    app.delete('/api/gn/bdr/:id', async (req, res) => {
+        const rowId = Number(req.params.id);
+        if (!Number.isInteger(rowId) || rowId <= 0) {
+            res.status(400).json({ error: 'Invalid row id' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`UPDATE "GN_bdr"
+         SET "is_deleted" = TRUE, "deleted_at" = NOW()
+         WHERE "GN_bdr_ID" = $1 AND "is_deleted" = FALSE
+         RETURNING "GN_bdr_ID"`, [rowId]);
+            if (result.rowCount === 0) {
+                res.status(404).json({ error: 'Row not found' });
+                return;
+            }
+            res.sendStatus(204);
+        }
+        catch (err) {
+            console.error('Failed to delete GN_bdr row', err);
+            res.status(500).json({ error: 'Failed to delete GN_bdr row' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.post('/api/gn/:entity', async (req, res, next) => {
         const { entity } = req.params;
+        if (entity === 'bdr') {
+            next();
+            return;
+        }
         const config = GN_TABLE_CONFIGS[entity];
         if (!config) {
             res.status(404).json({ error: 'Unknown GN entity' });
@@ -1715,8 +1748,12 @@ export function setupRoutes(app) {
             await client.end();
         }
     });
-    app.post('/api/gn/:entity/mark-missing', async (req, res) => {
+    app.post('/api/gn/:entity/mark-missing', async (req, res, next) => {
         const { entity } = req.params;
+        if (entity === 'bdr') {
+            next();
+            return;
+        }
         const config = GN_TABLE_CONFIGS[entity];
         const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
         if (!config?.supportsExcelImportDeletion) {
@@ -1866,7 +1903,7 @@ export function setupRoutes(app) {
         }
     });
     app.post('/api/gn/bdr', async (req, res) => {
-        const { pao_budget_item, department, object_name, dogovor, contractor, budget_item, predmet_dogovora, ed_izm, kol_vo, limit, bdr25_corr, bdr26, bdr26_corr, edin_limit, comments, } = req.body;
+        const { pao_budget_item, department, object_name, dogovor, contractor, budget_item, predmet_dogovora, ed_izm, kol_vo, limit, bdr25_corr, bdr26, bdr26_corr, calculation, edin_limit, comments, } = req.body;
         if (!pao_budget_item ||
             !department ||
             !object_name ||
@@ -1923,12 +1960,13 @@ export function setupRoutes(app) {
            "GN_bdr_ed.izm",
            "GN_bdr_kol-vo",
            "GN_bdr_limit",
+           "GN_bdr_calculation",
            "GN_bdr_bdr25_corr",
            "GN_bdr_bdr26",
            "GN_bdr_bdr26_corr",
            "GN_bdr_edin.limit",
            "GN_bdr_comments"
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING "GN_bdr_ID" AS id`, [
                 paoId,
                 departmentId,
@@ -1940,6 +1978,7 @@ export function setupRoutes(app) {
                 ed_izm,
                 kolVoNumber,
                 limitNumber,
+                calculation ?? '',
                 bdr25CorrNumber,
                 bdr26Number,
                 bdr26CorrNumber,
@@ -2219,8 +2258,8 @@ export function setupRoutes(app) {
             res.status(400).json({ error: 'Некорректный номер строки' });
             return;
         }
-        if (!Number.isInteger(quantityToCopy) || quantityToCopy <= 0) {
-            res.status(400).json({ error: 'Количество для копирования должно быть положительным целым числом' });
+        if (!Number.isInteger(quantityToCopy) || quantityToCopy < 0) {
+            res.status(400).json({ error: 'Количество для копирования должно быть целым неотрицательным числом' });
             return;
         }
         const client = await createDbClient();

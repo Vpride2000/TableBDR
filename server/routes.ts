@@ -1925,6 +1925,10 @@ export function setupRoutes(app: Express): void {
         updates.push({ column: 'GN_bdr_predmet_dogovora', value: String(payload['Предмет договора']) });
       }
 
+      if (payload['РАСЧЕТ'] !== undefined) {
+        updates.push({ column: 'GN_bdr_calculation', value: String(payload['РАСЧЕТ']) });
+      }
+
       if (payload['Ед. изм.'] !== undefined) {
         updates.push({ column: 'GN_bdr_ed.izm', value: String(payload['Ед. изм.']) });
       }
@@ -2028,8 +2032,42 @@ export function setupRoutes(app: Express): void {
     }
   });
 
-  app.post('/api/gn/:entity', async (req: Request, res: Response): Promise<void> => {
+  app.delete('/api/gn/bdr/:id', async (req: Request, res: Response): Promise<void> => {
+    const rowId = Number(req.params.id);
+    if (!Number.isInteger(rowId) || rowId <= 0) {
+      res.status(400).json({ error: 'Invalid row id' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `UPDATE "GN_bdr"
+         SET "is_deleted" = TRUE, "deleted_at" = NOW()
+         WHERE "GN_bdr_ID" = $1 AND "is_deleted" = FALSE
+         RETURNING "GN_bdr_ID"`,
+        [rowId]
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Row not found' });
+        return;
+      }
+      res.sendStatus(204);
+    } catch (err) {
+      console.error('Failed to delete GN_bdr row', err);
+      res.status(500).json({ error: 'Failed to delete GN_bdr row' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.post('/api/gn/:entity', async (req: Request, res: Response, next): Promise<void> => {
     const { entity } = req.params;
+    if (entity === 'bdr') {
+      next();
+      return;
+    }
+
     const config = GN_TABLE_CONFIGS[entity];
 
     if (!config) {
@@ -2109,8 +2147,13 @@ export function setupRoutes(app: Express): void {
     }
   });
 
-  app.post('/api/gn/:entity/mark-missing', async (req: Request, res: Response): Promise<void> => {
+  app.post('/api/gn/:entity/mark-missing', async (req: Request, res: Response, next): Promise<void> => {
     const { entity } = req.params;
+    if (entity === 'bdr') {
+      next();
+      return;
+    }
+
     const config = GN_TABLE_CONFIGS[entity];
     const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
 
@@ -2290,6 +2333,7 @@ export function setupRoutes(app: Express): void {
       bdr25_corr,
       bdr26,
       bdr26_corr,
+      calculation,
       edin_limit,
       comments,
     } = req.body;
@@ -2395,12 +2439,13 @@ export function setupRoutes(app: Express): void {
            "GN_bdr_ed.izm",
            "GN_bdr_kol-vo",
            "GN_bdr_limit",
+           "GN_bdr_calculation",
            "GN_bdr_bdr25_corr",
            "GN_bdr_bdr26",
            "GN_bdr_bdr26_corr",
            "GN_bdr_edin.limit",
            "GN_bdr_comments"
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING "GN_bdr_ID" AS id`,
         [
           paoId,
@@ -2413,6 +2458,7 @@ export function setupRoutes(app: Express): void {
           ed_izm,
           kolVoNumber,
           limitNumber,
+          calculation ?? '',
           bdr25CorrNumber,
           bdr26Number,
           bdr26CorrNumber,
@@ -2767,8 +2813,8 @@ export function setupRoutes(app: Express): void {
       res.status(400).json({ error: 'Некорректный номер строки' });
       return;
     }
-    if (!Number.isInteger(quantityToCopy) || quantityToCopy <= 0) {
-      res.status(400).json({ error: 'Количество для копирования должно быть положительным целым числом' });
+    if (!Number.isInteger(quantityToCopy) || quantityToCopy < 0) {
+      res.status(400).json({ error: 'Количество для копирования должно быть целым неотрицательным числом' });
       return;
     }
 

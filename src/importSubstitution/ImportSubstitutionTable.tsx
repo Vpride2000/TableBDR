@@ -389,7 +389,7 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     return (
       <div className="empty-state">
         <p className="hint">Нет данных по импортозамещению.</p>
-        <button type="button" className="page-action-btn" onClick={startNewRow}>
+        <button type="button" className="page-text-link" onClick={startNewRow}>
           Добавить первую запись
         </button>
       </div>
@@ -399,18 +399,18 @@ export default function ImportSubstitutionTable(): React.ReactElement {
   return (
     <div className="import-substitution-table-wrap">
       {!isAddingNew && (
-        <div className="guide-table-actions">
+        <div className="guide-table-actions import-substitution-popup-actions">
           <button
             type="button"
-            className="page-action-btn page-action-btn--secondary"
+            className="page-text-link"
             onClick={startNewRow}
           >
             Добавить строку
           </button>
-          <button type="button" className="page-action-btn page-action-btn--secondary" onClick={exportToXlsx}>
+          <button type="button" className="page-text-link" onClick={exportToXlsx}>
             Выгрузить в Excel
           </button>
-          <label className="page-action-btn page-action-btn--secondary" style={{ cursor: importing ? 'default' : 'pointer' }}>
+          <label className="page-text-link" style={{ cursor: importing ? 'default' : 'pointer' }}>
             {importing ? 'Загрузка...' : 'Загрузить из Excel'}
             <input
               type="file"

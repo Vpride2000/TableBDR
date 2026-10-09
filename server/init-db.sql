@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS "GN_bdr" (
   "GN_bdr_ed.izm" TEXT NOT NULL,
   "GN_bdr_kol-vo" NUMERIC NOT NULL,
   "GN_bdr_limit" NUMERIC NOT NULL,
+  "GN_bdr_calculation" TEXT NOT NULL DEFAULT '',
   "GN_bdr_bdr25_corr" NUMERIC,
   "GN_bdr_bdr26" NUMERIC,
   "GN_bdr_bdr26_corr" NUMERIC,

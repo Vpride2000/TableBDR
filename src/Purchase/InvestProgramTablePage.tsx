@@ -73,7 +73,7 @@ export default function InvestProgramTablePage() {
         <div className="guide-table-actions">
           <button
             type="button"
-            className="page-action-btn page-action-btn--secondary"
+            className="page-text-link"
             onClick={openEquipmentOrderWindow}
           >
             Доступно для заказа
