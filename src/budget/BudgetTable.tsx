@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
-import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils';
+import { formatHttpError, formatErrorMessage } from '../utils/httpUtils';
 import MainBudgetTableContent from './MainBudgetTableContent';
 import ExcelActionToolbar from '../components/ExcelActionToolbar';
 
@@ -11,7 +11,6 @@ import ExcelActionToolbar from '../components/ExcelActionToolbar';
 type Row = Record<string, unknown>;
 interface BudgetTableProps {
   onAddRow: () => void;
-  onOpenLimit: (rowId: number) => void;
   onOpenContract: (contractId: number) => void;
   onOpenObject: (rowId: number) => void;
   onOpenDepartment: (rowId: number) => void;
@@ -36,17 +35,26 @@ const BDR_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> 
   'Статья бюджета': { endpoint: '/api/gn/budget-items', labelKey: 'GN_budget_network_item' },
 };
 
-const LOCKED_EDIT_COLUMNS = new Set(['Ед. изм.', 'Кол-во', 'Лимит', 'Един. лимит']);
-const EXTRA_NUMERIC_COLUMNS = new Set(['БДР25корр', 'БДР26', 'БДР26корр']);
-const FINANCIAL_EXPORT_COLUMNS = new Set(['Лимит', 'БДР25корр', 'БДР26', 'БДР26корр', 'Един. лимит']);
+const LOCKED_EDIT_COLUMNS = new Set(['Ед. изм.', 'Един. лимит']);
+const EXTRA_NUMERIC_COLUMNS = new Set(['БДР25корр', 'БДР26', 'БДР26корр', 'БДР27']);
+const QUANTITY_COLUMNS = new Set(['Кол-во БДР25корр', 'Кол-во БДР26', 'Кол-во БДР26корр', 'Кол-во БДР27']);
+const FINANCIAL_EXPORT_COLUMNS = new Set(['Лимит', 'БДР25корр', 'БДР26', 'БДР26корр', 'БДР27', 'Един. лимит']);
+const NUMERIC_EXPORT_COLUMNS = new Set(['Кол-во', ...QUANTITY_COLUMNS]);
 const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Един. лимит', 'Предмет договора', 'Примечания']);
 const COLUMN_TITLES: Record<string, string> = {
   GN_bdr_ID: '№',
+  'Статья бюджета УС': 'УС',
+  'Статья бюджета': 'ГН',
   'Кол-во': 'Количество',
   Лимит: 'БДР25',
   БДР25корр: 'БДР25корр',
+  'Кол-во БДР25корр': 'Кол-во БДР25корр',
   БДР26: 'БДР26',
+  'Кол-во БДР26': 'Кол-во БДР26',
   БДР26корр: 'БДР26корр',
+  'Кол-во БДР26корр': 'Кол-во БДР26корр',
+  БДР27: 'БДР27',
+  'Кол-во БДР27': 'Кол-во БДР27',
 };
 const BDR_CREATE_FIELD_BY_COLUMN: Record<string, string> = {
   'Статья бюджета УС': 'pao_budget_item',
@@ -61,8 +69,13 @@ const BDR_CREATE_FIELD_BY_COLUMN: Record<string, string> = {
   'Кол-во': 'kol_vo',
   Лимит: 'limit',
   БДР25корр: 'bdr25_corr',
+  'Кол-во БДР25корр': 'bdr25_corr_kol_vo',
   БДР26: 'bdr26',
+  'Кол-во БДР26': 'bdr26_kol_vo',
   БДР26корр: 'bdr26_corr',
+  'Кол-во БДР26корр': 'bdr26_corr_kol_vo',
+  БДР27: 'bdr27',
+  'Кол-во БДР27': 'bdr27_kol_vo',
   'Един. лимит': 'edin_limit',
   Примечания: 'comments',
 };
@@ -129,7 +142,6 @@ function readSavedBdrFilters(): Record<string, string> {
 
 interface BudgetTableProps {
   onAddRow: () => void;
-  onOpenLimit: (rowId: number) => void;
   onOpenContract: (contractId: number) => void;
   onOpenObject: (rowId: number) => void;
   onOpenDepartment: (rowId: number) => void;
@@ -138,7 +150,7 @@ interface BudgetTableProps {
   isMainTableCollapsibleByDefault?: boolean;
 }
 
-export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpenContract, onOpenObject, onOpenDepartment, onOpenContractor, showMainTable = true, isMainTableCollapsibleByDefault = false }: BudgetTableProps) {
+export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, onOpenObject, onOpenDepartment, onOpenContractor, showMainTable = true, isMainTableCollapsibleByDefault = false }: BudgetTableProps) {
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -241,13 +253,17 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
     const contractorIndex = next.indexOf('Контрагент');
     const dogovorIndex = next.indexOf('Договор');
 
-    if (contractorIndex === -1 || dogovorIndex === -1) {
-      return next;
-    }
-
-    if (contractorIndex > dogovorIndex) {
+    if (contractorIndex !== -1 && dogovorIndex !== -1 && contractorIndex > dogovorIndex) {
       next[contractorIndex] = 'Договор';
       next[dogovorIndex] = 'Контрагент';
+    }
+
+    const paoBudgetItemIndex = next.indexOf('Статья бюджета УС');
+    const budgetItemIndex = next.indexOf('Статья бюджета');
+    if (paoBudgetItemIndex !== -1 && budgetItemIndex !== -1 && paoBudgetItemIndex !== budgetItemIndex - 1) {
+      next.splice(paoBudgetItemIndex, 1);
+      const adjustedBudgetItemIndex = next.indexOf('Статья бюджета');
+      next.splice(adjustedBudgetItemIndex, 0, 'Статья бюджета УС');
     }
 
     return next;
@@ -263,6 +279,29 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
       const insertAt = limitIndex === -1 ? withExtraColumns.length : limitIndex + 1;
       withExtraColumns.splice(insertAt, 0, column);
     });
+
+    const bdrPairs = [
+      ['Кол-во', 'Лимит'],
+      ['Кол-во БДР25корр', 'БДР25корр'],
+      ['Кол-во БДР26', 'БДР26'],
+      ['Кол-во БДР26корр', 'БДР26корр'],
+      ['Кол-во БДР27', 'БДР27'],
+    ];
+    const completePairs = bdrPairs.filter(([quantity, value]) =>
+      withExtraColumns.includes(quantity) && withExtraColumns.includes(value)
+    );
+    const pairedColumns = new Set(completePairs.flat());
+    const firstPairIndex = withExtraColumns.findIndex((column) => pairedColumns.has(column));
+
+    if (firstPairIndex !== -1) {
+      const insertIndex = withExtraColumns
+        .slice(0, firstPairIndex)
+        .filter((column) => !pairedColumns.has(column))
+        .length;
+      const nonPairColumns = withExtraColumns.filter((column) => !pairedColumns.has(column));
+      nonPairColumns.splice(insertIndex, 0, ...completePairs.flat());
+      return nonPairColumns.filter((col) => !MAIN_HIDDEN_COLUMNS.has(col));
+    }
 
     return withExtraColumns.filter((col) => !MAIN_HIDDEN_COLUMNS.has(col));
   }, [orderedColumns]);
@@ -500,7 +539,7 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
     const exportColumns = orderedColumns;
     const header = exportColumns.map((column) => COLUMN_TITLES[column] ?? column);
     const rows = data.map((row) => exportColumns.map((column) => (
-      FINANCIAL_EXPORT_COLUMNS.has(column) || column === 'Кол-во'
+      FINANCIAL_EXPORT_COLUMNS.has(column) || NUMERIC_EXPORT_COLUMNS.has(column)
         ? toExcelNumber(row[column])
         : row[column] ?? ''
     )));
@@ -526,7 +565,7 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
 
         if (FINANCIAL_EXPORT_COLUMNS.has(column)) {
           cell.z = '#,##0.00';
-        } else if (column === 'Кол-во') {
+        } else if (NUMERIC_EXPORT_COLUMNS.has(column)) {
           cell.z = '#,##0';
         }
       });
@@ -630,7 +669,7 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
 
       await loadData();
       localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()));
-      setImportMessage(`Загружено строк: ${savedRows}.`);
+      setImportMessage(`Загрузка завершена. Загружено строк: ${savedRows}.`);
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Не удалось загрузить файл Excel');
     } finally {
@@ -647,11 +686,13 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
       {!loading && !error && data.length > 0 && showMainTable && (
         <>
           <ExcelActionToolbar
+            className="excel-action-toolbar--equipment"
             onReset={() => setFilters({})}
             onExport={exportToXlsx}
             onUpload={(file) => void importFromXlsx(file)}
             uploading={importing}
           />
+          {importing && <p className="hint" role="status">Загрузка...</p>}
           {importMessage && <p className="hint">{importMessage}</p>}
           {importError && <p className="hint hint--error">Ошибка загрузки из Excel: {importError}</p>}
           <MainBudgetTableContent
@@ -683,7 +724,6 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenLimit, onOpe
             onUpdateDraft={updateDraft}
             onGetSelectOptions={getSelectOptionsForColumn}
             onFormatCellValue={formatCellValue}
-            onOpenLimit={onOpenLimit}
             onOpenObject={onOpenObject}
             onOpenDepartment={onOpenDepartment}
             onOpenContractor={onOpenContractor}

@@ -1,7 +1,7 @@
 ﻿import 'dotenv/config';
 import express from 'express';
 import { setupRoutes } from './routes.js';
-import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable, ensureOgruzReferenceColumns, ensureEquipmentModelReferenceColumns, ensureObjectDepartmentColumns, ensureReferenceTables, ensureReferenceSequences, ensureExcelImportDeletionColumns } from './db.js';
+import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureDogovorColumns, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable, ensureOgruzReferenceColumns, ensureEquipmentModelReferenceColumns, ensureObjectDepartmentColumns, ensureReferenceTables, ensureReferenceSequences, ensureExcelImportDeletionColumns, ensureGazpromTelecomTable, ensureNotesTables } from './db.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,7 +46,7 @@ app.use((req, res, next) => {
 });
 
 // Use JSON payloads if needed later
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 setupRoutes(app);
 
@@ -62,12 +62,15 @@ async function start(): Promise<void> {
     await ensureSatellitesXmlTable(client);
     await ensureCellularTables(client);
     await ensureReferenceTables(client);
+    await ensureDogovorColumns(client);
+    await ensureGazpromTelecomTable(client);
     await ensureImportSubstitutionTable(client);
     await ensureOgruzReferenceColumns(client);
     await ensureEquipmentModelReferenceColumns(client);
     await ensureObjectDepartmentColumns(client);
     await ensureReferenceSequences(client);
     await ensureExcelImportDeletionColumns(client);
+    await ensureNotesTables(client);
     await bootstrapCellularFromXlsx(client, PROJECT_ROOT);
   } finally {
     await client.end();

@@ -10,7 +10,6 @@ import DepartmentDetailsPage from './budget/DepartmentDetailsPage'
 import ContractorDetailsPage from './budget/ContractorDetailsPage'
 import ContractDetailsPage from './contract/ContractDetailsPage'
 import ContractsPage from './contract/ContractsPage'
-import InvestProgramTablePage from './Purchase/InvestProgramTablePage'
 import EquipmentOrderPopup from './Purchase/EquipmentOrderPopup'
 import SatellitesPage from './satellites/SatellitesPage'
 import SatellitesControlPage from './satellites/SatellitesControlPage'
@@ -19,11 +18,31 @@ import CellularPage from './cellular/CellularPage'
 import CellularTariffGuidePopup from './cellular/CellularTariffGuidePopup'
 import CellularIdentifierGuidePopup from './cellular/CellularIdentifierGuidePopup'
 import CellularAccountGuidePopup from './cellular/CellularAccountGuidePopup'
+import GazpromTelecomTable from './cellular/GazpromTelecomTable'
 import ImportSubstitutionPage from './importSubstitution/ImportSubstitutionPage'
 import ImportSubstitutionTable from './importSubstitution/ImportSubstitutionTable'
 import EquipmentAccountingTable from './importSubstitution/EquipmentAccountingTable'
-import { Page } from './types/forecast'
-import { pageFromHash } from './utils/forecastUtils'
+import PostgresSchemaPopup from './components/PostgresSchemaPopup'
+import NotesPage from './notes/NotesPage'
+
+type Page = 'start' | 'budget' | 'guide' | 'contracts' | 'satellites' | 'satellites-control' | 'cellular' | 'import-substitution' | 'notes'
+
+function pageFromHash(hash: string): Page {
+  if (hash === '#start') return 'start'
+  if (
+    hash === '#invest-program-table'
+    || hash === '#equipment-purchases'
+    || hash === '#equipment-accounting'
+  ) return 'import-substitution'
+  if (hash === '#notes') return 'notes'
+  if (hash === '#contracts') return 'contracts'
+  if (hash === '#satellites') return 'satellites'
+  if (hash === '#satellites-control') return 'satellites-control'
+  if (hash === '#cellular') return 'cellular'
+  if (hash === '#import-substitution') return 'import-substitution'
+  if (hash === '#guide') return 'guide'
+  return 'budget'
+}
 
 /*
   Основная точка входа клиентской части приложения.
@@ -69,7 +88,7 @@ interface DashboardSummary {
 interface ObjectUsageSummaryRow {
   department: string
   objectName: string
-  communicationServices: string[]
+  communicationServices: Array<{ serviceItem: string; contractorsContracts: string[] }>
   communicationServiceCostTotal: number
   equipmentTypes: Array<{ type: string; quantity: number }>
   equipmentCostTotal: number
@@ -201,6 +220,7 @@ function StartDashboard() {
         const importAdjustedQuantity = importQuantity - importWithdrawnQuantity
         const contractStatusCounts = contractRows.reduce<Record<string, number>>((acc, row) => {
           const status = normalizeStatus(row['GN_contract_approval_status'] ?? row['GN_contract_state'])
+          if (status.replace(/^[-–—\s]+/, '').toLocaleLowerCase('ru') === 'снят с контроля') return acc
           acc[status] = (acc[status] ?? 0) + 1
           return acc
         }, {})
@@ -214,7 +234,7 @@ function StartDashboard() {
         const objectUsage = new Map<string, {
           department: string
           objectName: string
-          communicationServices: Set<string>
+          communicationServices: Map<string, Set<string>>
           communicationServiceCostTotal: number
           equipmentTypes: Map<string, number>
           equipmentCostTotal: number
@@ -226,7 +246,7 @@ function StartDashboard() {
           const next = {
             department,
             objectName,
-            communicationServices: new Set<string>(),
+            communicationServices: new Map<string, Set<string>>(),
             communicationServiceCostTotal: 0,
             equipmentTypes: new Map<string, number>(),
             equipmentCostTotal: 0,
@@ -242,7 +262,9 @@ function StartDashboard() {
           const contract = String(row['Договор'] ?? '').trim() || 'Договор не указан'
           const contractor = String(row['Контрагент'] ?? '').trim() || 'Контрагент не указан'
           const usage = getObjectUsage(department, objectName)
-          usage.communicationServices.add(`${serviceItem} — ${contract} — ${contractor}`)
+          const contractorsContracts = usage.communicationServices.get(serviceItem) ?? new Set<string>()
+          contractorsContracts.add(`${contractor} — ${contract}`)
+          usage.communicationServices.set(serviceItem, contractorsContracts)
           usage.communicationServiceCostTotal += parseNumber(row['Лимит'])
         })
 
@@ -264,7 +286,12 @@ function StartDashboard() {
         setObjectUsageSummary([...objectUsage.values()]
           .map((row) => ({
             ...row,
-            communicationServices: [...row.communicationServices].sort((left, right) => left.localeCompare(right, 'ru')),
+            communicationServices: [...row.communicationServices.entries()]
+              .map(([serviceItem, contractorsContracts]) => ({
+                serviceItem,
+                contractorsContracts: [...contractorsContracts].sort((left, right) => left.localeCompare(right, 'ru')),
+              }))
+              .sort((left, right) => left.serviceItem.localeCompare(right.serviceItem, 'ru')),
             equipmentTypes: [...row.equipmentTypes.entries()]
               .map(([type, quantity]) => ({ type, quantity }))
               .sort((left, right) => left.type.localeCompare(right.type, 'ru')),
@@ -297,8 +324,8 @@ function StartDashboard() {
           satelliteDepartmentCount: satellitesSummary.departmentCount,
           satelliteDirectionCount: satellitesSummary.directionCount,
           topServices: Array.from(serviceBudgetByType.entries())
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 3)
+            .sort((a, b) => a[0].localeCompare(b[0], 'ru', { numeric: true, sensitivity: 'base' }))
+            .slice(0, 5)
             .map(([name, budget]) => ({ name, budget })),
           purchaseRows: purchaseRows.length,
           purchaseQuantity,
@@ -357,7 +384,11 @@ function StartDashboard() {
   const getObjectSummarySortValue = (row: ObjectUsageSummaryRow, key: ObjectUsageSortKey): string | number => {
     if (key === 'department') return row.department
     if (key === 'objectName') return row.objectName
-    if (key === 'communicationServices') return row.communicationServices.join(' ')
+    if (key === 'communicationServices') {
+      return row.communicationServices
+        .map(({ serviceItem, contractorsContracts }) => `${serviceItem} ${contractorsContracts.join('; ')}`)
+        .join(' ')
+    }
     if (key === 'communicationServiceCostTotal') return row.communicationServiceCostTotal
     if (key === 'equipmentTypes') return row.equipmentTypes.map(({ type, quantity }) => `${type} ${quantity}`).join(' ')
     return row.equipmentCostTotal
@@ -376,6 +407,14 @@ function StartDashboard() {
         : String(leftValue).localeCompare(String(rightValue), 'ru', { numeric: true, sensitivity: 'base' })
       return objectSummarySort.direction === 'asc' ? comparison : -comparison
     })
+
+  const objectSummaryCostTotals = filteredAndSortedObjectUsageSummary.reduce(
+    (totals, row) => ({
+      communicationServiceCostTotal: totals.communicationServiceCostTotal + row.communicationServiceCostTotal,
+      equipmentCostTotal: totals.equipmentCostTotal + row.equipmentCostTotal,
+    }),
+    { communicationServiceCostTotal: 0, equipmentCostTotal: 0 },
+  )
 
   function toggleObjectSummarySort(key: ObjectUsageSortKey): void {
     setObjectSummarySort((previous) => previous.key === key
@@ -438,33 +477,22 @@ function StartDashboard() {
 
   return (
     <section className="dashboard-section">
-      <div className="dashboard-header">
-        <div>
-          <h2>Сводный дашбоард</h2>
-          <p className="hint">Обзор ключевых метрик по услугам связи, договорам, сотовой и спутниковой связи.</p>
-        </div>
+      <div className="dashboard-header">             
+          <h2>Обзор ключевых метрик</h2>        
       </div>
 
       <div className="dashboard-grid">
-        <a className="dashboard-card dashboard-card--link" href="#budget">
+        <a className="dashboard-card dashboard-card--link dashboard-card--budget-summary" href="#budget">
           <h3>Услуги связи</h3>
-          <ul className="dashboard-stat-list">
-            <li className="dashboard-stat-item">
-              <span>Всего строк</span>
-              <strong>{formatCount(summary.serviceLines)}</strong>
-            </li>
-            <li className="dashboard-stat-item">
-              <span>БДР25</span>
-              <strong>{formatMoney(summary.totalServiceBudget)}</strong>
-            </li>
-          </ul>
-           <h3>Топ услуг по бюджету</h3>
           <ul className="dashboard-compact-list">
             {summary.topServices.map((item) => (
               <li key={item.name}>
-                <strong>{item.name}</strong> — {formatMoney(item.budget)}
+                {item.name} — {formatMoney(item.budget)}
               </li>
             ))}
+            <li className="dashboard-compact-list__total">
+              Итого — {formatMoney(summary.totalServiceBudget)}
+            </li>
           </ul>
         </a>
 
@@ -523,7 +551,7 @@ function StartDashboard() {
           </ul>
         </a>
 
-        <a className="dashboard-card dashboard-card--link" href="#invest-program-table">
+        <a className="dashboard-card dashboard-card--link" href="#equipment-purchases">
           <h3>Закупки</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
@@ -568,15 +596,11 @@ function StartDashboard() {
               <span>РФ в реестре</span>
               <strong>{formatQuantity(summary.importRegistryQuantity)} ({formatPercent(summary.importRegistryPercent)})</strong>
             </li>
-            <li className="dashboard-stat-item">
-              <span>Выведено из эксплуатации</span>
-              <strong>{formatQuantity(summary.importWithdrawnQuantity)}</strong>
-            </li>
           </ul>
                   </a>
 
         <div className="dashboard-card dashboard-card--links">
-          <h3>Полезные ссылки</h3>
+          <h3>ссылки</h3>
           <ul className="dashboard-links-list">
             {usefulLinks.map((link) => (
               <li key={link.href}>
@@ -593,7 +617,7 @@ function StartDashboard() {
         <div className="guide-table-wrap dashboard-object-summary__table-wrap">
           <table
             className="guide-table table-compact dashboard-object-summary__table"
-            style={{ width: objectSummaryTableWidth, minWidth: objectSummaryTableWidth, tableLayout: 'fixed' }}
+            style={{ width: '100%', minWidth: objectSummaryTableWidth, tableLayout: 'fixed' }}
           >
             <colgroup>
               {objectSummaryColumns.map(({ key }) => (
@@ -625,6 +649,16 @@ function StartDashboard() {
                         [key]: event.target.value,
                       }))}
                     />
+                    {key === 'communicationServiceCostTotal' && (
+                      <span className="dashboard-object-summary__header-total">
+                        {formatMoney(objectSummaryCostTotals.communicationServiceCostTotal)}
+                      </span>
+                    )}
+                    {key === 'equipmentCostTotal' && (
+                      <span className="dashboard-object-summary__header-total">
+                        {formatMoney(objectSummaryCostTotals.equipmentCostTotal)}
+                      </span>
+                    )}
                     <span
                       className="dashboard-object-summary__resizer"
                       role="separator"
@@ -644,7 +678,11 @@ function StartDashboard() {
                   <td>
                     {row.communicationServices.length > 0 ? (
                       <ul className="dashboard-object-summary__list">
-                        {row.communicationServices.map((service) => <li key={service}>{service}</li>)}
+                        {row.communicationServices.map(({ serviceItem, contractorsContracts }) => (
+                          <li key={serviceItem}>
+                            <strong>{serviceItem}</strong> ({contractorsContracts.join('; ')})
+                          </li>
+                        ))}
                       </ul>
                     ) : '—'}
                   </td>
@@ -675,7 +713,7 @@ function StartDashboard() {
 }
 
 // Компонент подраздела страницы «Услуги_связи».
-// Содержит две вкладки: «Бюджет» с 4 попап-ссылками и «Детализации».
+// Содержит вкладки бюджета, детализаций и Газпром телеком.
 function BudgetSectionPage({
   onOpenBudgetDept,
   onOpenBudgetPao,
@@ -691,7 +729,7 @@ function BudgetSectionPage({
   onOpenBudgetMain: () => void
   onOpenSatellitesDetails: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'budget' | 'details'>('budget')
+  const [activeTab, setActiveTab] = useState<'budget' | 'details' | 'gazprom-telecom'>('budget')
 
   return (
     <div>
@@ -710,7 +748,16 @@ function BudgetSectionPage({
         >
           Детализации
         </button>
+        <button
+          type="button"
+          className={`budget-subnav-tab${activeTab === 'gazprom-telecom' ? ' budget-subnav-tab--active' : ''}`}
+          onClick={() => setActiveTab('gazprom-telecom')}
+        >
+          Газпром телеком
+        </button>
       </div>
+
+      {activeTab === 'gazprom-telecom' && <GazpromTelecomTable />}
 
       {activeTab === 'budget' && (
         <div className="budget-popup-links">
@@ -727,7 +774,7 @@ function BudgetSectionPage({
             Свод: договоры и статьи бюджета
           </button>
           <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetMain}>
-            Полная таблица услуг связи
+            БДР Услуги связи
           </button>
         </div>
       )}
@@ -822,8 +869,8 @@ export default function App() {
       window.location.hash = '#contracts'
       return
     }
-    if (nextPage === 'invest-program-table') {
-      window.location.hash = '#invest-program-table'
+    if (nextPage === 'notes') {
+      window.location.hash = '#notes'
       return
     }
     if (nextPage === 'satellites') {
@@ -870,20 +917,6 @@ export default function App() {
       popupUrl,
       'satellites-details-window',
       'popup=yes,width=1300,height=850,resizable=yes,scrollbars=yes'
-    )
-
-    if (popup) {
-      popup.focus()
-    }
-  }
-
-  // Открывает окно детальной страницы расчета лимита для выбранной строки.
-  function openLimitWindow(rowId: number): void {
-    const popupUrl = `${window.location.pathname}#limit-window-${rowId}`
-    const popup = window.open(
-      popupUrl,
-      `limit-window-${rowId}`,
-      'popup=yes,width=900,height=760,resizable=yes,scrollbars=yes'
     )
 
     if (popup) {
@@ -1032,9 +1065,9 @@ export default function App() {
   if (isBudgetMainPopup) {
     return (
       <main>
+        <h2 className="budget-popup-title">БДР Услуги связи</h2>
         <BudgetTable
           onAddRow={openAddRowWindow}
-          onOpenLimit={openLimitWindow}
           onOpenContract={openContractWindow}
           onOpenObject={openObjectWindow}
           onOpenDepartment={openDepartmentWindow}
@@ -1088,6 +1121,9 @@ export default function App() {
   if (isImportSubstitutionTablePopup) {
     return (
       <main>
+        <div className="page-header">
+          <h3>Данные ИС ПРИТ</h3>
+        </div>
         <ImportSubstitutionTable />
       </main>
     )
@@ -1107,6 +1143,10 @@ export default function App() {
         <EquipmentOrderPopup />
       </main>
     )
+  }
+
+  if (isGuidePopup && guidePopupEntity === 'postgres-schema') {
+    return <PostgresSchemaPopup />
   }
 
   if (isGuidePopup && guidePopupEntity) {
@@ -1180,8 +1220,8 @@ export default function App() {
           <a href="#contracts" onClick={(event) => { event.preventDefault(); goTo('contracts') }}>
             Договора
           </a>
-          <a href="#invest-program-table" onClick={(event) => { event.preventDefault(); goTo('invest-program-table') }}>
-            Закупки
+          <a href="#notes" onClick={(event) => { event.preventDefault(); goTo('notes') }}>
+            Заметки
           </a>
           <a href="#satellites" onClick={(event) => { event.preventDefault(); goTo('satellites') }}>
             Спутники
@@ -1223,7 +1263,7 @@ export default function App() {
       {page === 'satellites' && <SatellitesPage />}
       {page === 'satellites-control' && <SatellitesControlPage onBack={() => goTo('satellites')} />}
       {page === 'contracts' && <ContractsPage onOpenContract={openContractWindow} />}
-      {page === 'invest-program-table' && <InvestProgramTablePage />}
+      {page === 'notes' && <NotesPage />}
     </main>
   )
 }

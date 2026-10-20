@@ -24,7 +24,6 @@ export async function ensureDatabaseTables(client) {
         'GN_invest_program',
         'GN_contract_additional_agreements',
         'GN_bdr_limit_calculation',
-        'GN_bdr_monthly_forecast',
         'GN_satellite_gt_numbers',
         'GN_satellites',
     ];
@@ -338,6 +337,8 @@ export async function ensureImportSubstitutionTable(client) {
        ADD COLUMN IF NOT EXISTS "Количество" NUMERIC(18,2),
       ADD COLUMN IF NOT EXISTS "Выведен из эксплуатации" NUMERIC(18,0) NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS "Инвентарный" TEXT,
+       ADD COLUMN IF NOT EXISTS "ИМЯ" TEXT,
+       ADD COLUMN IF NOT EXISTS "СЕРИЙНЫЙ НОМЕР" TEXT,
        ADD COLUMN IF NOT EXISTS "Замещенное импортное ТКО" TEXT,
        ADD COLUMN IF NOT EXISTS "Кол-во выводенного импортного ТКО" NUMERIC(18,2),
        ADD COLUMN IF NOT EXISTS "Статья затрат ТКО" TEXT NOT NULL DEFAULT 'ПЭН',

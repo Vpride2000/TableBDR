@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS "GN_dogovor" (
   "GN_dgv_id" SERIAL NOT NULL UNIQUE,
   "GN_dogovor" TEXT NOT NULL,
   "GN_contarctor_FK" INTEGER NOT NULL,
+  "GN_dogovor_date" DATE,
+  "GN_dogovor_signer_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+  "GN_dogovor_note" TEXT,
   PRIMARY KEY("GN_dgv_id")
 );
 
@@ -119,6 +122,23 @@ CREATE TABLE IF NOT EXISTS "GN_contracts" (
 
 COMMENT ON TABLE "GN_contracts" IS 'Договора';
 
+CREATE TABLE IF NOT EXISTS "GN_gazprom_telecom" (
+  "GN_gazprom_telecom_id" SERIAL PRIMARY KEY,
+  "tariff" TEXT NOT NULL DEFAULT '',
+  "provided_services" TEXT NOT NULL DEFAULT '',
+  "service_identifier" TEXT NOT NULL DEFAULT '',
+  "description" TEXT NOT NULL DEFAULT '',
+  "tariff_groups" TEXT NOT NULL DEFAULT '',
+  "unit" TEXT NOT NULL DEFAULT '',
+  "GN_dogovor_FK" INTEGER REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
+  "quantity" TEXT NOT NULL DEFAULT '',
+  "monthly_tariff" NUMERIC(15, 2),
+  "PAO_budget_network_item_FK" INTEGER REFERENCES "PAO__budget_network_item"("PAO_b_id") ON DELETE SET NULL,
+  "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+  "GN_departament_object_FK" INTEGER REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL,
+  "note" TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS "GN_invest_program" (
   "GN_invest_program_id" SERIAL NOT NULL UNIQUE,
   "GN_invest_pf_npf" TEXT NOT NULL,
@@ -172,8 +192,13 @@ CREATE TABLE IF NOT EXISTS "GN_bdr" (
   "GN_bdr_limit" NUMERIC NOT NULL,
   "GN_bdr_calculation" TEXT NOT NULL DEFAULT '',
   "GN_bdr_bdr25_corr" NUMERIC,
+  "GN_bdr_bdr25_corr_kol_vo" NUMERIC,
   "GN_bdr_bdr26" NUMERIC,
+  "GN_bdr_bdr26_kol_vo" NUMERIC,
   "GN_bdr_bdr26_corr" NUMERIC,
+  "GN_bdr_bdr26_corr_kol_vo" NUMERIC,
+  "GN_bdr_bdr27_kol_vo" NUMERIC,
+  "GN_bdr_bdr27" NUMERIC,
   "GN_bdr_edin.limit" NUMERIC NOT NULL,
   "GN_bdr_comments" TEXT NOT NULL,
   PRIMARY KEY("GN_bdr_ID")
@@ -188,25 +213,6 @@ CREATE TABLE IF NOT EXISTS "GN_bdr_limit_calculation" (
   "line_note" TEXT NOT NULL DEFAULT '',
   UNIQUE ("GN_bdr_ID_FK", "line_order")
 );
-
-CREATE TABLE IF NOT EXISTS "GN_bdr_monthly_forecast" (
-  "GN_bdr_monthly_forecast_id" SERIAL PRIMARY KEY,
-  "budget_item" TEXT NOT NULL,
-  "contractor" TEXT NOT NULL,
-  "dogovor" TEXT NOT NULL,
-  "department" TEXT NOT NULL,
-  "GN_bdr_ID_FK" INTEGER,
-  "month_index" SMALLINT NOT NULL CHECK ("month_index" BETWEEN 0 AND 11),
-  "month_value" NUMERIC NOT NULL DEFAULT 0,
-  "month_fact_value" NUMERIC NOT NULL DEFAULT 0,
-  "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE ("budget_item", "contractor", "dogovor", "department", "month_index")
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS "GN_bdr_monthly_forecast_row_month_uniq"
-  ON "GN_bdr_monthly_forecast" ("GN_bdr_ID_FK", "month_index")
-  WHERE "GN_bdr_ID_FK" IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS "GN_satellite_gt_numbers" (
   "GN_satellite_gt_numbers_id" SERIAL NOT NULL UNIQUE,

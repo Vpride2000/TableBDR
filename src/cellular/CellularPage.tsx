@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { formatHttpError } from '../utils/forecastUtils'
+import { formatHttpError } from '../utils/httpUtils'
 
 type CellularRow = {
   GN_cellular_id: number

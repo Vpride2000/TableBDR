@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils'
+import { formatHttpError, formatErrorMessage } from '../utils/httpUtils'
 
 const PURCHASE_COLUMNS = [
   'Подразделение', 'Тип', 'Наименование ТКО', 'Вендор ТКО', 'Количество', 'Примечание', 'Статус закупки', 'Платеж ТР без НДС',
@@ -139,7 +139,7 @@ export default function PurchaseStateTable({
   }
 
   async function deleteRow(rowId: number): Promise<void> {
-    if (!window.confirm('Удалить эту строку?')) return
+    if (!window.confirm(`Удалить строку №${rowId} из раздела «${title}»?`)) return
     setSaving(true)
     setSaveError(null)
 
@@ -324,25 +324,30 @@ export default function PurchaseStateTable({
                           )}
                         </td>}
                         <td className="invest-program-actions-cell">
-                          {isEditingRow ? (
-                            <>
-                              <button type="button" className="invest-program-row-action-button" onClick={() => void saveEdit()} disabled={saving}>
-                                СОХР
-                              </button>
-                              <button type="button" className="invest-program-row-action-button invest-program-row-action-button--secondary" onClick={cancelEdit} disabled={saving}>
-                                ОТМ
-                              </button>
-                              <button type="button" className="invest-program-row-action-button invest-program-row-action-button--secondary" onClick={() => void deleteRow(rowId)} disabled={saving}>
-                                УДАЛИТЬ
-                              </button>
-                            </>
-                          ) : (
-                            <>
+                          <div className="purchase-state-row-actions">
+                            {isEditingRow ? (
+                              <>
+                                <button type="button" className="invest-program-row-action-button" onClick={() => void saveEdit()} disabled={saving}>
+                                  СОХР
+                                </button>
+                                <button type="button" className="invest-program-row-action-button invest-program-row-action-button--secondary" onClick={cancelEdit} disabled={saving}>
+                                  ОТМ
+                                </button>
+                              </>
+                            ) : (
                               <button type="button" className="invest-program-row-action-button" onClick={() => startEdit(row)}>
                                 ИЗМ
                               </button>
-                            </>
-                          )}
+                            )}
+                            <button
+                              type="button"
+                              className="invest-program-row-action-button invest-program-row-action-button--secondary"
+                              onClick={() => void deleteRow(rowId)}
+                              disabled={saving}
+                            >
+                              УДАЛИТЬ
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )

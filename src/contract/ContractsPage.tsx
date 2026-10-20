@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useState } from 'react'
-import { formatHttpError } from '../utils/forecastUtils'
+import { Fragment, useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { formatHttpError } from '../utils/httpUtils'
 
 // Страница управления договорами.
 // Загружает справочники, отображает список договоров и позволяет сохранять изменения.
@@ -21,6 +21,8 @@ type ContractRow = {
   GN_contract_department?: string
   GN_contract_side?: string
   GN_contract_asez_number?: string
+  GN_dogovor_note?: string
+  GN_dogovor_signer?: string
 }
 
 type ContractAgreement = {
@@ -31,6 +33,7 @@ type ContractAgreement = {
   GN_additional_agreement_description: string
   GN_additional_agreement_amount: number
   GN_additional_agreement_status?: string
+  contract_name?: string
 }
 
 type ContractTermSegment = { label: string; color: 'blue' | 'yellow' | 'red' }
@@ -47,7 +50,8 @@ type ContractTermVisual = {
 const COLUMNS = [
   { key: 'GN_contract_contractor_FK', label: 'контрагент', kind: 'lookup' as const, narrow: true },
   { key: 'GN_contract_department', label: 'подразделение', kind: 'text' as const, narrow: true },
-  { key: 'GN_contract_side', label: 'сторона', kind: 'text' as const, narrow: true },
+  { key: 'GN_dogovor_signer', label: 'подписант', kind: 'text' as const, narrow: true },
+  { key: 'GN_contract_state', label: 'Состояние', kind: 'text' as const },
   { key: 'GN_contract_dogovor_FK', label: 'договор', kind: 'lookup' as const },
   { key: 'GN_contract_date', label: 'дата', kind: 'date' as const },
   { key: 'GN_contract_term_from', label: 'срок С', kind: 'date' as const },
@@ -57,9 +61,55 @@ const COLUMNS = [
 ]
 
 const DISPLAY_COLUMNS = COLUMNS.filter((column) => column.kind !== 'status')
-const ACTIVE_TABLE_COLSPAN = DISPLAY_COLUMNS.length + 3
+const ACTIVE_DISPLAY_COLUMNS = DISPLAY_COLUMNS.filter((column) => ![
+  'GN_contract_date',
+  'GN_contract_term_from',
+  'GN_contract_term_to',
+  'GN_contract_status_updated_at',
+].includes(column.key))
+const ACTIVE_DISPLAY_COLUMN_KEYS = new Set(ACTIVE_DISPLAY_COLUMNS.map((column) => column.key))
+const ACTIVE_TABLE_COLSPAN = ACTIVE_DISPLAY_COLUMNS.length + 4
+const CONTRACT_FILTERS_STORAGE_KEY = 'contracts-active-column-filters'
+const CONTRACT_COLUMN_WIDTHS_STORAGE_KEY = 'contracts-active-column-widths'
+const ATTENTION_FILTER_KEY = 'attentionOnly'
+const ACTIVE_TABLE_COLUMN_KEYS = [
+  'row-number',
+  ...ACTIVE_DISPLAY_COLUMNS.map((column) => column.key),
+  'term-months',
+  'agreements',
+  'dogovor-note',
+]
+const CONTRACT_CONTROL_UPDATED_KEY = 'contracts-control-updated'
 
 const MONTHS_SHORT_RU = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+
+function readSavedStringRecord(storageKey: string): Record<string, string> {
+  try {
+    const stored = localStorage.getItem(storageKey)
+    if (!stored) return {}
+    const parsed: unknown = JSON.parse(stored)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+  } catch {
+    return {}
+  }
+}
+
+function readSavedColumnWidths(): Record<string, number> {
+  try {
+    const stored = localStorage.getItem(CONTRACT_COLUMN_WIDTHS_STORAGE_KEY)
+    if (!stored) return {}
+    const parsed: unknown = JSON.parse(stored)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, number] => (
+        typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] >= 45
+      )),
+    )
+  } catch {
+    return {}
+  }
+}
 
 function mapLookupOptions(rows: Row[], valueKey: string, labelKey: string): LookupOption[] {
   return rows.map((row) => ({
@@ -85,6 +135,8 @@ function toRow(data: Row): ContractRow {
     GN_contract_department: String(data.GN_contract_department ?? ''),
     GN_contract_side: String(data.GN_contract_side ?? ''),
     GN_contract_asez_number: String(data.GN_contract_asez_number ?? ''),
+    GN_dogovor_note: String(data.GN_dogovor_note ?? ''),
+    GN_dogovor_signer: String(data.GN_dogovor_signer ?? ''),
   }
 }
 
@@ -135,6 +187,24 @@ function parseIsoDate(value: string): Date | null {
   }
 
   return parsed
+}
+
+function isContractExpiringSoon(value: string): boolean {
+  const endDate = parseIsoDate(value)
+  if (!endDate) return false
+
+  const now = new Date()
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const targetMonth = now.getUTCMonth() + 3
+  const targetYear = now.getUTCFullYear() + Math.floor(targetMonth / 12)
+  const normalizedTargetMonth = targetMonth % 12
+  const targetDay = Math.min(
+    now.getUTCDate(),
+    new Date(Date.UTC(targetYear, normalizedTargetMonth + 1, 0)).getUTCDate(),
+  )
+  const threeMonthsFromToday = Date.UTC(targetYear, normalizedTargetMonth, targetDay)
+
+  return endDate.getTime() >= today && endDate.getTime() < threeMonthsFromToday
 }
 
 function formatMonthLabel(date: Date): string {
@@ -215,6 +285,11 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
   const [departmentOptions, setDepartmentOptions] = useState<LookupOption[]>([])
   const [agreementsByContract, setAgreementsByContract] = useState<Record<number, ContractAgreement[]>>({})
   const [expandedContracts, setExpandedContracts] = useState<Set<number>>(new Set())
+  const [archiveExpanded, setArchiveExpanded] = useState(false)
+  const [archiveRows, setArchiveRows] = useState<ContractRow[]>([])
+  const [archiveLoaded, setArchiveLoaded] = useState(false)
+  const [archiveLoading, setArchiveLoading] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
   const [sortState, setSortState] = useState<SortState>({ key: 'GN_contract_id', direction: 'asc' })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -242,7 +317,48 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     contractName?: string
     department?: string
   }>>([])
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>(() => readSavedStringRecord(CONTRACT_FILTERS_STORAGE_KEY))
+  const [activeColumnWidths, setActiveColumnWidths] = useState<Record<string, number>>(readSavedColumnWidths)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CONTRACT_FILTERS_STORAGE_KEY, JSON.stringify(columnFilters))
+    } catch {
+      return
+    }
+  }, [columnFilters])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CONTRACT_COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(activeColumnWidths))
+    } catch {
+      return
+    }
+  }, [activeColumnWidths])
+
+  function startActiveColumnResize(event: ReactPointerEvent<HTMLSpanElement>, columnKey: string): void {
+    event.preventDefault()
+    event.stopPropagation()
+    const header = event.currentTarget.closest('th')
+    if (!header) return
+
+    const startX = event.clientX
+    const startWidth = header.getBoundingClientRect().width
+    const resizeColumn = (moveEvent: PointerEvent): void => {
+      setActiveColumnWidths((previous) => ({
+        ...previous,
+        [columnKey]: Math.max(45, startWidth + moveEvent.clientX - startX),
+      }))
+    }
+    const stopResizing = (): void => {
+      window.removeEventListener('pointermove', resizeColumn)
+      window.removeEventListener('pointerup', stopResizing)
+    }
+
+    window.addEventListener('pointermove', resizeColumn)
+    window.addEventListener('pointerup', stopResizing)
+  }
+
   useEffect(() => {
     async function load(): Promise<void> {
       setLoading(true)
@@ -250,7 +366,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
 
       try {
         const [rowsRes, contractorRes, dogovorRes, agreementsRes, bdrRes, deptRes] = await Promise.all([
-          fetch('/api/gn/contracts'),
+          fetch('/api/gn/contracts?includeArchive=false'),
           fetch('/api/gn/contractors'),
           fetch('/api/gn/dogovors'),
           fetch('/api/gn/contract-additional-agreements'),
@@ -380,6 +496,27 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     void load()
   }, [])
 
+  useEffect(() => {
+    async function refreshContracts(): Promise<void> {
+      try {
+        const response = await fetch('/api/gn/contracts?includeArchive=false')
+        if (!response.ok) throw new Error(formatHttpError(response.status))
+        const refreshedRows = (await response.json()) as Row[]
+        setRows(refreshedRows.map(toRow))
+        setError(null)
+      } catch (refreshError) {
+        setError(refreshError instanceof Error ? refreshError.message : 'Не удалось обновить список договоров')
+      }
+    }
+
+    const handleStorage = (event: StorageEvent): void => {
+      if (event.key === CONTRACT_CONTROL_UPDATED_KEY) void refreshContracts()
+    }
+
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [])
+
   // Update pending documents when data changes
   useEffect(() => {
     const pendingDocs: Array<{
@@ -412,7 +549,9 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     Object.values(agreementsByContract).flat().forEach((agreement) => {
       if (agreement.GN_additional_agreement_status === 'на согласовании') {
         const contract = rows.find(c => c.GN_contract_id === agreement.GN_contract_id_FK)
-        const contractName = dogovorOptions.find(d => d.value === String(contract?.GN_contract_dogovor_FK))?.label || ''
+        const contractName = contract
+          ? dogovorOptions.find(d => d.value === String(contract.GN_contract_dogovor_FK))?.label || ''
+          : String(agreement.contract_name ?? '')
         pendingDocs.push({
           id: `agreement-${agreement.GN_additional_agreement_id}`,
           type: 'agreement',
@@ -421,7 +560,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           description: agreement.GN_additional_agreement_description,
           amount: agreement.GN_additional_agreement_amount,
           contractName,
-          contractId: contract?.GN_contract_id,
+          contractId: agreement.GN_contract_id_FK,
         })
       }
     })
@@ -439,6 +578,51 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
       }
       return next
     })
+  }
+
+  async function loadArchiveRows(): Promise<void> {
+    if (archiveLoaded || archiveLoading) return
+
+    setArchiveLoading(true)
+    setArchiveError(null)
+    try {
+      const [contractsResponse, bdrResponse] = await Promise.all([
+        fetch('/api/gn/contracts?archive=true'),
+        fetch('/api/gn/bdr'),
+      ])
+      if (!contractsResponse.ok) throw new Error(formatHttpError(contractsResponse.status))
+      if (!bdrResponse.ok) throw new Error(formatHttpError(bdrResponse.status))
+
+      const inactiveContracts = await contractsResponse.json() as Row[]
+      const bdrRows = await bdrResponse.json() as Row[]
+      const departmentsByContractName = new Map<string, Set<string>>()
+      bdrRows.forEach((bdrRow) => {
+        const contractName = String(bdrRow['Договор'] ?? '').trim()
+        const department = String(bdrRow['Подразделение'] ?? '').trim()
+        if (!contractName || !department) return
+        const departments = departmentsByContractName.get(contractName) ?? new Set<string>()
+        departments.add(department)
+        departmentsByContractName.set(contractName, departments)
+      })
+
+      setArchiveRows(inactiveContracts.map((data) => {
+        const contract = toRow(data)
+        const contractName = String(data.GN_contract_name ?? '').trim()
+        contract.GN_contract_department = Array.from(departmentsByContractName.get(contractName) ?? []).join(', ')
+        return contract
+      }))
+      setArchiveLoaded(true)
+    } catch (loadError) {
+      setArchiveError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить архив договоров')
+    } finally {
+      setArchiveLoading(false)
+    }
+  }
+
+  function toggleArchive(): void {
+    const nextExpanded = !archiveExpanded
+    setArchiveExpanded(nextExpanded)
+    if (nextExpanded) void loadArchiveRows()
   }
 
   function toggleSort(key: string): void {
@@ -478,9 +662,13 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
 
   function getSortedActiveRows(): ContractRow[] {
     let activeRows = rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'действующий')
+    if (columnFilters[ATTENTION_FILTER_KEY] === 'true') {
+      activeRows = activeRows.filter((row) => isContractExpiringSoon(String(row.GN_contract_term_to ?? '')))
+    }
 
     // Apply column filters
     Object.entries(columnFilters).forEach(([key, filterValue]) => {
+      if (!ACTIVE_DISPLAY_COLUMN_KEYS.has(key)) return
       const normalized = filterValue.trim().toLowerCase()
       if (!normalized) return
       activeRows = activeRows.filter((row) => {
@@ -616,8 +804,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
   const [newContractorId, setNewContractorId] = useState('')
   const [newDogovorId, setNewDogovorId] = useState('')
   const [newDogovorStatus, setNewDogovorStatus] = useState('на согласовании')
-  const [newSide, setNewSide] = useState('')
-  const [newAsezNumber, setNewAsezNumber] = useState('')
 
   // Фильтрует список договоров по выбранному контрагенту
   const filteredDogovorOptions = newContractorId
@@ -644,14 +830,34 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
         GN_contract_asez_load_date: new Date().toISOString().slice(0, 10),
         GN_contract_state: '',
         GN_contract_approval_status: newDogovorStatus,
-        GN_contract_side: newSide,
-        GN_contract_asez_number: newAsezNumber,
       }
 
-      const response = await fetch('/api/gn/contracts', {
-        method: 'POST',
+      const contractRemovedFromControl = rows.find((row) => (
+        row.GN_contract_dogovor_FK === Number(newDogovorId)
+          && row.GN_contract_approval_status === 'снят с контроля'
+      ))
+      const response = await fetch(
+        contractRemovedFromControl
+          ? `/api/gn/contracts/${contractRemovedFromControl.GN_contract_id}`
+          : '/api/gn/contracts',
+        {
+        method: contractRemovedFromControl ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(contractRemovedFromControl
+          ? {
+            ...contractRemovedFromControl,
+            ...payload,
+            GN_contract_sed_launch_date: contractRemovedFromControl.GN_contract_sed_launch_date,
+            GN_contract_asez_load_date: contractRemovedFromControl.GN_contract_asez_load_date,
+            GN_contract_state: contractRemovedFromControl.GN_contract_state,
+            GN_contract_status_updated_at: new Date().toISOString().slice(0, 10),
+            GN_contract_date: contractRemovedFromControl.GN_contract_date,
+            GN_contract_term_from: contractRemovedFromControl.GN_contract_term_from,
+            GN_contract_term_to: contractRemovedFromControl.GN_contract_term_to,
+            GN_contract_side: contractRemovedFromControl.GN_contract_side,
+            GN_contract_asez_number: contractRemovedFromControl.GN_contract_asez_number,
+          }
+          : payload),
       })
 
       if (!response.ok) {
@@ -659,9 +865,14 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
         throw new Error(payloadErr.error || formatHttpError(response.status))
       }
 
-      const created = await response.json()
+      const created = await response.json() as Row
 
-      setRows((prev) => [toRow(created), ...prev])
+      setRows((prev) => contractRemovedFromControl
+        ? prev.map((row) => row.GN_contract_id === contractRemovedFromControl.GN_contract_id ? toRow(created) : row)
+        : [toRow(created), ...prev])
+      if (contractRemovedFromControl) {
+        localStorage.setItem(CONTRACT_CONTROL_UPDATED_KEY, String(Date.now()))
+      }
 
       const id = `contract-${created.GN_contract_id ?? `new-${Date.now()}`}`
       const contractName = selectedDogovor.label
@@ -680,13 +891,23 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
       setNewContractorId('')
       setNewDogovorId('')
       setNewDogovorStatus('на согласовании')
-      setNewSide('')
-      setNewAsezNumber('')
       setShowAddContractForm(false)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Не удалось создать договор')
     }
   }
+
+  const getActiveColumnWidth = (key: string): number => activeColumnWidths[key] ?? (
+    key === 'row-number' ? 48
+      : key === 'term-months' ? 210
+        : key === 'agreements' ? 64
+          : key === 'dogovor-note' ? 220
+          : 130
+  )
+  const activeTableWidth = ACTIVE_TABLE_COLUMN_KEYS.reduce(
+    (total, key) => total + getActiveColumnWidth(key),
+    0,
+  )
 
   return (
     <section className="guide invest-program-section transparent-section contracts-page-no-bg">
@@ -737,25 +958,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                     <option value="на согласовании">на согласовании</option>
                     <option value="действующий">действующий</option>
                   </select>
-                </div>
-                <div className="form-fields-inline" style={{ marginBottom: '6px' }}>
-                  <select
-                    value={newSide}
-                    onChange={(e) => setNewSide(e.target.value)}
-                  >
-                    <option value="">Сторона (подразделение)</option>
-                    {departmentOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="text"
-                    placeholder="Номер АСЭЗ"
-                    value={newAsezNumber}
-                    onChange={(e) => setNewAsezNumber(e.target.value)}
-                  />
                   <button
                     type="button"
                     className="page-action-btn page-action-btn--success"
@@ -865,23 +1067,75 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
        <h3 className="section-title section-title--success">Действующие договора</h3>
             {/* Main contracts table */}
             <div className="guide-table-wrap invest-program-table-wrap">
-              <table className="guide-table table-compact invest-program-table-min contracts-active-table">
+              <table
+                className="guide-table table-compact invest-program-table-min contracts-active-table"
+                style={{ width: `${activeTableWidth}px`, tableLayout: 'fixed' }}
+              >
+              <colgroup>
+                {ACTIVE_TABLE_COLUMN_KEYS.map((key) => (
+                  <col key={key} style={{ width: `${getActiveColumnWidth(key)}px` }} />
+                ))}
+              </colgroup>
               <thead>
                 <tr>
-                  <th>№</th>
-                  {DISPLAY_COLUMNS.map((column) => (
-                    <th key={column.key}>
+                  <th className="contracts-resizable-header">
+                    №
+                    <span
+                      className="contracts-column-resizer"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label="Изменить ширину столбца №"
+                      onPointerDown={(event) => startActiveColumnResize(event, 'row-number')}
+                    />
+                  </th>
+                  {ACTIVE_DISPLAY_COLUMNS.map((column) => (
+                    <th key={column.key} className="contracts-resizable-header">
                       <button className="contract-sort-btn" type="button" onClick={() => toggleSort(column.key)} title={`Сортировать по ${column.label}`}>
                         {column.label} {getSortMark(column.key)}
                       </button>
+                      <span
+                        className="contracts-column-resizer"
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={`Изменить ширину столбца ${column.label}`}
+                        onPointerDown={(event) => startActiveColumnResize(event, column.key)}
+                      />
                     </th>
                   ))}
-                  <th>Срок по месяцам</th>
-                  <th>ДС</th>
+                  <th className="contracts-resizable-header">
+                    Срок по месяцам
+                    <span
+                      className="contracts-column-resizer"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label="Изменить ширину столбца Срок по месяцам"
+                      onPointerDown={(event) => startActiveColumnResize(event, 'term-months')}
+                    />
+                  </th>
+                  <th className="contracts-resizable-header">
+                    ДС
+                    <span
+                      className="contracts-column-resizer"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label="Изменить ширину столбца ДС"
+                      onPointerDown={(event) => startActiveColumnResize(event, 'agreements')}
+                    />
+                  </th>
+                  <th className="contracts-resizable-header">
+                    Примечание
+                    <span
+                      className="contracts-column-resizer"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label="Изменить ширину столбца Примечание"
+                      onPointerDown={(event) => startActiveColumnResize(event, 'dogovor-note')}
+                    />
+                  </th>
                 </tr>
                 <tr>
                   <td></td>
-                  {DISPLAY_COLUMNS.map((column) => (
+                  {ACTIVE_DISPLAY_COLUMNS.map((column) => (
                     <td key={`filter-${column.key}`}>
                       <input
                         className="guide-input contract-filter-input"
@@ -891,6 +1145,19 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                       />
                     </td>
                   ))}
+                  <td>
+                    <label className="contracts-attention-filter">
+                      <input
+                        type="checkbox"
+                        checked={columnFilters[ATTENTION_FILTER_KEY] === 'true'}
+                        onChange={(event) => setColumnFilters((previous) => ({
+                          ...previous,
+                          [ATTENTION_FILTER_KEY]: event.target.checked ? 'true' : '',
+                        }))}
+                      />
+                      внимание
+                    </label>
+                  </td>
                   <td></td>
                   <td></td>
                 </tr>
@@ -902,7 +1169,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                     <Fragment key={`contract-block-${row.GN_contract_id}`}>
                       <tr key={`contract-${row.GN_contract_id}`}>
                     <td className="invest-program-row-number">{rowIndex + 1}</td>
-                    {DISPLAY_COLUMNS.map((column) => {
+                    {ACTIVE_DISPLAY_COLUMNS.map((column) => {
                         if (column.kind === 'lookup') {
                           const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
                           const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
@@ -958,7 +1225,9 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                           </td>
                         )
                       })}
-                      <td>
+                      <td className={`contracts-term-cell${isContractExpiringSoon(String(row.GN_contract_term_to ?? ''))
+                        ? ' contracts-term-expiring-soon'
+                        : ''}`}>
                         {(() => {
                           const termVisual = buildContractTermVisual(
                             String(row.GN_contract_term_from ?? ''),
@@ -994,7 +1263,9 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                           )
                         })()}
                       </td>
-                      <td className="invest-program-actions-cell">
+                      <td className={`invest-program-actions-cell${(agreementsByContract[row.GN_contract_id] ?? []).some(
+                        (agreement) => agreement.GN_additional_agreement_status === 'на согласовании',
+                      ) ? ' contracts-agreements-cell--pending' : ''}`}>
                         {(() => {
                           const contractAgreements = agreementsByContract[row.GN_contract_id] ?? []
                           const agreementCount = contractAgreements.length
@@ -1018,6 +1289,14 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                             </div>
                           )
                         })()}
+                      </td>
+                      <td>
+                        <span
+                          className="invest-program-cell-text contracts-cell-truncate"
+                          title={String(row.GN_dogovor_note ?? '')}
+                        >
+                          {String(row.GN_dogovor_note ?? '')}
+                        </span>
                       </td>
                     </tr>
                     {(() => {
@@ -1160,88 +1439,108 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           </div>
           </div>
         )}
-        {/* Archive table for inactive contracts */}
-        {!loading && !error && (() => {
-          const inactiveForVisibility = rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий')
-          return inactiveForVisibility.length > 0
-        })() && (
+        {!loading && !error && (
           <div className="guide-table-wrap invest-program-table-wrap section-top-space">
-            <h3 className="section-title section-title--danger">Архив (не действующие договора)</h3>
-            <table className="guide-table table-compact invest-program-table-min">
-              <thead>
-                <tr>
-                  <th>№</th>
-                  {DISPLAY_COLUMNS.map((column) => (
-                    <th key={column.key}>{column.label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  const inactiveRows = rows.filter(row => String(row.GN_contract_approval_status ?? 'действующий') === 'не действующий')
-                  return inactiveRows.map((row, rowIndex) => (
-                    <Fragment key={`archive-contract-block-${row.GN_contract_id}`}>
-                      <tr key={`archive-contract-${row.GN_contract_id}`}>
-                        <td className="invest-program-row-number">{rowIndex + 1}</td>
-                        {DISPLAY_COLUMNS.map((column) => {
-                          if (column.kind === 'lookup') {
-                            const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
-                            const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
-                            return (
-                              <td key={column.key}>
-                                {column.key === 'GN_contract_dogovor_FK' ? (
-                                  <button
-                                    type="button"
-                                    className="contract-cell-button"
-                                    onClick={() => onOpenContract(row.GN_contract_id)}
-                                  >
-                                    {label}
-                                  </button>
-                                ) : (
-                                  <span className="invest-program-cell-text">{label}</span>
-                                )}
-                              </td>
-                            )
-                          }
-
-                          if (column.kind === 'date') {
-                            const value = String(row[column.key as keyof ContractRow] ?? '')
-                            return (
-                              <td key={column.key}>
-                                <span className="invest-program-cell-text">{formatDateDisplay(value)}</span>
-                              </td>
-                            )
-                          }
-
-                          if (column.kind === 'status') {
-                            const statusValue = String(row[column.key as keyof ContractRow] ?? 'действующий')
-                            const statusClass = statusValue === 'на согласовании'
-                              ? 'status-cell status-cell--pending'
-                              : statusValue === 'действующий'
-                                ? 'status-cell status-cell--active'
-                                : statusValue === 'не действующий'
-                                  ? 'status-cell status-cell--inactive'
-                                  : 'status-cell'
-                            return (
-                              <td key={column.key} className={statusClass}>
-                                <span className={`invest-program-cell-text status-label ${statusClass}`}>{statusValue}</span>
-                              </td>
-                            )
-                          }
-
-                          const value = String(row[column.key as keyof ContractRow] ?? '')
-                          return (
-                            <td key={column.key}>
-                              <span className="invest-program-cell-text">{value}</span>
-                            </td>
-                          )
-                        })}
+            <h3 className="section-title section-title--danger">
+              <button
+                type="button"
+                className="contracts-archive-toggle"
+                aria-expanded={archiveExpanded}
+                aria-controls="contracts-archive-table"
+                onClick={toggleArchive}
+              >
+                <span aria-hidden="true">{archiveExpanded ? '▾' : '▸'}</span>
+                {' '}Архив (не действующие договора)
+              </button>
+            </h3>
+            {archiveExpanded && (
+              <div id="contracts-archive-table">
+                {archiveLoading && <p className="hint">Загрузка архивных договоров...</p>}
+                {archiveError && (
+                  <>
+                    <p className="hint hint--error">Ошибка: {archiveError}</p>
+                    <button type="button" className="page-text-link" onClick={() => void loadArchiveRows()}>
+                      Повторить загрузку
+                    </button>
+                  </>
+                )}
+                {archiveLoaded && archiveRows.length === 0 && <p className="hint">Архивных договоров нет.</p>}
+                {archiveLoaded && archiveRows.length > 0 && (
+                  <table className="guide-table table-compact invest-program-table-min">
+                    <thead>
+                      <tr>
+                        <th>№</th>
+                        {DISPLAY_COLUMNS.map((column) => (
+                          <th key={column.key}>{column.label}</th>
+                        ))}
                       </tr>
-                    </Fragment>
-                  ))
-                })()}
-              </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                      {archiveRows.map((row, rowIndex) => (
+                        <Fragment key={`archive-contract-block-${row.GN_contract_id}`}>
+                          <tr key={`archive-contract-${row.GN_contract_id}`}>
+                            <td className="invest-program-row-number">{rowIndex + 1}</td>
+                            {DISPLAY_COLUMNS.map((column) => {
+                              if (column.kind === 'lookup') {
+                                const options = column.key === 'GN_contract_contractor_FK' ? contractorOptions : dogovorOptions
+                                const label = displayLookupLabel(options, row[column.key as keyof ContractRow])
+                                return (
+                                  <td key={column.key}>
+                                    {column.key === 'GN_contract_dogovor_FK' ? (
+                                      <button
+                                        type="button"
+                                        className="contract-cell-button"
+                                        onClick={() => onOpenContract(row.GN_contract_id)}
+                                      >
+                                        {label}
+                                      </button>
+                                    ) : (
+                                      <span className="invest-program-cell-text">{label}</span>
+                                    )}
+                                  </td>
+                                )
+                              }
+
+                              if (column.kind === 'date') {
+                                const value = String(row[column.key as keyof ContractRow] ?? '')
+                                return (
+                                  <td key={column.key}>
+                                    <span className="invest-program-cell-text">{formatDateDisplay(value)}</span>
+                                  </td>
+                                )
+                              }
+
+                              if (column.kind === 'status') {
+                                const statusValue = String(row[column.key as keyof ContractRow] ?? 'действующий')
+                                const statusClass = statusValue === 'на согласовании'
+                                  ? 'status-cell status-cell--pending'
+                                  : statusValue === 'действующий'
+                                    ? 'status-cell status-cell--active'
+                                    : statusValue === 'не действующий'
+                                      ? 'status-cell status-cell--inactive'
+                                      : 'status-cell'
+                                return (
+                                  <td key={column.key} className={statusClass}>
+                                    <span className={`invest-program-cell-text status-label ${statusClass}`}>{statusValue}</span>
+                                  </td>
+                                )
+                              }
+
+                              const value = String(row[column.key as keyof ContractRow] ?? '')
+                              return (
+                                <td key={column.key}>
+                                  <span className="invest-program-cell-text">{value}</span>
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
           </div>
         )}
 

@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { formatErrorMessage, formatHttpError } from '../utils/forecastUtils'
+import { formatErrorMessage, formatHttpError } from '../utils/httpUtils'
 import ExcelActionToolbar from '../components/ExcelActionToolbar'
 
 type Row = Record<string, unknown>;
@@ -22,6 +22,8 @@ type EquipmentColumn =
   | 'ОБЪЕКТ'
   | 'Выведен из эксплуатации'
   | 'Инвентарный'
+  | 'ИМЯ'
+  | 'СЕРИЙНЫЙ НОМЕР'
   | 'Примечание';
 
 interface EquipmentSummaryRow {
@@ -63,6 +65,8 @@ const COLUMNS: EquipmentColumn[] = [
   'ПЛАН',
   'Выведен из эксплуатации',
   'Инвентарный',
+  'ИМЯ',
+  'СЕРИЙНЫЙ НОМЕР',
   'Примечание',
 ];
 
@@ -79,6 +83,8 @@ const EQUIPMENT_EXCEL_COLUMNS = [
   'Количество',
   'Выведен из эксплуатации',
   'Инвентарный',
+  'ИМЯ',
+  'СЕРИЙНЫЙ НОМЕР',
   'Замещенное импортное ТКО',
   'Кол-во выводенного импортного ТКО',
   'Статья затрат ТКО',
@@ -151,7 +157,11 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
   const savedViewState = readEquipmentAccountingViewState();
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState<Record<string, string>>(savedViewState.filters ?? {});
   const [multiFilters, setMultiFilters] = useState<Record<string, string[]>>(savedViewState.multiFilters ?? {});
   const [hideDepartment, setHideDepartment] = useState(requiredType ? false : savedViewState.hideDepartment ?? false);
@@ -174,6 +184,8 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
   const [copyDialogOpen, setCopyDialogOpen] = useState(false);
   const [copyQuantity, setCopyQuantity] = useState('');
   const [copyAvailableQuantity, setCopyAvailableQuantity] = useState(0);
+  const [copyDepartment, setCopyDepartment] = useState('');
+  const [copyObjects, setCopyObjects] = useState<string[]>([]);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [lookupRows, setLookupRows] = useState<Record<string, Row[]>>({});
   const [sort, setSort] = useState<{ column: EquipmentColumn; direction: SortDirection }>(savedViewState.sort ?? {
@@ -213,6 +225,23 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       .catch((requestError: Error) => setError(formatErrorMessage(requestError)))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    const wrapper = tableWrapRef.current;
+    const table = wrapper?.querySelector('table');
+    if (!wrapper || !table) return;
+
+    const updateScrollWidth = (): void => {
+      setTableScrollWidth(table.scrollWidth);
+      setHasHorizontalOverflow(table.scrollWidth > wrapper.clientWidth);
+    };
+
+    updateScrollWidth();
+    const observer = new ResizeObserver(updateScrollWidth);
+    observer.observe(table);
+    observer.observe(wrapper);
+    return () => observer.disconnect();
+  }, [columnWidths, data.length, hideDepartment, loading, requiredType]);
 
   useEffect(() => {
     async function loadSelectOptions(): Promise<void> {
@@ -269,6 +298,8 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
           'ОБЪЕКТ': '',
           'Выведен из эксплуатации': '0',
           'Инвентарный': '',
+          'ИМЯ': '',
+          'СЕРИЙНЫЙ НОМЕР': '',
           'Примечание': '',
         },
         quantityTotal: 0,
@@ -278,7 +309,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         quantityByDepartment: new Map<string, number>(),
       };
 
-      for (const column of ['Тип', 'Вендор ТКО', 'СЧЕТ УЧЕТА', 'Классификация ТКО', 'ЭКСПЛ', 'ПЛАН', 'ОБЪЕКТ', 'ГРУППА', 'Выведен из эксплуатации', 'Инвентарный', 'Примечание'] as const) {
+      for (const column of ['Тип', 'Вендор ТКО', 'СЧЕТ УЧЕТА', 'Классификация ТКО', 'ЭКСПЛ', 'ПЛАН', 'ОБЪЕКТ', 'ГРУППА', 'Выведен из эксплуатации', 'Инвентарный', 'ИМЯ', 'СЕРИЙНЫЙ НОМЕР', 'Примечание'] as const) {
         const rawValue = Array.isArray(row[column])
           ? row[column].map(String).join(', ').trim()
           : String(row[column] ?? '').trim();
@@ -554,6 +585,8 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
     const sourceQuantity = parseQuantity(sourceRow?.['Количество']);
     const decommissionedQuantity = Math.round(parseQuantity(draft['Выведен из эксплуатации']));
     const availableQuantity = Math.max(0, sourceQuantity - decommissionedQuantity);
+    setCopyDepartment(String(sourceRow?.['Подразделение'] ?? ''));
+    setCopyObjects(Array.isArray(sourceRow?.['ОБЪЕКТ']) ? sourceRow['ОБЪЕКТ'].map(String) : []);
     setCopyAvailableQuantity(availableQuantity);
     setCopyQuantity('');
     setCopyError(parseQuantity(draft['Количество']) === sourceQuantity
@@ -564,6 +597,10 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
 
   async function saveCopy(): Promise<void> {
     if (editingRowId == null) return;
+    if (!copyDepartment) {
+      setCopyError('Выберите подразделение.');
+      return;
+    }
     const sourceRow = data.find((row) => Number(row['GN_import_substitution_id']) === editingRowId);
     const sourceQuantity = parseQuantity(sourceRow?.['Количество']);
     if (parseQuantity(draft['Количество']) !== sourceQuantity) {
@@ -592,7 +629,11 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       const response = await fetch(`/api/import-substitution/${editingRowId}/copy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: quantityToCopy }),
+        body: JSON.stringify({
+          quantity: quantityToCopy,
+          department: copyDepartment,
+          objects: copyObjects,
+        }),
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
@@ -740,7 +781,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
       setData((await refreshed.json()) as Row[]);
-      setExcelImportMessage(`Загружено строк: ${savedRows}.`);
+      setExcelImportMessage(`Загрузка завершена. Загружено строк: ${savedRows}.`);
     } catch (requestError) {
       setExcelImportError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить Excel-файл');
     } finally {
@@ -753,22 +794,28 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
 
   const visibleColumns = columnOrder.filter((column) => (
     column !== 'Классификация ТКО'
+      && (requiredType || (column !== 'ИМЯ' && column !== 'СЕРИЙНЫЙ НОМЕР'))
       && (!requiredType || (column !== 'Тип' && column !== 'Вендор ТКО'))
       && (!hideDepartment || (column !== 'Подразделение' && column !== 'ОБЪЕКТ'))
   ));
 
   return (
-    <main>
+    <main className="equipment-accounting-page">
       <section className="page-section">
         <div className="page-header">
-          <h2>Учет оборудования</h2>
+          <h2>{requiredType === 'МСЭ' ? 'МСЭ' : 'Учет оборудования'}</h2>
         </div>
         <ExcelActionToolbar
+          className="excel-action-toolbar--equipment"
           onReset={resetAllFilters}
+          onAddRow={startCreate}
+          addRowDisabled={creatingRow}
           onExport={exportToExcel}
           onUpload={(file) => void importFromExcel(file)}
           uploading={excelImporting}
+          showUpload={requiredType !== 'МСЭ'}
         />
+        {excelImporting && <p className="hint" role="status">Загрузка...</p>}
         {excelImportMessage && <p className="hint">{excelImportMessage}</p>}
         {excelImportError && <p className="hint hint--error">Ошибка загрузки из Excel: {excelImportError}</p>}
         {!requiredType && (
@@ -825,7 +872,8 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         )}
         {creatingRow && (
           <div className="guide-new-row equipment-new-row">
-            {COLUMNS.filter((column) => column !== 'Количество'
+            {COLUMNS.filter((column) => (requiredType || (column !== 'ИМЯ' && column !== 'СЕРИЙНЫЙ НОМЕР'))
+              && column !== 'Количество'
               && column !== 'Выведен из эксплуатации'
               && column !== 'Классификация ТКО').map((column) => (
               <label key={column}>
@@ -875,7 +923,35 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
             </div>
           </div>
         )}
-        <div className="guide-table-wrap invest-program-table-wrap--narrow import-substitution-table-wrap equipment-accounting-table-wrap">
+        {hasHorizontalOverflow && (
+          <div
+            className="equipment-accounting-top-scroll"
+            ref={topScrollRef}
+            role="region"
+            aria-label="Горизонтальная прокрутка таблицы учета оборудования"
+            tabIndex={0}
+            onScroll={() => {
+              const wrapper = tableWrapRef.current;
+              const topScroll = topScrollRef.current;
+              if (wrapper && topScroll && wrapper.scrollLeft !== topScroll.scrollLeft) {
+                wrapper.scrollLeft = topScroll.scrollLeft;
+              }
+            }}
+          >
+            <div style={{ width: `${tableScrollWidth}px` }} />
+          </div>
+        )}
+        <div
+          className="guide-table-wrap invest-program-table-wrap--narrow import-substitution-table-wrap equipment-accounting-table-wrap"
+          ref={tableWrapRef}
+          onScroll={() => {
+            const wrapper = tableWrapRef.current;
+            const topScroll = topScrollRef.current;
+            if (wrapper && topScroll && topScroll.scrollLeft !== wrapper.scrollLeft) {
+              topScroll.scrollLeft = wrapper.scrollLeft;
+            }
+          }}
+        >
           <table className="guide-table table-compact import-substitution-table equipment-accounting-table">
             <colgroup>
               {visibleColumns.map((column) => (
@@ -925,7 +1001,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
                           onChange={(event) => setFilters((previous) => ({ ...previous, [column]: event.target.value }))}
                         />
                       )}
-                      {column === 'Количество' && !requiredType && (
+                      {column === 'Количество' && (
                         <span className="equipment-accounting-column-total">
                           {formatIntegerQuantity(displayedQuantityTotal)}
                         </span>
@@ -942,14 +1018,6 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
                 ))}
                 <th className="equipment-accounting-actions-header">
                   <span>Действие</span>
-                  <button
-                    type="button"
-                    className="page-text-link"
-                    onClick={startCreate}
-                    disabled={creatingRow}
-                  >
-                    Добавить строку
-                  </button>
                 </th>
               </tr>
             </thead>
@@ -1064,9 +1132,10 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
               <h3 id="equipment-copy-dialog-title">Сколько штук скопировать?</h3>
               <div className="equipment-copy-dialog__quantity-row">
                 <label className="equipment-copy-dialog__quantity">
-                  Количество
+                  Количество (можно указать ноль)
                   <input
                     type="number"
+                    className="equipment-copy-dialog__quantity-input"
                     min="0"
                     max={copyAvailableQuantity}
                     step="1"
@@ -1074,7 +1143,8 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
                     value={copyQuantity}
                     onChange={(event) => {
                       const nextValue = event.target.value;
-                      if (nextValue === '' || (Number.isInteger(Number(nextValue)) && Number(nextValue) <= copyAvailableQuantity)) {
+                      if (nextValue.length <= 4
+                        && (nextValue === '' || (Number.isInteger(Number(nextValue)) && Number(nextValue) <= copyAvailableQuantity))) {
                         setCopyQuantity(nextValue);
                       }
                     }}
@@ -1084,6 +1154,38 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
                   Доступно: <strong>{formatQuantity(copyAvailableQuantity)}</strong>
                 </p>
               </div>
+              <label className="equipment-copy-dialog__field">
+                Подразделение
+                <select
+                  value={copyDepartment}
+                  onChange={(event) => {
+                    setCopyDepartment(event.target.value);
+                    setCopyObjects([]);
+                  }}
+                >
+                  <option value="">Выберите подразделение</option>
+                  {getSelectOptionsForColumn('Подразделение', { 'Подразделение': copyDepartment }).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="equipment-copy-dialog__field">
+                Объект
+                <select
+                  value={copyObjects[0] ?? ''}
+                  onChange={(event) => setCopyObjects(event.target.value ? [event.target.value] : [])}
+                >
+                  <option value="">Выберите объект</option>
+                  {getSelectOptionsForColumn('ОБЪЕКТ', { 'Подразделение': copyDepartment }).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <p className="equipment-copy-dialog__available">
+                Платеж ТР без НДС: <strong>{String(
+                  data.find((row) => Number(row['GN_import_substitution_id']) === editingRowId)?.['Платеж ТР без НДС'] ?? '—',
+                )}</strong>
+              </p>
               {copyError && <p className="hint hint--error">{copyError}</p>}
               <div className="equipment-copy-dialog__actions">
                 <button type="submit" className="page-action-btn page-action-btn--success" disabled={saving}>

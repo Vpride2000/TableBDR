@@ -2,8 +2,7 @@ import { randomUUID } from 'crypto';
 import { createDbClient, toFiniteNumber, buildFallbackCalculationLine } from './db.js';
 import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS } from './config.js';
 // Маршруты backend-сервера.
-// Этот модуль регистрирует HTTP endpoints для получения и сохранения данных
-// по прогнозам, всем сущностям GN и расчету лимитов.
+// Этот модуль регистрирует HTTP endpoints для сущностей GN и расчета лимитов.
 export function setupRoutes(app) {
     const satellitesControlUsers = {
         ADM: process.env.SAT_CTRL_PASS_ADM ?? '',
@@ -357,165 +356,6 @@ export function setupRoutes(app) {
         catch (err) {
             console.error('Failed to clear satellites xml month', err);
             res.status(500).json({ error: 'Failed to clear satellites xml month' });
-        }
-        finally {
-            await client.end();
-        }
-    });
-    // Forecast monthly routes
-    // Работа с таблицей ежемесячного прогноза: чтение и сохранение данных.
-    app.get('/api/gn/forecast-monthly', async (req, res) => {
-        const client = await createDbClient();
-        try {
-            const result = await client.query(`SELECT
-           "GN_bdr_ID_FK" AS row_id,
-           "month_index" AS month_index,
-          "month_value" AS month_value,
-          "month_fact_value" AS month_fact_value
-         FROM "GN_bdr_monthly_forecast"
-         WHERE "GN_bdr_ID_FK" IS NOT NULL
-         ORDER BY
-           "GN_bdr_ID_FK" ASC,
-           "month_index" ASC`);
-            const grouped = new Map();
-            result.rows.forEach((row) => {
-                const rowId = Number(row.row_id);
-                const monthIndex = Number(row.month_index);
-                const monthValue = Number(row.month_value ?? 0);
-                const monthFactValue = Number(row.month_fact_value ?? 0);
-                if (!Number.isFinite(rowId)) {
-                    return;
-                }
-                const existing = grouped.get(rowId) ?? {
-                    rowId,
-                    monthlyValues: new Array(12).fill(0),
-                    monthlyFactValues: new Array(12).fill(0),
-                };
-                if (monthIndex >= 0 && monthIndex < 12) {
-                    existing.monthlyValues[monthIndex] = Number.isFinite(monthValue) ? monthValue : 0;
-                    existing.monthlyFactValues[monthIndex] = Number.isFinite(monthFactValue) ? monthFactValue : 0;
-                }
-                grouped.set(rowId, existing);
-            });
-            res.json({ rows: [...grouped.values()] });
-        }
-        catch (err) {
-            console.error('Failed to fetch monthly forecast', err);
-            res.status(500).json({ error: 'Failed to fetch monthly forecast' });
-        }
-        finally {
-            await client.end();
-        }
-    });
-    app.put('/api/gn/forecast-monthly', async (req, res) => {
-        const payload = req.body;
-        // Получаем и валидируем массив строк прогноза из тела запроса.
-        if (!Array.isArray(payload.rows)) {
-            res.status(400).json({ error: 'Rows are required' });
-            return;
-        }
-        const validatedRows = [];
-        try {
-            payload.rows.forEach((row, index) => {
-                const monthlyValuesRaw = row.monthlyValues;
-                if (!Array.isArray(monthlyValuesRaw) || monthlyValuesRaw.length !== 12) {
-                    throw new Error(`Invalid monthlyValues in row ${index + 1}`);
-                }
-                const monthlyValues = monthlyValuesRaw.map((value, monthIndex) => toFiniteNumber(value, `row ${index + 1} month ${monthIndex + 1}`));
-                const monthlyFactValuesRaw = row.monthlyFactValues;
-                const monthlyFactValues = Array.isArray(monthlyFactValuesRaw)
-                    ? monthlyFactValuesRaw.map((value, monthIndex) => toFiniteNumber(value, `row ${index + 1} fact month ${monthIndex + 1}`))
-                    : new Array(12).fill(0);
-                if (monthlyFactValues.length !== 12) {
-                    throw new Error(`Invalid monthlyFactValues in row ${index + 1}`);
-                }
-                validatedRows.push({
-                    rowId: toFiniteNumber(row.rowId, `row ${index + 1} rowId`),
-                    monthlyValues,
-                    monthlyFactValues,
-                });
-            });
-        }
-        catch (err) {
-            res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid payload' });
-            return;
-        }
-        const client = await createDbClient();
-        try {
-            await client.query('BEGIN');
-            for (const row of validatedRows) {
-                const namesResult = await client.query(`SELECT
-             COALESCE(NULLIF(TRIM(bni."GN_budget_network_item"), ''), '—') AS budget_item,
-             COALESCE(NULLIF(TRIM(cnt."GN_contarctor"), ''), '—') AS contractor,
-             COALESCE(NULLIF(TRIM(dgv."GN_dogovor"), ''), '—') AS dogovor,
-             COALESCE(NULLIF(TRIM(dep."GN_department"), ''), '—') AS department
-           FROM "GN_bdr" b
-           JOIN "GN_budget_network_item" bni ON b."GN_budget_network_item_FK" = bni."GN_b_id"
-           JOIN "GN_contractor" cnt ON b."GN_contracor_FK" = cnt."GN_c_id"
-           JOIN "GN_dogovor" dgv ON b."GN_dogovor_FK" = dgv."GN_dgv_id"
-           JOIN "GN_department" dep ON b."GN_department_FK" = dep."GN_Dep_id"
-           WHERE b."GN_bdr_ID" = $1
-           LIMIT 1`, [row.rowId]);
-                if (namesResult.rowCount === 0) {
-                    throw new Error(`Row ${row.rowId} not found`);
-                }
-                const names = namesResult.rows[0];
-                for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
-                    await client.query(`INSERT INTO "GN_bdr_monthly_forecast" (
-               "GN_bdr_ID_FK",
-               "budget_item",
-               "contractor",
-               "dogovor",
-               "department",
-               "month_index",
-               "month_value",
-               "month_fact_value"
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT ("GN_bdr_ID_FK", "month_index") WHERE "GN_bdr_ID_FK" IS NOT NULL
-             DO UPDATE SET
-               "budget_item" = EXCLUDED."budget_item",
-               "contractor" = EXCLUDED."contractor",
-               "dogovor" = EXCLUDED."dogovor",
-               "department" = EXCLUDED."department",
-               "month_value" = EXCLUDED."month_value",
-               "month_fact_value" = EXCLUDED."month_fact_value",
-               "updated_at" = NOW()`, [
-                        row.rowId,
-                        names.budget_item,
-                        names.contractor,
-                        names.dogovor,
-                        names.department,
-                        monthIndex,
-                        row.monthlyValues[monthIndex],
-                        row.monthlyFactValues[monthIndex],
-                    ]);
-                }
-                const rowLimit = row.monthlyValues.reduce((sum, value) => sum + value, 0);
-                await client.query(`UPDATE "GN_bdr"
-           SET "GN_bdr_limit" = $1
-           WHERE "GN_bdr_ID" = $2`, [rowLimit, row.rowId]);
-            }
-            const deleteResult = await client.query(`
-        DELETE FROM "GN_bdr_monthly_forecast" forecast
-        WHERE forecast."GN_bdr_ID_FK" IS NOT NULL
-          AND NOT EXISTS (
-          SELECT 1
-          FROM "GN_bdr" b
-          WHERE b."GN_bdr_ID" = forecast."GN_bdr_ID_FK"
-        )
-      `);
-            // Удаляем устаревшие строки прогноза, связанные с несуществующими BDR.
-            const deletedStaleRows = deleteResult.rowCount ?? 0;
-            await client.query('COMMIT');
-            res.json({
-                savedRows: validatedRows.length,
-                deletedStaleRows,
-            });
-        }
-        catch (err) {
-            await client.query('ROLLBACK');
-            console.error('Failed to save monthly forecast', err);
-            res.status(500).json({ error: 'Failed to save monthly forecast' });
         }
         finally {
             await client.end();
@@ -2041,6 +1881,8 @@ export function setupRoutes(app) {
            i."Количество",
            i."Выведен из эксплуатации",
            i."Инвентарный",
+           i."ИМЯ",
+           i."СЕРИЙНЫЙ НОМЕР",
            i."Замещенное импортное ТКО",
            i."Кол-во выводенного импортного ТКО",
            i."Статья затрат ТКО",
@@ -2087,7 +1929,7 @@ export function setupRoutes(app) {
     });
     app.put('/api/import-substitution/:id', async (req, res) => {
         const { id } = req.params;
-        const { 'Подразделение': department, 'Код ТКО': okdpCode, 'Наименование ТКО': tkoName, 'Тип': equipmentTypeName, 'Вендор ТКО': vendorName, 'Классификация ТКО': classification, 'ЕРРП': errp, 'ЕРМТР': ermtr, 'Регистрационный номер ТКО': registrationNumber, 'Количество': quantity, 'Выведен из эксплуатации': decommissioned, 'Инвентарный': inventoryNumber, 'Замещенное импортное ТКО': replacedImportTko, 'Кол-во выводенного импортного ТКО': decommissionedQuantity, 'Статья затрат ТКО': costItem, 'СЧЕТ УЧЕТА': accountingNumber, 'Статус закупки': purchaseStatus, 'Платеж ТР без НДС': paymentWithoutVat, 'Год': year, 'Примечание': note, 'ЭКСПЛ': ekspl, 'ПЛАН': plan, 'ГРУППА': group, 'ОБЪЕКТ': objectName, 'Поставщик': supplierName, 'Огрузочный реквизит': ogruzName, 'оплата': payment, } = req.body;
+        const { 'Подразделение': department, 'Код ТКО': okdpCode, 'Наименование ТКО': tkoName, 'Тип': equipmentTypeName, 'Вендор ТКО': vendorName, 'Классификация ТКО': classification, 'ЕРРП': errp, 'ЕРМТР': ermtr, 'Регистрационный номер ТКО': registrationNumber, 'Количество': quantity, 'Выведен из эксплуатации': decommissioned, 'Инвентарный': inventoryNumber, 'ИМЯ': equipmentName, 'СЕРИЙНЫЙ НОМЕР': serialNumber, 'Замещенное импортное ТКО': replacedImportTko, 'Кол-во выводенного импортного ТКО': decommissionedQuantity, 'Статья затрат ТКО': costItem, 'СЧЕТ УЧЕТА': accountingNumber, 'Статус закупки': purchaseStatus, 'Платеж ТР без НДС': paymentWithoutVat, 'Год': year, 'Примечание': note, 'ЭКСПЛ': ekspl, 'ПЛАН': plan, 'ГРУППА': group, 'ОБЪЕКТ': objectName, 'Поставщик': supplierName, 'Огрузочный реквизит': ogruzName, 'оплата': payment, } = req.body;
         const rowId = Number(id);
         if (Number.isNaN(rowId)) {
             res.status(400).json({ error: 'Invalid row id' });
@@ -2161,9 +2003,10 @@ export function setupRoutes(app) {
            "Выведен из эксплуатации" = $21, "Инвентарный" = $22, "Статус закупки" = $23,
             "ЭКСПЛ" = $24, "ПЛАН" = $25, "GN_import_substitution_object_fk" = $26, "ГРУППА" = $27,
             "СЧЕТ УЧЕТА" = COALESCE($28, "СЧЕТ УЧЕТА", CASE WHEN $12 = 'ПЭН' THEN 'МЦ400201' END),
-            "GN_import_substitution_object_fks" = $29::INTEGER[], "updated_at" = NOW()
+            "GN_import_substitution_object_fks" = $29::INTEGER[],
+            "ИМЯ" = $30, "СЕРИЙНЫЙ НОМЕР" = $31, "updated_at" = NOW()
          WHERE "GN_import_substitution_id" = $16
-         RETURNING *`, [department, okdpId, tkoName || null, vendorId, classification || null, errp || 'НЕТ', ermtr || 'НЕТ', registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem || 'ПЭН', paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, rowId, equipmentTypeId, supplierId, ogruzId, payment || null, decommissionedNumber, inventoryNumber || null, purchaseStatus || 'план', ekspl || 'НЕТ', plan || 'РЕЗЕРВ', objectId, group || 'офис', accountingNumber === undefined ? null : String(accountingNumber), objectIds]);
+         RETURNING *`, [department, okdpId, tkoName || null, vendorId, classification || null, errp || 'НЕТ', ermtr || 'НЕТ', registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem || 'ПЭН', paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, rowId, equipmentTypeId, supplierId, ogruzId, payment || null, decommissionedNumber, inventoryNumber || null, purchaseStatus || 'план', ekspl || 'НЕТ', plan || 'РЕЗЕРВ', objectId, group || 'офис', accountingNumber === undefined ? null : String(accountingNumber), objectIds, equipmentName || null, serialNumber || null]);
             if (result.rowCount === 0) {
                 res.status(404).json({ error: 'Row not found' });
                 return;
@@ -2179,7 +2022,7 @@ export function setupRoutes(app) {
         }
     });
     app.post('/api/import-substitution', async (req, res) => {
-        const { 'Подразделение': department, 'Код ТКО': okdpCode, 'Наименование ТКО': tkoName, 'Тип': equipmentTypeName, 'Вендор ТКО': vendorName, 'Классификация ТКО': classification, 'ЕРРП': errp = 'НЕТ', 'ЕРМТР': ermtr = 'НЕТ', 'Регистрационный номер ТКО': registrationNumber, 'Количество': quantity, 'Выведен из эксплуатации': decommissioned = 0, 'Инвентарный': inventoryNumber, 'Замещенное импортное ТКО': replacedImportTko, 'Кол-во выводенного импортного ТКО': decommissionedQuantity, 'Статья затрат ТКО': costItem = 'ПЭН', 'СЧЕТ УЧЕТА': accountingNumber, 'Статус закупки': purchaseStatus = 'план', 'Платеж ТР без НДС': paymentWithoutVat, 'Год': year, 'Примечание': note, 'ЭКСПЛ': ekspl = 'НЕТ', 'ПЛАН': plan = 'РЕЗЕРВ', 'ГРУППА': group = 'офис', 'ОБЪЕКТ': objectName, 'Поставщик': supplierName, 'Огрузочный реквизит': ogruzName, 'оплата': payment, } = req.body;
+        const { 'Подразделение': department, 'Код ТКО': okdpCode, 'Наименование ТКО': tkoName, 'Тип': equipmentTypeName, 'Вендор ТКО': vendorName, 'Классификация ТКО': classification, 'ЕРРП': errp = 'НЕТ', 'ЕРМТР': ermtr = 'НЕТ', 'Регистрационный номер ТКО': registrationNumber, 'Количество': quantity, 'Выведен из эксплуатации': decommissioned = 0, 'Инвентарный': inventoryNumber, 'ИМЯ': equipmentName, 'СЕРИЙНЫЙ НОМЕР': serialNumber, 'Замещенное импортное ТКО': replacedImportTko, 'Кол-во выводенного импортного ТКО': decommissionedQuantity, 'Статья затрат ТКО': costItem = 'ПЭН', 'СЧЕТ УЧЕТА': accountingNumber, 'Статус закупки': purchaseStatus = 'план', 'Платеж ТР без НДС': paymentWithoutVat, 'Год': year, 'Примечание': note, 'ЭКСПЛ': ekspl = 'НЕТ', 'ПЛАН': plan = 'РЕЗЕРВ', 'ГРУППА': group = 'офис', 'ОБЪЕКТ': objectName, 'Поставщик': supplierName, 'Огрузочный реквизит': ogruzName, 'оплата': payment, } = req.body;
         if (!department) {
             res.status(400).json({ error: 'Missing required fields' });
             return;
@@ -2238,9 +2081,9 @@ export function setupRoutes(app) {
             const supplierId = await resolveId('SELECT "GN_c_id" AS id FROM "GN_contractor" WHERE "GN_contarctor" = $1 LIMIT 1', supplierName);
             const ogruzId = await resolveId('SELECT "GN_invest_ogruz_rekvizit_id" AS id FROM "GN_invest_ogruz_rekvizit" WHERE "GN_invest_ogruz_rekvizit" = $1 LIMIT 1', ogruzName);
             const result = await client.query(`INSERT INTO "GN_import_substitution" (
-           "Подразделение", "GN_import_substitution_okdp_fk", "Наименование ТКО", "GN_import_substitution_vendor_fk", "Классификация ТКО", "ЕРРП", "ЕРМТР", "Регистрационный номер ТКО", "Количество", "Выведен из эксплуатации", "Инвентарный", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО", "Статья затрат ТКО", "Статус закупки", "Платеж ТР без НДС", "Год", "Примечание", "ЭКСПЛ", "ПЛАН", "GN_import_substitution_object_fk", "GN_import_substitution_equipment_type_fk", "GN_import_substitution_supplier_fk", "GN_import_substitution_ogruz_fk", "оплата", "ГРУППА", "СЧЕТ УЧЕТА", "GN_import_substitution_object_fks"
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
-         RETURNING *`, [department, okdpId, tkoName || null, vendorId, classification || null, errp, ermtr, registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), decommissionedNumber, inventoryNumber || null, replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem, purchaseStatus, paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, ekspl, plan, objectId, equipmentTypeId, supplierId, ogruzId, payment || null, group, accountingNumber ?? (costItem === 'ПЭН' ? 'МЦ400201' : null), objectIds]);
+           "Подразделение", "GN_import_substitution_okdp_fk", "Наименование ТКО", "GN_import_substitution_vendor_fk", "Классификация ТКО", "ЕРРП", "ЕРМТР", "Регистрационный номер ТКО", "Количество", "Выведен из эксплуатации", "Инвентарный", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО", "Статья затрат ТКО", "Статус закупки", "Платеж ТР без НДС", "Год", "Примечание", "ЭКСПЛ", "ПЛАН", "GN_import_substitution_object_fk", "GN_import_substitution_equipment_type_fk", "GN_import_substitution_supplier_fk", "GN_import_substitution_ogruz_fk", "оплата", "ГРУППА", "СЧЕТ УЧЕТА", "GN_import_substitution_object_fks", "ИМЯ", "СЕРИЙНЫЙ НОМЕР"
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+         RETURNING *`, [department, okdpId, tkoName || null, vendorId, classification || null, errp, ermtr, registrationNumber || null, quantity === '' || quantity == null ? null : Number(quantity), decommissionedNumber, inventoryNumber || null, replacedImportTko || null, decommissionedQuantity === '' || decommissionedQuantity == null ? null : Number(decommissionedQuantity), costItem, purchaseStatus, paymentWithoutVat === '' || paymentWithoutVat == null ? null : Number(paymentWithoutVat), year === '' || year == null ? null : Number(year), note || null, ekspl, plan, objectId, equipmentTypeId, supplierId, ogruzId, payment || null, group, accountingNumber ?? (costItem === 'ПЭН' ? 'МЦ400201' : null), objectIds, equipmentName || null, serialNumber || null]);
             res.status(201).json(result.rows[0]);
         }
         catch (err) {
@@ -2254,12 +2097,22 @@ export function setupRoutes(app) {
     app.post('/api/import-substitution/:id/copy', async (req, res) => {
         const rowId = Number(req.params.id);
         const quantityToCopy = Number(req.body?.quantity);
+        const department = typeof req.body?.department === 'string' ? req.body.department.trim() : '';
+        const objectNames = req.body?.objects;
         if (!Number.isInteger(rowId) || rowId <= 0) {
             res.status(400).json({ error: 'Некорректный номер строки' });
             return;
         }
         if (!Number.isInteger(quantityToCopy) || quantityToCopy < 0) {
             res.status(400).json({ error: 'Количество для копирования должно быть целым неотрицательным числом' });
+            return;
+        }
+        if (!department) {
+            res.status(400).json({ error: 'Выберите подразделение для копии' });
+            return;
+        }
+        if (!Array.isArray(objectNames) || objectNames.some((name) => typeof name !== 'string')) {
+            res.status(400).json({ error: 'Некорректный список объектов для копии' });
             return;
         }
         const client = await createDbClient();
@@ -2286,6 +2139,42 @@ export function setupRoutes(app) {
                 res.status(400).json({ error: `Доступно для копирования: ${Number.isFinite(copyableQuantity) ? copyableQuantity : 0}` });
                 return;
             }
+            const departmentResult = await client.query(`SELECT "GN_Dep_id"
+         FROM "GN_department"
+         WHERE "GN_department" = $1
+         LIMIT 1`, [department]);
+            if (departmentResult.rowCount === 0) {
+                await client.query('ROLLBACK');
+                transactionStarted = false;
+                res.status(400).json({ error: 'Выбранное подразделение не найдено' });
+                return;
+            }
+            const departmentId = Number(departmentResult.rows[0].GN_Dep_id);
+            const objectIds = [];
+            for (const objectName of objectNames) {
+                const objectResult = await client.query(`SELECT "GN_do_id" AS id, "GN_department_FK", "GN_department_FKs"
+           FROM "GN_departament_object"
+           WHERE "GN_departament_object" = $1
+           LIMIT 1`, [objectName.trim()]);
+                if (objectResult.rowCount === 0) {
+                    await client.query('ROLLBACK');
+                    transactionStarted = false;
+                    res.status(400).json({ error: `Объект «${objectName}» не найден` });
+                    return;
+                }
+                const object = objectResult.rows[0];
+                const objectDepartments = Array.isArray(object.GN_department_FKs)
+                    ? object.GN_department_FKs.map(Number)
+                    : [Number(object.GN_department_FK)];
+                if (!objectDepartments.includes(departmentId)) {
+                    await client.query('ROLLBACK');
+                    transactionStarted = false;
+                    res.status(400).json({ error: `Объект «${objectName}» не относится к выбранному подразделению` });
+                    return;
+                }
+                if (!objectIds.includes(object.id))
+                    objectIds.push(object.id);
+            }
             await client.query(`UPDATE "GN_import_substitution"
          SET "Количество" = COALESCE("Количество", 0) - $2, "updated_at" = NOW()
          WHERE "GN_import_substitution_id" = $1`, [rowId, quantityToCopy]);
@@ -2295,20 +2184,22 @@ export function setupRoutes(app) {
            "Выведен из эксплуатации", "Инвентарный", "Замещенное импортное ТКО", "Кол-во выводенного импортного ТКО",
            "Статья затрат ТКО", "Статус закупки", "Платеж ТР без НДС", "Год", "Примечание", "ЭКСПЛ", "ПЛАН",
            "GN_import_substitution_object_fk", "GN_import_substitution_equipment_type_fk", "GN_import_substitution_supplier_fk",
-           "GN_import_substitution_ogruz_fk", "оплата", "ГРУППА", "СЧЕТ УЧЕТА", "GN_import_substitution_object_fks"
+           "GN_import_substitution_ogruz_fk", "оплата", "ГРУППА", "СЧЕТ УЧЕТА", "GN_import_substitution_object_fks",
+           "ИМЯ", "СЕРИЙНЫЙ НОМЕР"
          )
          SELECT
-           source."Подразделение", source."GN_import_substitution_okdp_fk", source."Наименование ТКО",
+           $3, source."GN_import_substitution_okdp_fk", source."Наименование ТКО",
            source."GN_import_substitution_vendor_fk", source."Классификация ТКО", source."ЕРРП", source."ЕРМТР",
            source."Регистрационный номер ТКО", $2, 0, source."Инвентарный", source."Замещенное импортное ТКО", 0,
            source."Статья затрат ТКО", source."Статус закупки", 0, source."Год",
            BTRIM(COALESCE(source."Примечание", '') || ' COPY'), source."ЭКСПЛ", source."ПЛАН",
-           source."GN_import_substitution_object_fk", source."GN_import_substitution_equipment_type_fk",
+           $4, source."GN_import_substitution_equipment_type_fk",
            source."GN_import_substitution_supplier_fk", source."GN_import_substitution_ogruz_fk", source."оплата",
-           source."ГРУППА", source."СЧЕТ УЧЕТА", source."GN_import_substitution_object_fks"
+           source."ГРУППА", source."СЧЕТ УЧЕТА", $5::INTEGER[],
+           source."ИМЯ", source."СЕРИЙНЫЙ НОМЕР"
          FROM "GN_import_substitution" source
          WHERE source."GN_import_substitution_id" = $1
-         RETURNING "GN_import_substitution_id"`, [rowId, quantityToCopy]);
+         RETURNING "GN_import_substitution_id"`, [rowId, quantityToCopy, department, objectIds[0] ?? null, objectIds]);
             await client.query('COMMIT');
             transactionStarted = false;
             res.status(201).json({ success: true, copiedRowId: copiedResult.rows[0]?.GN_import_substitution_id });

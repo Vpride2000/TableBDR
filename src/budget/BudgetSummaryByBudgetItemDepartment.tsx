@@ -25,14 +25,14 @@ export default function BudgetSummaryByBudgetItemDepartment({
   total,
 }: BudgetSummaryByBudgetItemDepartmentProps) {
   return (
-    <table className="guide-table table-compact forecast-pivot-table budget-summary-table budget-summary-matrix-table">
+    <table className="guide-table table-compact budget-summary-pivot-table budget-summary-table budget-summary-matrix-table">
       <thead>
         <tr>
           <th>Статья бюджета</th>
           {departments.map((department) => (
             <th key={department}>{department}</th>
           ))}
-          <th className="number-cell forecast-total-col">Итого</th>
+          <th className="number-cell budget-summary-total-col">Итого</th>
         </tr>
       </thead>
       <tbody>
@@ -44,7 +44,7 @@ export default function BudgetSummaryByBudgetItemDepartment({
                 {SUMMARY_NUMBER_FORMATTER.format(row.byDepartment[department] ?? 0)}
               </td>
             ))}
-            <td className="number-cell forecast-total-col">{SUMMARY_NUMBER_FORMATTER.format(row.total)}</td>
+            <td className="number-cell budget-summary-total-col">{SUMMARY_NUMBER_FORMATTER.format(row.total)}</td>
           </tr>
         ))}
       </tbody>
@@ -56,7 +56,7 @@ export default function BudgetSummaryByBudgetItemDepartment({
               {SUMMARY_NUMBER_FORMATTER.format(totalsByDepartment[department] ?? 0)}
             </td>
           ))}
-          <td className="number-cell forecast-total-col">{SUMMARY_NUMBER_FORMATTER.format(total)}</td>
+          <td className="number-cell budget-summary-total-col">{SUMMARY_NUMBER_FORMATTER.format(total)}</td>
         </tr>
       </tfoot>
     </table>

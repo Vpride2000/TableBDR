@@ -3,27 +3,38 @@ import { useEffect, useState } from 'react';
 type Row = Record<string, unknown>;
 
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
-  GN_bdr_ID: 44,
-  'Статья бюджета УС': 72,
+  GN_bdr_ID: 30,
+  'Статья бюджета УС': 54,
   Подразделение: 92,
   Объект: 92,
   Договор: 112,
   РАСЧЕТ: 78,
   Контрагент: 96,
-  'Статья бюджета': 72,
+  'Статья бюджета': 54,
   'Предмет договора': 100,
   'Ед. изм.': 58,
-  'Кол-во': 62,
+  'Кол-во': 44,
   Лимит: 74,
   БДР25корр: 76,
+  'Кол-во БДР25корр': 44,
   БДР26: 76,
+  'Кол-во БДР26': 44,
   БДР26корр: 76,
+  'Кол-во БДР26корр': 44,
+  БДР27: 76,
+  'Кол-во БДР27': 44,
   'Един. лимит': 76,
   Примечания: 90,
 };
 const DEFAULT_COLUMN_WIDTH = 86;
 const ACTIONS_COLUMN_WIDTH = 126;
 const NOTES_COLUMN_WIDTH = 180;
+const PREVIOUS_BDR_AMOUNT_COLUMN: Record<string, string> = {
+  БДР25корр: 'Лимит',
+  БДР26: 'БДР25корр',
+  БДР26корр: 'БДР26',
+  БДР27: 'БДР26корр',
+};
 
 interface MainBudgetTableContentProps {
   onAddRow: () => void;
@@ -54,7 +65,6 @@ interface MainBudgetTableContentProps {
   onUpdateDraft: (column: string, value: string) => void;
   onGetSelectOptions: (column: string) => Array<{ value: string; label: string }>;
   onFormatCellValue: (column: string, value: unknown) => string;
-  onOpenLimit: (rowId: number) => void;
   onOpenObject: (rowId: number) => void;
   onOpenDepartment: (rowId: number) => void;
   onOpenContractor: (rowId: number) => void;
@@ -90,7 +100,6 @@ export default function MainBudgetTableContent({
   onUpdateDraft,
   onGetSelectOptions,
   onFormatCellValue,
-  onOpenLimit,
   onOpenObject,
   onOpenDepartment,
   onOpenContractor,
@@ -104,7 +113,10 @@ export default function MainBudgetTableContent({
     const onMouseMove = (event: MouseEvent) => {
       setColumnWidths((previous) => ({
         ...previous,
-        [resizeStart.column]: Math.max(40, resizeStart.width + event.clientX - resizeStart.startX),
+        [resizeStart.column]: Math.max(
+          resizeStart.column === 'GN_bdr_ID' ? 30 : resizeStart.column.startsWith('Кол-во') ? 44 : 40,
+          resizeStart.width + event.clientX - resizeStart.startX
+        ),
       }));
     };
     const onMouseUp = () => setResizeStart(null);
@@ -125,13 +137,6 @@ export default function MainBudgetTableContent({
     return sort.direction === 'asc' ? ' ▲' : ' ▼';
   }
 
-  function formatFinancialValue(value: unknown): string {
-    const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.');
-    const parsed = Number(normalized);
-    const numValue = Number.isNaN(parsed) ? 0 : parsed;
-    return FINANCIAL_NUMBER_FORMATTER.format(numValue);
-  }
-
   function splitBudgetItem(value: unknown): { number: string; description: string } {
     const text = String(value ?? '').trim();
     const separatorIndex = text.indexOf('.');
@@ -150,6 +155,99 @@ export default function MainBudgetTableContent({
     (total, column) => total + getColumnWidth(column),
     ACTIONS_COLUMN_WIDTH + NOTES_COLUMN_WIDTH
   );
+  const headerGroups: Array<{ title: string; columns: string[]; subTitles?: string[] }> = [
+    { title: 'СТАТЬИ', columns: ['Статья бюджета УС', 'Статья бюджета'] },
+    { title: 'БДР25', columns: ['Кол-во', 'Лимит'], subTitles: ['КОЛ.', 'Сумма'] },
+    { title: 'БДР25корр', columns: ['Кол-во БДР25корр', 'БДР25корр'], subTitles: ['КОЛ.', 'Сумма'] },
+    { title: 'БДР26', columns: ['Кол-во БДР26', 'БДР26'], subTitles: ['КОЛ.', 'Сумма'] },
+    { title: 'БДР26корр', columns: ['Кол-во БДР26корр', 'БДР26корр'], subTitles: ['КОЛ.', 'Сумма'] },
+    { title: 'БДР27', columns: ['Кол-во БДР27', 'БДР27'], subTitles: ['КОЛ.', 'Сумма'] },
+  ].filter((group) => {
+    const firstIndex = visibleMainColumns.indexOf(group.columns[0]);
+    return firstIndex !== -1 && group.columns.every((column, index) => visibleMainColumns[firstIndex + index] === column);
+  });
+  const groupedColumns = new Set(headerGroups.flatMap((group) => group.columns));
+  const groupByFirstColumn = new Map(headerGroups.map((group) => [group.columns[0], group]));
+  const groupByColumn = new Map(headerGroups.flatMap((group) => group.columns.map((column, index) => [
+    column,
+    { group, index },
+  ] as const)));
+
+  function renderColumnHeader(col: string, index: number, rowSpan?: number, titleOverride?: string) {
+    const isLimitColumn = col === 'Лимит';
+    const displayName = titleOverride ?? COLUMN_TITLES[col] ?? col;
+    const previousColumn = visibleMainColumns[index - 1];
+    const sourceColumn = PREVIOUS_BDR_AMOUNT_COLUMN[col] ?? previousColumn;
+    const width = getColumnWidth(col);
+    const pairedColumn = groupByColumn.get(col);
+    const pairEdgeClass = pairedColumn
+      ? `${pairedColumn.index === 0 ? ' budget-pair-start' : ''}${pairedColumn.index === pairedColumn.group.columns.length - 1 ? ' budget-pair-end' : ''}`
+      : '';
+
+    return (
+      <th
+        key={col}
+        className={`budget-resizable-header${col.startsWith('Кол-во') ? ' budget-quantity-header' : ''}${pairEdgeClass}`}
+        rowSpan={rowSpan}
+        style={{ width, minWidth: width, maxWidth: width }}
+      >
+        <div className="budget-main-header-content">
+          <button
+            type="button"
+            className="table-sort-button budget-main-header-title"
+            onClick={() => onToggleSort(col)}
+          >
+            {displayName}{getSortMarker(col)}
+          </button>
+          {col === 'GN_bdr_ID' ? (
+            <span className="budget-limit-header-total">{filteredData.length}</span>
+          ) : (isLimitColumn || EXTRA_NUMERIC_COLUMNS.has(col)) && (
+            <span className="budget-limit-header-total">
+              {FINANCIAL_NUMBER_FORMATTER.format(isLimitColumn ? filteredLimitTotal : filteredNumericTotals[col] ?? 0)}
+            </span>
+          )}
+          <div className="budget-main-header-controls">
+            {EXTRA_NUMERIC_COLUMNS.has(col) && sourceColumn && (
+              <button
+                type="button"
+                className="budget-copy-button"
+                title={`Скопировать значения из столбца «${COLUMN_TITLES[sourceColumn] ?? sourceColumn}»`}
+                aria-label={`Скопировать значения из столбца ${COLUMN_TITLES[sourceColumn] ?? sourceColumn}`}
+                onClick={() => void onCopyPreviousColumn(col, sourceColumn)}
+              >С</button>
+            )}
+            {col !== 'GN_bdr_ID' && (
+              <input
+                className="column-filter-input"
+                type="text"
+                value={filters[col] ?? ''}
+                onChange={(event) => onSetFilter(col, event.target.value)}
+                placeholder={
+                  col === 'Статья бюджета УС' ||
+                  col === 'Статья бюджета' ||
+                  col === 'Кол-во' ||
+                  col === 'Лимит' ||
+                  col.startsWith('Кол-во БДР') ||
+                  EXTRA_NUMERIC_COLUMNS.has(col)
+                    ? ''
+                    : 'Фильтр...'
+                }
+              />
+            )}
+          </div>
+        </div>
+        <span
+          className="budget-column-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            setResizeStart({ column: col, startX: event.clientX, width: event.currentTarget.parentElement?.getBoundingClientRect().width ?? 120 });
+          }}
+        />
+      </th>
+    );
+  }
 
   return (
     <div className="guide-table-wrap budget-main-table-wrap">
@@ -158,64 +256,32 @@ export default function MainBudgetTableContent({
         style={{ width: tableWidth, minWidth: tableWidth, tableLayout: 'fixed' }}
       >
         <thead>
-          <tr>
-            {visibleMainColumns.map((col, index) => {
-              const isLimitColumn = col === 'Лимит';
-              const displayName = COLUMN_TITLES[col] ?? col;
-              const previousColumn = visibleMainColumns[index - 1];
-              const width = getColumnWidth(col);
-
-              return (
-                <th key={col} className="budget-resizable-header" style={{ width, minWidth: width, maxWidth: width }}>
-                  <div className="budget-main-header-content">
-                    <button
-                      type="button"
-                      className="table-sort-button budget-main-header-title"
-                      onClick={() => onToggleSort(col)}
+          <tr className={headerGroups.length > 0 ? 'budget-main-group-row' : 'budget-main-column-row'}>
+            {headerGroups.length > 0
+              ? visibleMainColumns.map((col, index) => {
+                const group = groupByFirstColumn.get(col);
+                if (group) {
+                  const groupWidth = group.columns.reduce((width, column) => width + getColumnWidth(column), 0);
+                  return (
+                    <th
+                      key={`budget-group-${col}`}
+                      className="budget-main-group-title budget-pair-group budget-pair-start budget-pair-end"
+                      scope="colgroup"
+                      colSpan={group.columns.length}
+                      style={{ width: groupWidth, minWidth: groupWidth, maxWidth: groupWidth }}
                     >
-                      {displayName}{getSortMarker(col)}
-                    </button>
-                    {col === 'GN_bdr_ID' ? (
-                      <span className="budget-limit-header-total">{filteredData.length}</span>
-                    ) : (isLimitColumn || EXTRA_NUMERIC_COLUMNS.has(col)) && (
-                      <span className="budget-limit-header-total">
-                        {FINANCIAL_NUMBER_FORMATTER.format(isLimitColumn ? filteredLimitTotal : filteredNumericTotals[col] ?? 0)}
-                      </span>
-                    )}
-                    <div className="budget-main-header-controls">
-                      {EXTRA_NUMERIC_COLUMNS.has(col) && previousColumn && (
-                        <button
-                          type="button"
-                          className="budget-copy-button"
-                          title={`Скопировать значения из столбца «${COLUMN_TITLES[previousColumn] ?? previousColumn}»`}
-                          aria-label={`Скопировать значения из столбца ${COLUMN_TITLES[previousColumn] ?? previousColumn}`}
-                          onClick={() => void onCopyPreviousColumn(col, previousColumn)}
-                        >С</button>
-                      )}
-                      {col !== 'GN_bdr_ID' && (
-                        <input
-                          className="column-filter-input"
-                          type="text"
-                          value={filters[col] ?? ''}
-                          onChange={(event) => onSetFilter(col, event.target.value)}
-                          placeholder="Фильтр..."
-                        />
-                      )}
-                    </div>
-                  </div>
-                  <span
-                    className="budget-column-resizer"
-                    role="separator"
-                    aria-orientation="vertical"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      setResizeStart({ column: col, startX: event.clientX, width: event.currentTarget.parentElement?.getBoundingClientRect().width ?? 120 });
-                    }}
-                  />
-                </th>
-              );
-            })}
-            <th style={{ width: ACTIONS_COLUMN_WIDTH, minWidth: ACTIONS_COLUMN_WIDTH, maxWidth: ACTIONS_COLUMN_WIDTH }}>
+                      {group.title}
+                    </th>
+                  );
+                }
+                if (groupedColumns.has(col)) return null;
+                return renderColumnHeader(col, index, 2);
+              })
+              : visibleMainColumns.map((col, index) => renderColumnHeader(col, index))}
+            <th
+              rowSpan={headerGroups.length > 0 ? 2 : undefined}
+              style={{ width: ACTIONS_COLUMN_WIDTH, minWidth: ACTIONS_COLUMN_WIDTH, maxWidth: ACTIONS_COLUMN_WIDTH }}
+            >
               <div className="budget-main-header-content">
                 <span className="budget-main-header-title">Действия</span>
                 <button type="button" className="budget-copy-button" onClick={onAddRow}>
@@ -223,10 +289,23 @@ export default function MainBudgetTableContent({
                 </button>
               </div>
             </th>
-            <th style={{ width: NOTES_COLUMN_WIDTH, minWidth: NOTES_COLUMN_WIDTH, maxWidth: NOTES_COLUMN_WIDTH }}>
+            <th
+              rowSpan={headerGroups.length > 0 ? 2 : undefined}
+              style={{ width: NOTES_COLUMN_WIDTH, minWidth: NOTES_COLUMN_WIDTH, maxWidth: NOTES_COLUMN_WIDTH }}
+            >
               <span className="budget-main-header-title">Примечание</span>
             </th>
           </tr>
+          {headerGroups.length > 0 && (
+            <tr className="budget-main-column-row">
+              {visibleMainColumns.map((col, index) => {
+                const group = headerGroups.find((headerGroup) => headerGroup.columns.includes(col));
+                if (!group) return null;
+                const subTitle = group.subTitles?.[group.columns.indexOf(col)];
+                return renderColumnHeader(col, index, undefined, subTitle);
+              })}
+            </tr>
+          )}
         </thead>
         <tbody>
           {filteredData.map((row, i) => {
@@ -236,7 +315,13 @@ export default function MainBudgetTableContent({
             return (
               <tr key={i} className={isEditing ? 'editing' : ''}>
                 {visibleMainColumns.map((col) => (
-                  <td key={col} style={{ width: getColumnWidth(col), minWidth: getColumnWidth(col), maxWidth: getColumnWidth(col) }}>
+                  <td
+                    key={col}
+                    className={groupByColumn.has(col)
+                      ? `${groupByColumn.get(col)?.index === 0 ? 'budget-pair-start ' : ''}${groupByColumn.get(col)?.index === (groupByColumn.get(col)?.group.columns.length ?? 0) - 1 ? 'budget-pair-end' : ''}`.trim()
+                      : undefined}
+                    style={{ width: getColumnWidth(col), minWidth: getColumnWidth(col), maxWidth: getColumnWidth(col) }}
+                  >
                     {isEditing && col !== 'GN_bdr_ID' && LOCKED_EDIT_COLUMNS.has(col) ? (
                       String(draft[col] ?? '')
                     ) : isEditing && col !== 'GN_bdr_ID' && BDR_SELECT_CONFIG[col] ? (
@@ -270,11 +355,13 @@ export default function MainBudgetTableContent({
                           </select>
                         );
                       })()
-                    ) : isEditing && col !== 'GN_bdr_ID' && EXTRA_NUMERIC_COLUMNS.has(col) ? (
+                    ) : isEditing && col !== 'GN_bdr_ID' && (
+                      col === 'Кол-во' || col === 'Лимит' || col.startsWith('Кол-во БДР') || EXTRA_NUMERIC_COLUMNS.has(col)
+                    ) ? (
                       <input
                         className="budget-main-table-edit-field"
                         type="number"
-                        step="0.01"
+                        step={col === 'Кол-во' || col.startsWith('Кол-во БДР') ? 'any' : '0.01'}
                         value={String(draft[col] ?? '')}
                         onChange={(event) => onUpdateDraft(col, event.target.value)}
                         placeholder="необязательно"
@@ -285,14 +372,6 @@ export default function MainBudgetTableContent({
                         value={String(draft[col] ?? '')}
                         onChange={(event) => onUpdateDraft(col, event.target.value)}
                       />
-                    ) : !isEditing && col === 'Лимит' ? (
-                      <button
-                        type="button"
-                        className="limit-cell-button"
-                        onClick={() => onOpenLimit(rowId)}
-                      >
-                        {formatFinancialValue(row[col])}
-                      </button>
                     ) : !isEditing && col === 'Объект' && String(row[col] ?? '').trim() !== '' ? (
                       <button
                         type="button"

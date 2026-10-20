@@ -13,6 +13,9 @@
     "test:db": "ts-node --project tsconfig.server.json scripts/testPostgresConnection.ts"
   },
   "dependencies": {
+    "@tiptap/core": "^3.32.0",
+    "@tiptap/react": "^3.32.0",
+    "@tiptap/starter-kit": "^3.32.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "pg": "^8.20.0",

@@ -1,11 +1,25 @@
 import { useEffect, useState } from 'react';
-import { formatHttpError } from '../utils/forecastUtils';
+import { formatHttpError } from '../utils/httpUtils';
 import type { ContractAdditionalAgreement } from '../types/types';
 
 // Страница просмотра деталей по конкретному договору.
 // Загружает все строки BDR и фильтрует их по названию договора.
 type Row = Record<string, unknown>;
 type LookupOption = { value: string; label: string }
+type DogovorMetadata = { date: string; signer: string }
+const CONTRACT_CONTROL_UPDATED_KEY = 'contracts-control-updated'
+const BDR_CURRENCY_FORMATTER = new Intl.NumberFormat('ru-RU', {
+  style: 'currency',
+  currency: 'RUB',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+function parseBudgetAmount(value: unknown): number {
+  const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
+  const amount = Number(normalized)
+  return Number.isFinite(amount) ? amount : 0
+}
 
 type ContractInfo = {
   GN_contract_id: number
@@ -40,12 +54,12 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
   const [contractLoading, setContractLoading] = useState(true);
   const [contractError, setContractError] = useState<string | null>(null);
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([]);
-  const [dogovorOptions, setDogovorOptions] = useState<LookupOption[]>([]);
-  const [departmentOptions, setDepartmentOptions] = useState<LookupOption[]>([]);
+  const [dogovorMetadata, setDogovorMetadata] = useState<DogovorMetadata>({ date: '', signer: '' });
   const [contractDraft, setContractDraft] = useState<ContractInfo | null>(null);
   const [isEditingContract, setIsEditingContract] = useState(false);
   const [contractSaveLoading, setContractSaveLoading] = useState(false);
   const [contractSaveError, setContractSaveError] = useState<string | null>(null);
+  const [contractControlMessage, setContractControlMessage] = useState<string | null>(null);
   const [newAgreementNumber, setNewAgreementNumber] = useState('');
   const [newAgreementDate, setNewAgreementDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [newAgreementDescription, setNewAgreementDescription] = useState('');
@@ -96,6 +110,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
       setAgreementsError(null);
       setContractLoading(true);
       setContractError(null);
+      setDogovorMetadata({ date: '', signer: '' });
 
       try {
         const [contractsResponse, contractorsResponse, dogovorsResponse, departmentsResponse, agreementsResponse] = await Promise.all([
@@ -127,16 +142,12 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
         setContractInfo(contract);
         setContractDraft(contract);
         setContractorOptions(mapLookupOptions(contractors, 'GN_c_id', 'GN_contarctor'));
-        setDogovorOptions(mapLookupOptions(dogovors, 'GN_dgv_id', 'GN_dogovor'));
-        setDepartmentOptions(
-          departments
-            .map((department) => ({
-              value: String(department.GN_department ?? ''),
-              label: String(department.GN_department ?? ''),
-            }))
-            .filter((option) => option.value)
-        );
-
+        const dogovor = dogovors.find((row) => Number(row.GN_dgv_id) === contract.GN_contract_dogovor_FK);
+        const signer = departments.find((row) => Number(row.GN_Dep_id) === Number(dogovor?.GN_dogovor_signer_FK));
+        setDogovorMetadata({
+          date: String(dogovor?.GN_dogovor_date ?? ''),
+          signer: String(signer?.GN_department ?? ''),
+        });
         const contractAgreements = allAgreements.filter(a => a.GN_contract_id_FK === contract.GN_contract_id);
         setAgreements(contractAgreements);
       } catch (err) {
@@ -225,12 +236,47 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
     })
   }
 
+  async function removeContractFromControl(): Promise<void> {
+    if (!contractInfo) return;
+    if (!window.confirm(`Убрать договор «${contractInfo.GN_contract_name || ''}» с контроля?`)) return;
+    setContractSaveLoading(true);
+    setContractSaveError(null);
+    setContractControlMessage(null);
+
+    try {
+      const updatedDraft = {
+        ...contractInfo,
+        GN_contract_approval_status: 'снят с контроля',
+        GN_contract_status_updated_at: new Date().toISOString().slice(0, 10),
+      };
+      const response = await fetch(`/api/gn/contracts/${contractInfo.GN_contract_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedDraft),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || formatHttpError(response.status));
+      }
+
+      const updatedContract = (await response.json()) as ContractInfo;
+      setContractInfo(updatedContract);
+      setContractDraft(updatedContract);
+      setContractControlMessage('Договор убран с контроля.');
+      localStorage.setItem(CONTRACT_CONTROL_UPDATED_KEY, String(Date.now()));
+    } catch (err) {
+      setContractSaveError(err instanceof Error ? err.message : 'Не удалось убрать договор с контроля');
+    } finally {
+      setContractSaveLoading(false);
+    }
+  }
+
   async function saveContractEdit(): Promise<void> {
     if (!contractInfo || !contractDraft) {
       setContractSaveError('Не удалось сохранить договор.');
       return;
     }
-
     setContractSaveLoading(true);
     setContractSaveError(null);
 
@@ -255,6 +301,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
       setContractInfo(updatedContract);
       setContractDraft(updatedContract);
       setIsEditingContract(false);
+      localStorage.setItem(CONTRACT_CONTROL_UPDATED_KEY, String(Date.now()));
     } catch (err) {
       setContractSaveError(err instanceof Error ? err.message : 'Ошибка при сохранении договора');
     } finally {
@@ -465,12 +512,36 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
     }
   }
 
-    const columns = ['Подразделение', 'Статья бюджета УС', 'Статья бюджета', 'Предмет договора'];
+    const columns = ['Подразделение', 'Объект', 'Статья бюджета УС', 'Статья бюджета', 'Количество', 'БДР25'];
+    const getCellValue = (row: Row, column: string): unknown => {
+      if (column === 'Количество') return row['Кол-во'];
+      if (column === 'БДР25') return row['Лимит'];
+      return row[column];
+    };
+    const contractRows = rows.filter((row) => (
+      !contractInfo?.GN_contract_name || String(row['Договор'] ?? '') === contractInfo.GN_contract_name
+    ));
+    const totalBdr25 = contractRows.reduce((total, row) => total + parseBudgetAmount(row['Лимит']), 0);
 
   return (
     <section className="contract-details">
       <div className="contract-details-header">
-        <h2>Договор: {contractInfo?.GN_contract_name || 'Загрузка...'}</h2>
+        <div className="contract-details-summary">
+          <h2><strong>Договор:</strong> {contractInfo?.GN_contract_name || 'Загрузка...'}</h2>
+          {contractInfo && (
+            <>
+              <div className="contract-details-meta-row">
+                <strong>ДАТА ПОДПИСАНИЯ:</strong> {dogovorMetadata.date ? formatDateDisplay(dogovorMetadata.date) : ''}
+              </div>
+              <div className="contract-details-meta-row">
+                <strong>Контрагент:</strong> {displayLookupLabel(contractorOptions, contractInfo.GN_contract_contractor_FK)}
+              </div>
+              <div className="contract-details-meta-row">
+                <strong>Подписант:</strong> {dogovorMetadata.signer}
+              </div>
+            </>
+          )}
+        </div>
         <button type="button" className="contract-close-btn" onClick={onBack}>
           Закрыть
         </button>
@@ -478,9 +549,9 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
 
       {loading && <p className="hint">Загрузка данных...</p>}
       {error && <p className="hint hint--error">Ошибка: {error}</p>}
-      {!loading && !error && rows.filter((row) => !contractInfo?.GN_contract_name || String(row['Договор'] ?? '') === contractInfo.GN_contract_name).length === 0 && <p className="hint">Нет строк для этого договора.</p>}
+      {!loading && !error && contractRows.length === 0 && <p className="hint">Нет строк для этого договора.</p>}
 
-      {!loading && !error && rows.filter((row) => !contractInfo?.GN_contract_name || String(row['Договор'] ?? '') === contractInfo.GN_contract_name).length > 0 && (
+      {!loading && !error && contractRows.length > 0 && (
         <div className="guide-table-wrap">
           <table className="guide-table table-compact contract-details-table">
             <thead>
@@ -491,21 +562,26 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
               </tr>
             </thead>
             <tbody>
-              {rows
-                .filter((row) => {
-                  if (!contractInfo?.GN_contract_name) return true;
-                  return String(row['Договор'] ?? '') === contractInfo.GN_contract_name;
-                })
-                .map((row, i) => (
+              {contractRows.map((row, i) => (
                   <tr key={i}>
                     {columns.map((col) => (
-                      <td key={col}>{String(row[col] ?? '')}</td>
+                      <td key={col}>
+                        {col === 'БДР25'
+                          ? BDR_CURRENCY_FORMATTER.format(parseBudgetAmount(getCellValue(row, col)))
+                          : String(getCellValue(row, col) ?? '')}
+                      </td>
                     ))}
                   </tr>
                 ))}
             </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={columns.length - 1}>Итого БДР25</td>
+                <td>{BDR_CURRENCY_FORMATTER.format(totalBdr25)}</td>
+              </tr>
+            </tfoot>
           </table>
-          <p className="contract-details-count">Всего строк: {rows.filter((row) => !contractInfo?.GN_contract_name || String(row['Договор'] ?? '') === contractInfo.GN_contract_name).length}</p>
+          <p className="contract-details-count">Всего строк: {contractRows.length}</p>
         </div>
       )}
 
@@ -518,22 +594,11 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
           {!isEditingContract ? (
             <div className="contract-details-meta-preview">
               <div className="contract-details-meta-row">
-                <strong>Контрагент:</strong> {displayLookupLabel(contractorOptions, contractInfo.GN_contract_contractor_FK)}
-              </div>
-              <div className="contract-details-meta-row">
                 <strong>Статус:</strong> {contractInfo.GN_contract_approval_status || 'действующий'}
               </div>
               <div className="contract-details-meta-row">
                 <strong>Состояние:</strong> {contractInfo.GN_contract_state}
               </div>
-              <div className="contract-details-meta-row">
-                <strong>Сторона:</strong> {contractInfo.GN_contract_side || ''}
-              </div>
-
-              <div className="contract-details-meta-row">
-                <strong>Дата договора:</strong> {contractInfo.GN_contract_date ? formatDateDisplay(contractInfo.GN_contract_date) : ''}
-              </div> 
-
               <div className="contract-details-meta-row">
                 <strong>Дата начала действия</strong> {contractInfo.GN_contract_term_from ? formatDateDisplay(contractInfo.GN_contract_term_from) : ''}
               </div> 
@@ -541,12 +606,6 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
                 <strong>Дата окончания действия:</strong> {contractInfo.GN_contract_term_to ? formatDateDisplay(contractInfo.GN_contract_term_to) : ''}
               </div>
 
-              <div className="contract-details-meta-row">
-                <strong>Дата запуска в СЭД:</strong> {contractInfo.GN_contract_sed_launch_date ? formatDateDisplay(contractInfo.GN_contract_sed_launch_date) : ''}
-              </div>
-              <div className="contract-details-meta-row">
-                <strong>Дата загрузки в АСЭЗ:</strong> {contractInfo.GN_contract_asez_load_date ? formatDateDisplay(contractInfo.GN_contract_asez_load_date) : ''}
-              </div>
               <div className="contract-details-meta-row">
                 <strong>Номер АСЭЗ:</strong> {contractInfo.GN_contract_asez_number || ''}
               </div>
@@ -557,30 +616,21 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
               >
                 Редактировать параметры договора
               </button>
+              {contractInfo.GN_contract_approval_status !== 'снят с контроля' && (
+                <button
+                  type="button"
+                  className="page-action-btn page-action-btn--secondary"
+                  onClick={() => void removeContractFromControl()}
+                  disabled={contractSaveLoading}
+                >
+                  Убрать с контроля
+                </button>
+              )}
+              {contractControlMessage && <p className="hint">{contractControlMessage}</p>}
+              {contractSaveError && <p className="hint hint--error">{contractSaveError}</p>}
             </div>
           ) : (
             <div className="form-fields-compact">
-              <div className="form-field form-field-compact">
-                <label className="form-field-label" htmlFor="contract-dogovor">Договор</label>
-                <input
-                  id="contract-dogovor"
-                  type="text"
-                  value={contractInfo?.GN_contract_name ?? ''}
-                />
-              </div>
-              <div className="form-field form-field-compact">
-                <label className="form-field-label" htmlFor="contract-contractor">Контрагент</label>
-                <select
-                  id="contract-contractor"
-                  value={String(contractDraft?.GN_contract_contractor_FK ?? '')}
-                  onChange={(event) => updateContractDraft('GN_contract_contractor_FK', event.target.value)}
-                >
-                  <option value="">Выберите контрагента</option>
-                  {contractorOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
               <div className="form-field form-field-compact">
                 <label className="form-field-label" htmlFor="contract-status">Статус</label>
                 <select
@@ -591,6 +641,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
                   <option value="действующий">действующий</option>
                   <option value="на согласовании">на согласовании</option>
                   <option value="не действующий">не действующий</option>
+                  <option value="снят с контроля">снят с контроля</option>
                 </select>
               </div>
               <div className="form-field form-field-compact">
@@ -600,28 +651,6 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
                   type="text"
                   value={contractDraft?.GN_contract_state ?? ''}
                   onChange={(event) => updateContractDraft('GN_contract_state', event.target.value)}
-                />
-              </div>
-              <div className="form-field form-field-compact">
-                <label className="form-field-label" htmlFor="contract-side">Сторона</label>
-                <select
-                  id="contract-side"
-                  value={contractDraft?.GN_contract_side ?? ''}
-                  onChange={(event) => updateContractDraft('GN_contract_side', event.target.value)}
-                >
-                  <option value="">Выберите сторону</option>
-                  {departmentOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-field form-field-compact">
-                <label className="form-field-label" htmlFor="contract-date">Дата договора</label>
-                <input
-                  id="contract-date"
-                  type="date"
-                  value={contractDraft?.GN_contract_date ?? ''}
-                  onChange={(event) => updateContractDraft('GN_contract_date', event.target.value)}
                 />
               </div>
               <div className="form-field form-field-compact">
@@ -640,24 +669,6 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
                   type="date"
                   value={contractDraft?.GN_contract_term_to ?? ''}
                   onChange={(event) => updateContractDraft('GN_contract_term_to', event.target.value)}
-                />
-              </div>
-              <div className="form-field form-field-compact">
-                <label className="form-field-label" htmlFor="contract-sed-launch-date">Дата запуска в СЭД</label>
-                <input
-                  id="contract-sed-launch-date"
-                  type="date"
-                  value={contractDraft?.GN_contract_sed_launch_date ?? ''}
-                  onChange={(event) => updateContractDraft('GN_contract_sed_launch_date', event.target.value)}
-                />
-              </div>
-              <div className="form-field form-field-compact">
-                <label className="form-field-label" htmlFor="contract-asez-load-date">Дата загрузки в АСЭЗ</label>
-                <input
-                  id="contract-asez-load-date"
-                  type="date"
-                  value={contractDraft?.GN_contract_asez_load_date ?? ''}
-                  onChange={(event) => updateContractDraft('GN_contract_asez_load_date', event.target.value)}
                 />
               </div>
               <div className="form-field form-field-compact">

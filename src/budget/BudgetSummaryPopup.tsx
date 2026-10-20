@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { formatHttpError } from '../utils/forecastUtils';
+import { formatHttpError } from '../utils/httpUtils';
 import BudgetSummaryByDepartment from './BudgetSummaryByDepartment';
 import BudgetSummaryByPaoItem from './BudgetSummaryByPaoItem';
 import BudgetSummaryByBudgetItemDepartment from './BudgetSummaryByBudgetItemDepartment';

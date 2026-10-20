@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
-import { formatHttpError } from '../utils/forecastUtils';
+import { formatHttpError } from '../utils/httpUtils';
 
 // Страница добавления новой строки бюджета.
 // Отвечает за форму создания новой BDR-записи и загрузку справочников

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { formatHttpError } from '../utils/forecastUtils'
+import { formatHttpError } from '../utils/httpUtils'
 import PurchaseStateTable from './PurchaseStateTable'
 
-// Страница «Закупки»: таблицы «Состояние закупок ОНМ/ПЭН» строятся на данных
+// Вкладка «Закупки» в разделе «Оборудование»: таблицы «Состояние закупок ОНМ/ПЭН» строятся на данных
 // раздела «Импортозамещение» (Год = 2026, без суммирования), свёрнуты по умолчанию
 // и грузят строки лениво при раскрытии. Таблица «Доступно для заказа» открывается
 // в отдельном popup-окне.

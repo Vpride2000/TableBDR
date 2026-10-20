@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { formatHttpError, formatErrorMessage } from '../utils/forecastUtils'
+import { formatHttpError, formatErrorMessage } from '../utils/httpUtils'
+import ExcelActionToolbar from '../components/ExcelActionToolbar'
 
 type Row = Record<string, unknown>;
 type SortDirection = 'asc' | 'desc';
@@ -76,9 +77,6 @@ export default function ImportSubstitutionTable(): React.ReactElement {
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [newRowData, setNewRowData] = useState<Row>({});
   const [addError, setAddError] = useState<string | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importMessage, setImportMessage] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [hideServiceColumns, setHideServiceColumns] = useState(true);
 
@@ -258,58 +256,6 @@ export default function ImportSubstitutionTable(): React.ReactElement {
     XLSX.writeFile(workbook, 'Импортозамещение.xlsx');
   }
 
-  async function importFromXlsx(file: File): Promise<void> {
-    setImporting(true);
-    setImportError(null);
-    setImportMessage(null);
-
-    try {
-      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-      const sheetName = workbook.SheetNames[0];
-      if (!sheetName) throw new Error('В файле отсутствуют листы');
-
-      const rows = XLSX.utils.sheet_to_json<Row>(workbook.Sheets[sheetName], { defval: '' });
-      let savedRows = 0;
-      const existingIds = new Set(data.map((row) => Number(row.GN_import_substitution_id)));
-      const updatedIds = new Set<number>();
-      const importedIds = new Set<number>();
-      for (const row of rows) {
-        const rowId = Number(row['№']);
-        if (Number.isInteger(rowId) && rowId > 0) importedIds.add(rowId);
-        const payload = Object.fromEntries(columns.map((column) => [column, row[column] ?? '']));
-        if (!String(payload['Подразделение']).trim()) continue;
-        const shouldUpdate = Number.isInteger(rowId) && rowId > 0 && existingIds.has(rowId) && !updatedIds.has(rowId);
-
-        const response = await fetch(shouldUpdate ? `/api/import-substitution/${rowId}` : '/api/import-substitution', {
-          method: shouldUpdate ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (shouldUpdate) updatedIds.add(rowId);
-        if (!response.ok) {
-          const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
-          throw new Error(`Строка ${savedRows + 2}: ${errorPayload.error || formatHttpError(response.status)}`);
-        }
-        savedRows += 1;
-      }
-      if (savedRows === 0) throw new Error('В файле нет строк для загрузки');
-
-      const markMissingResponse = await fetch('/api/import-substitution/mark-missing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: [...importedIds] }),
-      });
-      if (!markMissingResponse.ok) throw new Error(formatHttpError(markMissingResponse.status));
-
-      await loadData();
-      setImportMessage(`Загружено строк: ${savedRows}.`);
-    } catch (err) {
-      setImportError(err instanceof Error ? err.message : 'Не удалось загрузить файл Excel');
-    } finally {
-      setImporting(false);
-    }
-  }
-
   async function saveEdit(): Promise<void> {
     if (editingRowId == null) return;
     setSaving(true);
@@ -387,48 +333,31 @@ export default function ImportSubstitutionTable(): React.ReactElement {
 
   if (data.length === 0 && !isAddingNew) {
     return (
-      <div className="empty-state">
-        <p className="hint">Нет данных по импортозамещению.</p>
-        <button type="button" className="page-text-link" onClick={startNewRow}>
-          Добавить первую запись
-        </button>
-      </div>
+      <>
+        <ExcelActionToolbar
+          className="excel-action-toolbar--equipment"
+          onReset={() => setFilters({})}
+          onAddRow={startNewRow}
+          onExport={exportToXlsx}
+          showUpload={false}
+        />
+        <div className="empty-state">
+          <p className="hint">Нет данных по импортозамещению.</p>
+        </div>
+      </>
     );
   }
 
   return (
     <div className="import-substitution-table-wrap">
-      {!isAddingNew && (
-        <div className="guide-table-actions import-substitution-popup-actions">
-          <button
-            type="button"
-            className="page-text-link"
-            onClick={startNewRow}
-          >
-            Добавить строку
-          </button>
-          <button type="button" className="page-text-link" onClick={exportToXlsx}>
-            Выгрузить в Excel
-          </button>
-          <label className="page-text-link" style={{ cursor: importing ? 'default' : 'pointer' }}>
-            {importing ? 'Загрузка...' : 'Загрузить из Excel'}
-            <input
-              type="file"
-              accept=".xlsx"
-              style={{ display: 'none' }}
-              disabled={importing}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = '';
-                if (file) void importFromXlsx(file);
-              }}
-            />
-          </label>
-        </div>
-      )}
-      {importMessage && <p className="hint">{importMessage}</p>}
-      {importError && <p className="hint hint--error">Ошибка загрузки из Excel: {importError}</p>}
-
+      <ExcelActionToolbar
+        className="excel-action-toolbar--equipment"
+        onReset={() => setFilters({})}
+        onAddRow={startNewRow}
+        addRowDisabled={isAddingNew}
+        onExport={exportToXlsx}
+        showUpload={false}
+      />
       <label className="form-checkbox">
         <input
           type="checkbox"

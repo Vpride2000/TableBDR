@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { formatHttpError } from '../utils/forecastUtils'
+import { formatHttpError } from '../utils/httpUtils'
 
 type LookupOption = { value: string; label: string }
 type InvestRow = Record<string, string>

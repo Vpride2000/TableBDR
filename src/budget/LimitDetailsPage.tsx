@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { formatHttpError } from '../utils/forecastUtils';
+import { formatHttpError } from '../utils/httpUtils';
 
 // Страница подробного расчета лимита для выбранной строки BDR.
 // Загружает текущие данные по строке, отображает расчетные строки
 // и позволяет пользователю сохранять изменения в лимите.
 const BDR_UPDATED_EVENT_KEY = 'bdr:last-update';
-const FORECAST_UPDATED_EVENT_KEY = 'forecast:last-update';
 
 type Row = Record<string, unknown>;
 
@@ -55,40 +54,6 @@ function formatNumber(value: number): string {
   }).format(value);
 }
 
-function distributeByMonths(total: number): number[] {
-  const yearlyCents = Math.round(total * 100);
-  const base = Math.trunc(yearlyCents / 12);
-  const remainder = yearlyCents - base * 12;
-  const sign = remainder >= 0 ? 1 : -1;
-  const addCount = Math.abs(remainder);
-
-  return Array.from({ length: 12 }, (_, index) => {
-    const extra = index < addCount ? sign : 0;
-    return (base + extra) / 100;
-  });
-}
-
-async function loadCurrentFactValues(rowId: number): Promise<number[]> {
-  const response = await fetch('/api/gn/forecast-monthly');
-  if (!response.ok) {
-    throw new Error(formatHttpError(response.status));
-  }
-
-  const payload = (await response.json()) as {
-    rows?: Array<{
-      rowId: number;
-      monthlyFactValues?: number[];
-    }>;
-  };
-
-  const current = (payload.rows ?? []).find((item) => Number(item.rowId) === rowId);
-  if (!current || !Array.isArray(current.monthlyFactValues) || current.monthlyFactValues.length !== 12) {
-    return new Array<number>(12).fill(0);
-  }
-
-  return current.monthlyFactValues.map((value) => parseNumericValue(String(value ?? 0)));
-}
-
 export default function LimitDetailsPage({ rowId, onBack }: LimitDetailsPageProps) {
   const [row, setRow] = useState<Row | null>(null);
   const [draft, setDraft] = useState<LimitDraft>({
@@ -101,7 +66,6 @@ export default function LimitDetailsPage({ rowId, onBack }: LimitDetailsPageProp
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
-  const [fillForecastEvenly, setFillForecastEvenly] = useState(false);
 
   useEffect(() => {
     function applyLoadedRow(loadedRow: Row, calculation: LimitCalculationResponse): void {
@@ -252,34 +216,6 @@ export default function LimitDetailsPage({ rowId, onBack }: LimitDetailsPageProp
         comments: String(calculation.comments ?? updatedRow['Примечания'] ?? ''),
       });
 
-      if (fillForecastEvenly) {
-        const monthlyValues = distributeByMonths(calculation.calculatedLimit);
-        const monthlyFactValues = await loadCurrentFactValues(rowId);
-
-        const forecastResponse = await fetch('/api/gn/forecast-monthly', {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            rows: [
-              {
-                rowId,
-                monthlyValues,
-                monthlyFactValues,
-              },
-            ],
-          }),
-        });
-
-        if (!forecastResponse.ok) {
-          const payload = (await forecastResponse.json().catch(() => ({}))) as { error?: string };
-          throw new Error(payload.error || formatHttpError(forecastResponse.status));
-        }
-
-        localStorage.setItem(FORECAST_UPDATED_EVENT_KEY, String(Date.now()));
-      }
-
       setSaveSuccess('Расчет лимита сохранен');
       localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()));
     } catch (err) {
@@ -392,18 +328,6 @@ export default function LimitDetailsPage({ rowId, onBack }: LimitDetailsPageProp
               value={draft.comments}
               onChange={(event) => updateDraft('comments', event.target.value)}
             />
-          </div>
-
-          <div className="form-field">
-            <label htmlFor="fill-forecast-evenly" className="form-field-label">
-              <input
-                id="fill-forecast-evenly"
-                type="checkbox"
-                checked={fillForecastEvenly}
-                onChange={(event) => setFillForecastEvenly(event.target.checked)}
-              />{' '}
-              заполнить прогноз равномерно
-            </label>
           </div>
 
           <div className="limit-calculation-box">

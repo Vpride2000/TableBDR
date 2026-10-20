@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import * as XLSX from 'xlsx';
-import { formatHttpError } from './utils/forecastUtils';
+import { formatHttpError } from './utils/httpUtils';
 // Страница справочника GN.
 // Отображает разделы справочных таблиц с возможностью разворачивать
 // редактировать отдельные записи и управлять строками.
 type Row = Record<string, unknown>;
 type SelectOption = { value: string; label: string };
+const CONTRACT_CONTROL_UPDATED_KEY = 'contracts-control-updated';
 
 interface TableSection {
   title: string;
@@ -34,7 +36,13 @@ const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: s
   { title: 'Статьи бюджета', endpoint: '/api/gn/budget-items', entity: 'budget-items', idColumn: 'GN_b_id' },
   { title: 'Статьи бюджета УС', endpoint: '/api/gn/pao-budget-items', entity: 'pao-budget-items', idColumn: 'PAO_b_id' },
   { title: 'Контрагенты', endpoint: '/api/gn/contractors', entity: 'contractors', idColumn: 'GN_c_id' },
-  { title: 'Договоры', endpoint: '/api/gn/dogovors', entity: 'dogovors', idColumn: 'GN_dgv_id' },
+  {
+    title: 'Договоры',
+    endpoint: '/api/gn/dogovors',
+    entity: 'dogovors',
+    idColumn: 'GN_dgv_id',
+    columns: ['GN_dgv_id', 'GN_dogovor', 'GN_contarctor_FK', 'GN_dogovor_date', 'GN_dogovor_signer_FK', 'GN_dogovor_note'],
+  },
   { title: 'Объекты', endpoint: '/api/gn/objects', entity: 'objects', idColumn: 'GN_do_id', columns: ['GN_departament_object', 'GN_department_FKs', 'УСЛУГИ СВЯЗИ', 'УЧЕТ ОБОРУДОВАНИЯ'] },
   { title: 'ОКДП ТКО для ИС ПРИТ', endpoint: '/api/gn/invest-okdp-tko-is-prit', entity: 'invest-okdp-tko-is-prit', idColumn: 'GN_invest_okdp_tko_is_prit_id' },
   { title: 'Огрузочный реквизит', endpoint: '/api/gn/invest-ogruz-rekvizit', entity: 'invest-ogruz-rekvizit', idColumn: 'GN_invest_ogruz_rekvizit_id', columns: ['GN_invest_ogruz_rekvizit', 'GN_department_FK', 'GN_departament_object_FK', 'Почтовый адрес'] },
@@ -71,6 +79,11 @@ const GUIDE_FK_SELECT_CONFIG: Record<string, Record<string, { sourceEntity: stri
       sourceEntity: 'contractors',
       valueKey: 'GN_c_id',
       labelKey: 'GN_contarctor',
+    },
+    GN_dogovor_signer_FK: {
+      sourceEntity: 'departments',
+      valueKey: 'GN_Dep_id',
+      labelKey: 'GN_department',
     },
   },
   objects: {
@@ -149,6 +162,9 @@ const GUIDE_COLUMN_LABELS: Record<string, Record<string, string>> = {
     GN_dgv_id: '№',
     GN_dogovor: 'Договор',
     GN_contarctor_FK: 'Контрагент',
+    GN_dogovor_date: 'Дата',
+    GN_dogovor_signer_FK: 'Подписант',
+    GN_dogovor_note: 'Примечание',
   },
   objects: {
     GN_do_id: '№',
@@ -239,6 +255,20 @@ const GUIDE_READONLY_COLUMNS: Record<string, string[]> = {
   'cellular-accounts': ['GN_cellular_account_numbers_count', 'GN_cellular_account_active_numbers_count', 'GN_cellular_account_total_cost'],
 };
 
+const GUIDE_DATE_COLUMNS: Record<string, string[]> = {
+  dogovors: ['GN_dogovor_date'],
+};
+
+const DOGOVOR_COLUMN_DEFAULT_WIDTHS: Record<string, number> = {
+  GN_dgv_id: 55,
+  GN_dogovor: 240,
+  GN_contarctor_FK: 190,
+  GN_dogovor_date: 120,
+  GN_dogovor_signer_FK: 180,
+  GN_dogovor_note: 220,
+  actions: 110,
+};
+
 const EXCEL_IMPORT_EXPORT_ENTITIES = new Set([
   'invest-okdp-tko-is-prit',
   'invest-ogruz-rekvizit',
@@ -280,12 +310,15 @@ function DataTable({
   const [guideSort, setGuideSort] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
   const [columnSearch, setColumnSearch] = useState<Record<string, string>>({});
   const [actionMenuRowId, setActionMenuRowId] = useState<number | null>(null);
+  const [dogovorColumnWidths, setDogovorColumnWidths] = useState<Record<string, number>>({});
   const readonlyColumns = GUIDE_READONLY_COLUMNS[section.entity] ?? [];
+  const dateColumns = GUIDE_DATE_COLUMNS[section.entity] ?? [];
 
   const columns = section.columns ?? (section.data.length > 0
     ? Object.keys(section.data[0])
     : [section.idColumn]);
   const isCellularAccounts = section.entity === 'cellular-accounts';
+  const isDogovors = section.entity === 'dogovors';
   const supportsExcelImportExport = EXCEL_IMPORT_EXPORT_ENTITIES.has(section.entity);
   const accountDepartmentOptions = fkOptions.GN_department_FK ?? [];
   const isMultiSelectColumn = (column: string): boolean => section.entity === 'objects' && column === 'GN_department_FKs';
@@ -305,8 +338,12 @@ function DataTable({
 
     const order = activeSort.direction === 'asc' ? 1 : -1;
     return [...searchedRows].sort((left, right) => {
-      const leftValue = renderCellValue(activeSort.column, left);
-      const rightValue = renderCellValue(activeSort.column, right);
+      const leftValue = dateColumns.includes(activeSort.column)
+        ? String(left[activeSort.column] ?? '').slice(0, 10)
+        : renderCellValue(activeSort.column, left);
+      const rightValue = dateColumns.includes(activeSort.column)
+        ? String(right[activeSort.column] ?? '').slice(0, 10)
+        : renderCellValue(activeSort.column, right);
       const leftNumber = Number(leftValue);
       const rightNumber = Number(rightValue);
       const comparison = Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
@@ -315,7 +352,7 @@ function DataTable({
 
       return comparison * order;
     });
-  }, [accountDepartmentFilter, activeSort, columnSearch, columns, isCellularAccounts, rowFilter, section.data, fkOptions]);
+  }, [accountDepartmentFilter, activeSort, columnSearch, columns, dateColumns, isCellularAccounts, rowFilter, section.data, fkOptions]);
 
   function toggleAccountSort(column: string): void {
     setAccountSort((previous) => (
@@ -351,6 +388,29 @@ function DataTable({
 
   function toggleActionMenu(rowId: number): void {
     setActionMenuRowId((previous) => previous === rowId ? null : rowId);
+  }
+
+  function startDogovorColumnResize(event: ReactPointerEvent<HTMLSpanElement>, column: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const header = event.currentTarget.closest('th');
+    if (!header) return;
+
+    const startX = event.clientX;
+    const startWidth = header.getBoundingClientRect().width;
+    const resizeColumn = (moveEvent: PointerEvent): void => {
+      setDogovorColumnWidths((previous) => ({
+        ...previous,
+        [column]: Math.max(48, startWidth + moveEvent.clientX - startX),
+      }));
+    };
+    const stopResizing = (): void => {
+      window.removeEventListener('pointermove', resizeColumn);
+      window.removeEventListener('pointerup', stopResizing);
+    };
+
+    window.addEventListener('pointermove', resizeColumn);
+    window.addEventListener('pointerup', stopResizing);
   }
 
   function updateDraft(column: string, value: string): void {
@@ -393,8 +453,25 @@ function DataTable({
       });
 
       if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error || formatHttpError(response.status));
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string
+          details?: {
+            message?: string
+            code?: string
+            detail?: string
+            hint?: string
+            constraint?: string
+          }
+        };
+        const errorLines = [
+          payload.error || formatHttpError(response.status),
+          payload.details?.message,
+          payload.details?.code ? `Код ошибки: ${payload.details.code}` : undefined,
+          payload.details?.constraint ? `Ограничение: ${payload.details.constraint}` : undefined,
+          payload.details?.detail ? `Подробности: ${payload.details.detail}` : undefined,
+          payload.details?.hint ? `Подсказка: ${payload.details.hint}` : undefined,
+        ].filter((line): line is string => Boolean(line));
+        throw new Error(errorLines.join('\n'));
       }
 
       const createdRow = (await response.json()) as Row;
@@ -460,6 +537,9 @@ function DataTable({
         Number(row[section.idColumn]) === editingRowId ? updatedRow : row
       );
       onSectionRowsUpdate(section.endpoint, nextRows);
+      if (section.entity === 'dogovors') {
+        localStorage.setItem(CONTRACT_CONTROL_UPDATED_KEY, `${Date.now()}-${Math.random()}`);
+      }
       cancelEdit();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Не удалось сохранить изменения');
@@ -479,6 +559,11 @@ function DataTable({
   }
 
   function renderCellValue(col: string, row: Row): string {
+    if (dateColumns.includes(col)) {
+      const date = String(row[col] ?? '').slice(0, 10);
+      const dateParts = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return dateParts ? `${dateParts[3]}.${dateParts[2]}.${dateParts[1]}` : date;
+    }
     if (section.entity === 'objects') {
       const objectName = String(row.GN_departament_object ?? '').trim();
       if (col === 'УСЛУГИ СВЯЗИ') return objectsUsedInCommunication.has(objectName) ? 'ДА' : 'НЕТ';
@@ -740,7 +825,8 @@ function DataTable({
                   </select>
                 ) : (
                   <input
-                    value={String(newRow[col] ?? '')}
+                    type={dateColumns.includes(col) ? 'date' : 'text'}
+                    value={dateColumns.includes(col) ? String(newRow[col] ?? '').slice(0, 10) : String(newRow[col] ?? '')}
                     onChange={(event) => updateNewRow(col, event.target.value)}
                   />
                 )}
@@ -751,17 +837,28 @@ function DataTable({
             <button type="button" className="page-action-btn page-action-btn--success" onClick={() => void saveNewRow()} disabled={saving}>Сохранить</button>
             <button type="button" className="page-action-btn page-action-btn--secondary" onClick={cancelCreate} disabled={saving}>Отмена</button>
           </div>
-          {createError && <p className="hint hint--error">Ошибка добавления: {createError}</p>}
+          {createError && <pre className="hint hint--error guide-create-error-details">Ошибка добавления: {createError}</pre>}
         </div>
       )}
-      <table className="guide-table table-compact guide-reference-table">
+      <table className={`guide-table table-compact guide-reference-table${isDogovors ? ' guide-reference-table--dogovors' : ''}`}>
+        {isDogovors && (
+          <colgroup>
+            {columns.map((column) => (
+              <col
+                key={column}
+                style={{ width: `${dogovorColumnWidths[column] ?? DOGOVOR_COLUMN_DEFAULT_WIDTHS[column] ?? 140}px` }}
+              />
+            ))}
+            <col style={{ width: `${dogovorColumnWidths.actions ?? DOGOVOR_COLUMN_DEFAULT_WIDTHS.actions}px` }} />
+          </colgroup>
+        )}
         <thead>
           <tr>
             {columns.map((col) => {
               const sortMarker = activeSort?.column === col ? (activeSort.direction === 'asc' ? ' ▲' : ' ▼') : '';
 
               return (
-                <th key={col}>
+                <th key={col} className={isDogovors ? 'guide-resizable-header' : undefined}>
                   <button
                     type="button"
                     className="guide-sort-button"
@@ -769,10 +866,30 @@ function DataTable({
                   >
                     {getGuideColumnLabel(section.entity, col)}{sortMarker}
                   </button>
+                  {isDogovors && (
+                    <span
+                      className="guide-column-resizer"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={`Изменить ширину столбца ${getGuideColumnLabel(section.entity, col)}`}
+                      onPointerDown={(event) => startDogovorColumnResize(event, col)}
+                    />
+                  )}
                 </th>
               );
             })}
-            <th>Действия</th>
+            <th className={isDogovors ? 'guide-resizable-header' : undefined}>
+              Действия
+              {isDogovors && (
+                <span
+                  className="guide-column-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Изменить ширину столбца Действия"
+                  onPointerDown={(event) => startDogovorColumnResize(event, 'actions')}
+                />
+              )}
+            </th>
           </tr>
           <tr className="guide-search-row">
             {columns.map((column) => (
@@ -805,6 +922,7 @@ function DataTable({
                   <td key={col}>
                     {isEditing && col !== section.idColumn && !readonlyColumns.includes(col) && fkOptions[col] ? (
                       <select
+                        className={isDogovors ? 'guide-dogovors-edit-field' : undefined}
                         multiple={isMultiSelectColumn(col)}
                         value={isMultiSelectColumn(col) ? (Array.isArray(draft[col]) ? draft[col].map(String) : []) : String(draft[col] ?? '')}
                         onChange={(event) => isMultiSelectColumn(col)
@@ -820,7 +938,9 @@ function DataTable({
                       </select>
                     ) : isEditing && col !== section.idColumn && !readonlyColumns.includes(col) ? (
                       <input
-                        value={String(draft[col] ?? '')}
+                        className={isDogovors ? 'guide-dogovors-edit-field' : undefined}
+                        type={dateColumns.includes(col) ? 'date' : 'text'}
+                        value={dateColumns.includes(col) ? String(draft[col] ?? '').slice(0, 10) : String(draft[col] ?? '')}
                         onChange={(event) => updateDraft(col, event.target.value)}
                       />
                     ) : (
@@ -830,26 +950,58 @@ function DataTable({
                 ))}
                 <td>
                   {!isEditing ? (
-                    <div className="guide-row-actions">
-                      <button
-                        type="button"
-                        className="page-action-btn page-action-btn--secondary"
-                        onClick={() => toggleActionMenu(rowId)}
-                        aria-expanded={actionMenuRowId === rowId}
-                      >
-                        ИЗМ
-                      </button>
-                      {actionMenuRowId === rowId && (
-                        <div className="guide-row-actions-menu">
-                          <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => startEdit(row)}>
-                            ИЗМ
-                          </button>
-                          <button type="button" className="page-action-btn page-action-btn--danger" onClick={() => void deleteRow(rowId)} disabled={saving}>
-                            УДАЛ
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                    isDogovors ? (
+                      <div className="guide-row-actions">
+                        <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => startEdit(row)}>
+                          ИЗМ
+                        </button>
+                        <button
+                          type="button"
+                          className="page-action-btn page-action-btn--secondary guide-row-actions-toggle"
+                          onClick={() => toggleActionMenu(rowId)}
+                          aria-label="Дополнительные действия с договором"
+                          aria-expanded={actionMenuRowId === rowId}
+                        >
+                          ▾
+                        </button>
+                        {actionMenuRowId === rowId && (
+                          <div className="guide-row-actions-menu">
+                            <button
+                              type="button"
+                              className="page-action-btn page-action-btn--danger"
+                              onClick={() => {
+                                setActionMenuRowId(null);
+                                void deleteRow(rowId);
+                              }}
+                              disabled={saving}
+                            >
+                              УДАЛ
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="guide-row-actions">
+                        <button
+                          type="button"
+                          className="page-action-btn page-action-btn--secondary"
+                          onClick={() => toggleActionMenu(rowId)}
+                          aria-expanded={actionMenuRowId === rowId}
+                        >
+                          ИЗМ
+                        </button>
+                        {actionMenuRowId === rowId && (
+                          <div className="guide-row-actions-menu">
+                            <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => startEdit(row)}>
+                              ИЗМ
+                            </button>
+                            <button type="button" className="page-action-btn page-action-btn--danger" onClick={() => void deleteRow(rowId)} disabled={saving}>
+                              УДАЛ
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )
                   ) : (
                     <>
                       <button type="button" className="page-action-btn page-action-btn--success" onClick={() => void saveEdit()} disabled={saving}>сохр</button>
@@ -1060,6 +1212,19 @@ export default function Guide({
 
   // Каталог справочников: таблица названий, содержимое открывается в отдельном окне.
   if (directoryView) {
+    const directoryEntries = [
+      ...sections.map((section) => ({
+        key: section.endpoint,
+        title: section.title,
+        entity: section.entity,
+      })),
+      {
+        key: 'postgres-schema',
+        title: 'Схема базы данных PostgreSQL',
+        entity: 'postgres-schema',
+      },
+    ];
+
     return (
       <section className="guide guide-directory">
         <div className="guide-table-wrap" style={{ maxWidth: '640px' }}>
@@ -1072,18 +1237,27 @@ export default function Guide({
               </tr>
             </thead>
             <tbody>
-              {sections.map((section, index) => (
-                <tr key={section.endpoint}>
+              {directoryEntries.map((entry, index) => (
+                <tr key={entry.key}>
                   <td>{index + 1}</td>
                   <td>
-                    <a
-                      href={`#guide-window-${section.entity}`}
-                      target={`guide-window-${section.entity}`}
-                      rel="noreferrer"
+                    <button
+                      type="button"
                       className="guide-directory-action-link"
+                      onClick={() => {
+                        const windowName = `guide-window-${entry.entity}`;
+                        const popup = window.open(
+                          `${window.location.pathname}#${windowName}`,
+                          windowName,
+                          entry.entity === 'postgres-schema'
+                            ? 'popup=yes,width=760,height=780,resizable=yes,scrollbars=yes'
+                            : 'popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes'
+                        );
+                        if (popup) popup.focus();
+                      }}
                     >
-                      {section.title}
-                    </a>
+                      {entry.title}
+                    </button>
                   </td>
                   <td />
                 </tr>
@@ -1160,4 +1334,3 @@ export default function Guide({
     </section>
   );
 }
-

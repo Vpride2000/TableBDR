@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { formatHttpError } from '../utils/forecastUtils'
+import { formatHttpError } from '../utils/httpUtils'
 
 type Row = Record<string, unknown>
 type SummaryCounts = Record<string, number>
