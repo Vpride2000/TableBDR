@@ -95,6 +95,17 @@ export function setupRoutes(app: Express): void {
   };
   const satellitesControlSessions = new Map<string, { user: string; expiresAt: number }>();
   const satellitesSessionTtlMs = 8 * 60 * 60 * 1000;
+  const dashboardTileKeys = [
+    'services',
+    'contracts',
+    'cellular',
+    'satellites',
+    'purchases',
+    'import-substitution',
+    'equipment-accounting',
+  ];
+  const dashboardTileStatuses = ['red', 'yellow', 'green'];
+  const dashboardBdrFields = ['Лимит', 'БДР25корр', 'БДР26', 'БДР26корр', 'БДР27'];
 
   function getSatellitesUserByToken(req: Request): string | null {
     const authHeader = String(req.headers.authorization ?? '').trim();
@@ -897,6 +908,139 @@ export function setupRoutes(app: Express): void {
     });
 
     res.json({ ok: true, user: username, token });
+  });
+
+  app.post('/api/personal-account/auth', (req: Request, res: Response): void => {
+    const password = String(req.body?.password ?? '');
+    if (!password) {
+      res.status(400).json({ error: 'Требуется пароль пользователя АДМ' });
+      return;
+    }
+
+    const expectedPassword = satellitesControlUsers.ADM;
+    if (!expectedPassword) {
+      res.status(503).json({ error: 'Авторизация АДМ не настроена на сервере' });
+      return;
+    }
+    if (password !== expectedPassword) {
+      res.status(401).json({ error: 'Неверный пароль пользователя АДМ' });
+      return;
+    }
+
+    const token = randomUUID();
+    satellitesControlSessions.set(token, {
+      user: 'ADM',
+      expiresAt: Date.now() + satellitesSessionTtlMs,
+    });
+    res.json({ ok: true, user: 'ADM', token });
+  });
+
+  app.get('/api/personal-account/session', (req: Request, res: Response): void => {
+    const authUser = getSatellitesUserByToken(req);
+    if (authUser !== 'ADM') {
+      res.status(401).json({ error: 'Требуется действующая сессия пользователя АДМ' });
+      return;
+    }
+    res.json({ ok: true, user: authUser });
+  });
+
+  app.get('/api/dashboard/tile-statuses', async (_req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query<{ tile_key: string; status: string }>(
+        'SELECT "tile_key", "status" FROM "app_dashboard_tile_statuses"',
+      );
+      res.json(Object.fromEntries(result.rows.map((row) => [row.tile_key, row.status])));
+    } catch (err) {
+      console.error('Failed to fetch dashboard tile statuses', err);
+      res.status(500).json({ error: 'Не удалось загрузить статусы актуальности плиток' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.put('/api/dashboard/tile-statuses/:tileKey', async (req: Request, res: Response): Promise<void> => {
+    if (getSatellitesUserByToken(req) !== 'ADM') {
+      res.status(401).json({ error: 'Изменять статусы может только пользователь АДМ' });
+      return;
+    }
+    const { tileKey } = req.params;
+    const status = String(req.body?.status ?? '');
+    if (!dashboardTileKeys.includes(tileKey)) {
+      res.status(400).json({ error: 'Неизвестная плитка дашборда' });
+      return;
+    }
+    if (!dashboardTileStatuses.includes(status)) {
+      res.status(400).json({ error: 'Статус должен быть red, yellow или green' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `INSERT INTO "app_dashboard_tile_statuses" ("tile_key", "status", "updated_by", "updated_at")
+         VALUES ($1, $2, 'ADM', NOW())
+         ON CONFLICT ("tile_key") DO UPDATE
+         SET "status" = EXCLUDED."status", "updated_by" = EXCLUDED."updated_by", "updated_at" = NOW()
+         RETURNING "tile_key", "status", "updated_by", "updated_at"`,
+        [tileKey, status],
+      );
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error('Failed to update dashboard tile status', err);
+      res.status(500).json({ error: 'Не удалось сохранить статус плитки' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/dashboard/bdr-field', async (_req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query<{ setting_value: string }>(
+        'SELECT "setting_value" FROM "app_dashboard_settings" WHERE "setting_key" = $1',
+        ['bdr_field'],
+      );
+      if (!result.rows[0] || !dashboardBdrFields.includes(result.rows[0].setting_value)) {
+        throw new Error('Dashboard BDR field setting is missing or invalid');
+      }
+      res.json({ field: result.rows[0].setting_value });
+    } catch (err) {
+      console.error('Failed to fetch dashboard BDR field', err);
+      res.status(500).json({ error: 'Не удалось загрузить вариант БДР для сводки' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.put('/api/dashboard/bdr-field', async (req: Request, res: Response): Promise<void> => {
+    if (getSatellitesUserByToken(req) !== 'ADM') {
+      res.status(401).json({ error: 'Изменять вариант БДР может только пользователь АДМ' });
+      return;
+    }
+    const field = String(req.body?.field ?? '');
+    if (!dashboardBdrFields.includes(field)) {
+      res.status(400).json({ error: 'Неизвестный вариант БДР' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query<{ setting_value: string }>(
+        `INSERT INTO "app_dashboard_settings" ("setting_key", "setting_value", "updated_by", "updated_at")
+         VALUES ('bdr_field', $1, 'ADM', NOW())
+         ON CONFLICT ("setting_key") DO UPDATE
+         SET "setting_value" = EXCLUDED."setting_value", "updated_by" = EXCLUDED."updated_by", "updated_at" = NOW()
+         RETURNING "setting_value"`,
+        [field],
+      );
+      res.json({ field: result.rows[0].setting_value });
+    } catch (err) {
+      console.error('Failed to update dashboard BDR field', err);
+      res.status(500).json({ error: 'Не удалось сохранить вариант БДР для сводки' });
+    } finally {
+      await client.end();
+    }
   });
 
   // Satellites control route
@@ -3290,7 +3434,8 @@ export function setupRoutes(app: Express): void {
       const result = await client.query(
         `SELECT
            "GN_import_substitution_id",
-           "Подразделение",
+          i."updated_at" AS "updatedAt",
+          "Подразделение",
            okdp."GN_invest_okdp_tko_is_prit" AS "Код ТКО",
            i."Наименование ТКО",
            etype."GN_equipment_type" AS "Тип",
@@ -3747,6 +3892,35 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.post('/api/import-substitution/:id/restore', async (req: Request, res: Response): Promise<void> => {
+    const rowId = Number(req.params.id);
+    if (!Number.isSafeInteger(rowId) || rowId <= 0) {
+      res.status(400).json({ error: 'Invalid row id' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        `UPDATE "GN_import_substitution"
+         SET "is_deleted" = FALSE, "deleted_at" = NULL, "updated_at" = NOW()
+         WHERE "GN_import_substitution_id" = $1 AND "is_deleted" = TRUE
+         RETURNING "GN_import_substitution_id"`,
+        [rowId],
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Deleted row not found' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Failed to restore import-substitution row', err);
+      res.status(500).json({ error: 'Failed to restore import-substitution row' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.post('/api/import-substitution/mark-missing', async (req: Request, res: Response): Promise<void> => {
     const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
     const client = await createDbClient();
@@ -3762,6 +3936,231 @@ export function setupRoutes(app: Express): void {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to mark missing Excel rows' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.get('/api/primary', async (_req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(`
+        SELECT
+          primary_document."GN_primary_document_id" AS id,
+          primary_document."GN_department_FK" AS "departmentId",
+          department."GN_department" AS department,
+          primary_document."GN_dogovor_FK" AS "contractId",
+          dogovor."GN_dogovor" AS contract,
+          primary_document."personal_account" AS "personalAccount",
+          primary_document."amount_with_vat" AS "amountWithVat",
+          primary_document."details",
+          primary_document."edo_arrival_date" AS "edoArrivalDate",
+          primary_document."sed_launch_date" AS "sedLaunchDate",
+          primary_document."note"
+        FROM "GN_primary_documents" primary_document
+        LEFT JOIN "GN_department" department
+          ON department."GN_Dep_id" = primary_document."GN_department_FK"
+        LEFT JOIN "GN_dogovor" dogovor
+          ON dogovor."GN_dgv_id" = primary_document."GN_dogovor_FK"
+        ORDER BY primary_document."GN_primary_document_id"
+      `);
+      const [objects, budgetItems] = await Promise.all([
+        client.query(`
+          SELECT relation."primary_document_id" AS id,
+                 object."GN_do_id" AS "itemId",
+                 object."GN_departament_object" AS label
+          FROM "GN_primary_document_objects" relation
+          JOIN "GN_departament_object" object ON object."GN_do_id" = relation."object_id"
+          ORDER BY relation."primary_document_id", object."GN_departament_object"
+        `),
+        client.query(`
+          SELECT relation."primary_document_id" AS id,
+                 item."GN_b_id" AS "itemId",
+                 item."GN_budget_network_item" AS label
+          FROM "GN_primary_document_budget_items" relation
+          JOIN "GN_budget_network_item" item ON item."GN_b_id" = relation."budget_item_id"
+          ORDER BY relation."primary_document_id", item."GN_budget_network_item"
+        `),
+      ]);
+      const objectsById = new Map<number, Array<{ id: number; label: string }>>();
+      const itemsById = new Map<number, Array<{ id: number; label: string }>>();
+      objects.rows.forEach((row: { id: number; itemId: number; label: string }) => {
+        const list = objectsById.get(row.id) ?? [];
+        list.push({ id: row.itemId, label: row.label });
+        objectsById.set(row.id, list);
+      });
+      budgetItems.rows.forEach((row: { id: number; itemId: number; label: string }) => {
+        const list = itemsById.get(row.id) ?? [];
+        list.push({ id: row.itemId, label: row.label });
+        itemsById.set(row.id, list);
+      });
+      res.json(result.rows.map((row: Record<string, unknown>) => ({
+        ...row,
+        objects: objectsById.get(Number(row.id)) ?? [],
+        budgetItems: itemsById.get(Number(row.id)) ?? [],
+      })));
+    } catch (err) {
+      console.error('Failed to fetch primary documents', err);
+      res.status(500).json({ error: 'Не удалось загрузить первичные документы' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  function parsePrimaryIds(value: unknown): number[] | null {
+    if (!Array.isArray(value)) return null;
+    const ids = value.map(Number);
+    if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
+    return [...new Set(ids)];
+  }
+
+  function parsePrimaryNullableId(value: unknown): number | null | undefined {
+    if (value === '' || value === null || value === undefined) return null;
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : undefined;
+  }
+
+  function parsePrimaryDate(value: unknown): string | null | undefined {
+    if (value === '' || value === null || value === undefined) return null;
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+    const date = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : undefined;
+  }
+
+  function parsePrimaryPayload(body: Record<string, unknown>) {
+    const departmentId = parsePrimaryNullableId(body.departmentId);
+    const contractId = parsePrimaryNullableId(body.contractId);
+    const objectIds = parsePrimaryIds(body.objectIds);
+    const budgetItemIds = parsePrimaryIds(body.budgetItemIds);
+    const amountWithVat = Number(String(body.amountWithVat ?? '0').replace(/\s/g, '').replace(',', '.'));
+    const edoArrivalDate = parsePrimaryDate(body.edoArrivalDate);
+    const sedLaunchDate = parsePrimaryDate(body.sedLaunchDate);
+    if (departmentId === undefined || contractId === undefined || !objectIds || !budgetItemIds
+      || !Number.isFinite(amountWithVat) || edoArrivalDate === undefined || sedLaunchDate === undefined) {
+      return null;
+    }
+    return {
+      departmentId,
+      contractId,
+      personalAccount: String(body.personalAccount ?? ''),
+      objectIds,
+      budgetItemIds,
+      amountWithVat,
+      details: String(body.details ?? ''),
+      edoArrivalDate,
+      sedLaunchDate,
+      note: String(body.note ?? ''),
+    };
+  }
+
+  async function replacePrimaryLinks(
+    client: Awaited<ReturnType<typeof createDbClient>>,
+    documentId: number,
+    objectIds: number[],
+    budgetItemIds: number[],
+  ): Promise<void> {
+    await client.query('DELETE FROM "GN_primary_document_objects" WHERE "primary_document_id" = $1', [documentId]);
+    await client.query('DELETE FROM "GN_primary_document_budget_items" WHERE "primary_document_id" = $1', [documentId]);
+    if (objectIds.length > 0) {
+      await client.query(
+        `INSERT INTO "GN_primary_document_objects" ("primary_document_id", "object_id")
+         SELECT $1, unnest($2::integer[])`,
+        [documentId, objectIds],
+      );
+    }
+    if (budgetItemIds.length > 0) {
+      await client.query(
+        `INSERT INTO "GN_primary_document_budget_items" ("primary_document_id", "budget_item_id")
+         SELECT $1, unnest($2::integer[])`,
+        [documentId, budgetItemIds],
+      );
+    }
+  }
+
+  app.post('/api/primary', async (req: Request, res: Response): Promise<void> => {
+    const input = parsePrimaryPayload(req.body as Record<string, unknown>);
+    if (!input) {
+      res.status(400).json({ error: 'Проверьте подразделение, договор, статьи, объекты, сумму и даты' });
+      return;
+    }
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `INSERT INTO "GN_primary_documents"
+           ("GN_department_FK", "GN_dogovor_FK", "personal_account", "amount_with_vat", "details", "edo_arrival_date", "sed_launch_date", "note")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING "GN_primary_document_id" AS id`,
+        [input.departmentId, input.contractId, input.personalAccount, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note],
+      );
+      await replacePrimaryLinks(client, Number(result.rows[0].id), input.objectIds, input.budgetItemIds);
+      await client.query('COMMIT');
+      res.status(201).json({ id: result.rows[0].id });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to create primary document', err);
+      res.status(400).json({ error: 'Не удалось создать первичный документ. Проверьте выбранные значения.' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.put('/api/primary/:id', async (req: Request, res: Response): Promise<void> => {
+    const documentId = Number(req.params.id);
+    const input = parsePrimaryPayload(req.body as Record<string, unknown>);
+    if (!Number.isSafeInteger(documentId) || documentId <= 0 || !input) {
+      res.status(400).json({ error: 'Проверьте идентификатор и заполненные поля первичного документа' });
+      return;
+    }
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE "GN_primary_documents"
+         SET "GN_department_FK" = $2, "GN_dogovor_FK" = $3, "personal_account" = $4,
+             "amount_with_vat" = $5, "details" = $6, "edo_arrival_date" = $7,
+             "sed_launch_date" = $8, "note" = $9
+         WHERE "GN_primary_document_id" = $1
+         RETURNING "GN_primary_document_id"`,
+        [documentId, input.departmentId, input.contractId, input.personalAccount, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note],
+      );
+      if (result.rowCount === 0) {
+        await client.query('ROLLBACK');
+        res.status(404).json({ error: 'Первичный документ не найден' });
+        return;
+      }
+      await replacePrimaryLinks(client, documentId, input.objectIds, input.budgetItemIds);
+      await client.query('COMMIT');
+      res.json({ id: documentId });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to update primary document', err);
+      res.status(400).json({ error: 'Не удалось сохранить первичный документ. Проверьте выбранные значения.' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.delete('/api/primary/:id', async (req: Request, res: Response): Promise<void> => {
+    const documentId = Number(req.params.id);
+    if (!Number.isSafeInteger(documentId) || documentId <= 0) {
+      res.status(400).json({ error: 'Некорректный номер первичного документа' });
+      return;
+    }
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        'DELETE FROM "GN_primary_documents" WHERE "GN_primary_document_id" = $1 RETURNING "GN_primary_document_id"',
+        [documentId],
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Первичный документ не найден' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Failed to delete primary document', err);
+      res.status(500).json({ error: 'Не удалось удалить первичный документ' });
     } finally {
       await client.end();
     }

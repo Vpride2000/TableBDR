@@ -156,8 +156,58 @@ export async function ensureDogovorColumns(client: Client): Promise<void> {
       ADD COLUMN IF NOT EXISTS "GN_dogovor_date" DATE,
       ADD COLUMN IF NOT EXISTS "GN_dogovor_signer_FK" INTEGER
         REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
-      ADD COLUMN IF NOT EXISTS "GN_dogovor_note" TEXT
+      ADD COLUMN IF NOT EXISTS "GN_dogovor_note" TEXT,
+      ADD COLUMN IF NOT EXISTS "GN_dogovor_personal_account" TEXT NOT NULL DEFAULT ''
   `);
+}
+
+export async function ensurePrimaryDocumentsTables(client: Client): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_primary_documents" (
+      "GN_primary_document_id" SERIAL PRIMARY KEY,
+      "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+      "GN_dogovor_FK" INTEGER REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
+      "personal_account" TEXT NOT NULL DEFAULT '',
+      "amount_with_vat" NUMERIC(15, 2) NOT NULL DEFAULT 0,
+      "details" TEXT NOT NULL DEFAULT '',
+      "edo_arrival_date" DATE,
+      "sed_launch_date" DATE,
+      "note" TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_objects" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "object_id" INTEGER NOT NULL REFERENCES "GN_departament_object"("GN_do_id") ON DELETE RESTRICT,
+      PRIMARY KEY ("primary_document_id", "object_id")
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_budget_items" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "budget_item_id" INTEGER NOT NULL REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE RESTRICT,
+      PRIMARY KEY ("primary_document_id", "budget_item_id")
+    )
+  `);
+
+  const accountColumn = await client.query<{ column_name: string }>(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'GN_primary_documents'
+      AND column_name = 'personal_account'
+  `);
+  if (accountColumn.rows.length === 0) {
+    await client.query(`
+      ALTER TABLE "GN_primary_documents"
+        ADD COLUMN "personal_account" TEXT NOT NULL DEFAULT ''
+    `);
+    await client.query(`
+      UPDATE "GN_primary_documents" primary_document
+      SET "personal_account" = btrim(trim(BOTH E'\\r' FROM split_part(dogovor."GN_dogovor_personal_account", E'\\n', 1)))
+      FROM "GN_dogovor" dogovor
+      WHERE dogovor."GN_dgv_id" = primary_document."GN_dogovor_FK"
+        AND dogovor."GN_dogovor_personal_account" <> ''
+    `);
+  }
 }
 
 export async function ensureNotesTables(client: Client): Promise<void> {
@@ -214,6 +264,32 @@ export async function ensureNotesTables(client: Client): Promise<void> {
     UPDATE "app_notes_pages"
     SET "search_vector" = TO_TSVECTOR('simple', CONCAT_WS(' ', "title", "content_text"))
     WHERE "search_vector" = ''::tsvector;
+  `);
+}
+
+export async function ensureDashboardTileStatusesTable(client: Client): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "app_dashboard_tile_statuses" (
+      "tile_key" TEXT PRIMARY KEY,
+      "status" TEXT NOT NULL CHECK ("status" IN ('red', 'yellow', 'green')),
+      "updated_by" TEXT NOT NULL,
+      "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+export async function ensureDashboardSettingsTable(client: Client): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "app_dashboard_settings" (
+      "setting_key" TEXT PRIMARY KEY,
+      "setting_value" TEXT NOT NULL,
+      "updated_by" TEXT NOT NULL,
+      "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    INSERT INTO "app_dashboard_settings" ("setting_key", "setting_value", "updated_by")
+    VALUES ('bdr_field', 'БДР26корр', 'system')
+    ON CONFLICT ("setting_key") DO NOTHING;
   `);
 }
 

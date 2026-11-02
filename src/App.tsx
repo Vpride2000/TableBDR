@@ -23,9 +23,23 @@ import ImportSubstitutionPage from './importSubstitution/ImportSubstitutionPage'
 import ImportSubstitutionTable from './importSubstitution/ImportSubstitutionTable'
 import EquipmentAccountingTable from './importSubstitution/EquipmentAccountingTable'
 import PostgresSchemaPopup from './components/PostgresSchemaPopup'
+import PersonalAccountPage from './components/PersonalAccountPage'
 import NotesPage from './notes/NotesPage'
+import PrimaryPage from './PrimaryPage'
+import {
+  DEFAULT_DASHBOARD_TILE_STATUSES,
+  isDashboardTileStatus,
+  type DashboardTileKey,
+  type DashboardTileStatus,
+  type DashboardTileStatuses,
+} from './utils/dashboardTileStatuses'
+import {
+  DASHBOARD_BDR_FIELDS,
+  DEFAULT_DASHBOARD_BDR_FIELD,
+  isDashboardBdrField,
+} from './utils/dashboardBdrField'
 
-type Page = 'start' | 'budget' | 'guide' | 'contracts' | 'satellites' | 'satellites-control' | 'cellular' | 'import-substitution' | 'notes'
+type Page = 'start' | 'budget' | 'guide' | 'contracts' | 'satellites' | 'satellites-control' | 'cellular' | 'import-substitution' | 'notes' | 'personal-account' | 'primary'
 
 function pageFromHash(hash: string): Page {
   if (hash === '#start') return 'start'
@@ -35,9 +49,11 @@ function pageFromHash(hash: string): Page {
     || hash === '#equipment-accounting'
   ) return 'import-substitution'
   if (hash === '#notes') return 'notes'
+  if (hash === '#primary') return 'primary'
   if (hash === '#contracts') return 'contracts'
   if (hash === '#satellites') return 'satellites'
   if (hash === '#satellites-control') return 'satellites-control'
+  if (hash === '#personal-account') return 'personal-account'
   if (hash === '#cellular') return 'cellular'
   if (hash === '#import-substitution') return 'import-substitution'
   if (hash === '#guide') return 'guide'
@@ -83,6 +99,7 @@ interface DashboardSummary {
   importRegistryQuantity: number
   importWithdrawnQuantity: number
   importRegistryPercent: number
+  topEquipmentTypes: Array<{ type: string; quantity: number }>
 }
 
 interface ObjectUsageSummaryRow {
@@ -96,8 +113,48 @@ interface ObjectUsageSummaryRow {
 
 type ObjectUsageSortKey = 'department' | 'objectName' | 'communicationServices' | 'communicationServiceCostTotal' | 'equipmentTypes' | 'equipmentCostTotal'
 
+function DashboardTrafficLight({ status, label }: { status: DashboardTileStatus; label: string }): React.ReactElement {
+  const colors: Record<DashboardTileStatus, string> = {
+    red: '#ff1f1f',
+    yellow: '#ffe600',
+    green: '#00d84a',
+  }
+  const statusLabels: Record<DashboardTileStatus, string> = {
+    red: 'тестовый режим',
+    yellow: 'частично обновлено',
+    green: 'данные актуальны',
+  }
+  const order: DashboardTileStatus[] = ['red', 'yellow', 'green']
+
+  return (
+    <svg
+      className="dashboard-traffic-light"
+      viewBox="0 0 48 20"
+      role="img"
+      aria-label={`${label}: ${statusLabels[status]}`}
+      title={`${label}: ${statusLabels[status]}`}
+    >
+      <rect x="1" y="2" width="46" height="16" rx="7" fill="#b8c0c5" stroke="#78858c" strokeWidth="1" />
+      {order.map((light, index) => (
+        <circle
+          key={light}
+          cx={9 + index * 15}
+          cy="10"
+          r="4"
+          fill={light === status ? colors[light] : '#718087'}
+          stroke={light === status ? '#fff' : '#59666d'}
+          strokeWidth="1"
+        />
+      ))}
+    </svg>
+  )
+}
+
 function StartDashboard() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
+  const [tileStatuses, setTileStatuses] = useState<DashboardTileStatuses>(DEFAULT_DASHBOARD_TILE_STATUSES)
+  const [tileStatusesError, setTileStatusesError] = useState<string | null>(null)
+  const [dashboardBdrField, setDashboardBdrField] = useState(DEFAULT_DASHBOARD_BDR_FIELD)
   const [objectUsageSummary, setObjectUsageSummary] = useState<ObjectUsageSummaryRow[]>([])
   const [objectSummaryFilters, setObjectSummaryFilters] = useState<Record<ObjectUsageSortKey, string>>({
     department: '',
@@ -123,17 +180,44 @@ function StartDashboard() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    let active = true
+    async function loadTileStatuses(): Promise<void> {
+      try {
+        const response = await fetch('/api/dashboard/tile-statuses')
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const savedStatuses = await response.json() as Partial<Record<DashboardTileKey, unknown>>
+        const validStatuses: DashboardTileStatuses = { ...DEFAULT_DASHBOARD_TILE_STATUSES }
+        for (const key of Object.keys(DEFAULT_DASHBOARD_TILE_STATUSES) as DashboardTileKey[]) {
+          const value = savedStatuses[key]
+          if (isDashboardTileStatus(value)) validStatuses[key] = value
+        }
+        if (active) setTileStatuses(validStatuses)
+      } catch (requestError) {
+        if (active) setTileStatusesError(requestError instanceof Error
+          ? requestError.message
+          : 'Не удалось загрузить статусы актуальности плиток')
+      }
+    }
+
+    void loadTileStatuses()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
     let isMounted = true
 
     async function loadSummary(): Promise<void> {
       try {
-        const [bdrResponse, contractsResponse, agreementsResponse, cellularResponse, satellitesResponse, importSubstitutionResponse] = await Promise.all([
+        const [bdrResponse, contractsResponse, agreementsResponse, cellularResponse, satellitesResponse, importSubstitutionResponse, bdrFieldResponse] = await Promise.all([
           fetch('/api/gn/bdr'),
           fetch('/api/gn/contracts'),
           fetch('/api/gn/contract-additional-agreements'),
           fetch('/api/gn/cellular'),
           fetch('/api/satellites/summary'),
           fetch('/api/import-substitution', { cache: 'no-store' }),
+          fetch('/api/dashboard/bdr-field'),
         ])
 
         if (!bdrResponse.ok) throw new Error(`BDR HTTP ${bdrResponse.status}`)
@@ -142,12 +226,19 @@ function StartDashboard() {
         if (!cellularResponse.ok) throw new Error(`Cellular HTTP ${cellularResponse.status}`)
         if (!satellitesResponse.ok) throw new Error(`Satellites HTTP ${satellitesResponse.status}`)
         if (!importSubstitutionResponse.ok) throw new Error(`Import substitution HTTP ${importSubstitutionResponse.status}`)
+        if (!bdrFieldResponse.ok) throw new Error(`Dashboard BDR field HTTP ${bdrFieldResponse.status}`)
 
         const bdrRows = (await bdrResponse.json()) as Array<Record<string, unknown>>
         const contractRows = (await contractsResponse.json()) as Array<Record<string, unknown>>
         const agreementRows = (await agreementsResponse.json()) as Array<Record<string, unknown>>
         const cellularRows = (await cellularResponse.json()) as Array<Record<string, unknown>>
         const importSubstitutionRows = (await importSubstitutionResponse.json()) as Array<Record<string, unknown>>
+        const bdrFieldPayload = await bdrFieldResponse.json() as { field?: unknown }
+        if (!isDashboardBdrField(bdrFieldPayload.field)) {
+          throw new Error('Сервер вернул неизвестный вариант БДР для сводки')
+        }
+        const selectedBdrField = bdrFieldPayload.field
+        setDashboardBdrField(selectedBdrField)
         const satellitesSummary = (await satellitesResponse.json()) as {
           satelliteCount: number
           activeSatelliteCount: number
@@ -163,8 +254,8 @@ function StartDashboard() {
 
         const serviceBudgetByType = new Map<string, number>()
         bdrRows.forEach((row) => {
-          const serviceName = String(row['Статья бюджета УС'] ?? row['Статья бюджета'] ?? 'Не указана').trim()
-          const amount = parseNumber(row['Лимит'])
+          const serviceName = String(row['Статья бюджета'] ?? 'Не указана').trim()
+          const amount = parseNumber(row[selectedBdrField])
           serviceBudgetByType.set(serviceName, (serviceBudgetByType.get(serviceName) ?? 0) + amount)
         })
 
@@ -213,6 +304,17 @@ function StartDashboard() {
         const importRegistryQuantity = importSubstitutionRows
           .filter((row) => String(row['Классификация ТКО'] ?? '').trim() === 'РФ в реестре')
           .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const equipmentQuantityByType = new Map<string, number>()
+        importSubstitutionRows.forEach((row) => {
+          const type = String(row['Тип'] ?? '').trim() || 'Не указан'
+          const quantity = parseNumber(row['Количество'])
+          equipmentQuantityByType.set(type, (equipmentQuantityByType.get(type) ?? 0) + quantity)
+        })
+        const topEquipmentTypes = [...equipmentQuantityByType.entries()]
+          .map(([type, quantity]) => ({ type, quantity }))
+          .sort((left, right) => right.quantity - left.quantity
+            || left.type.localeCompare(right.type, 'ru', { sensitivity: 'base' }))
+          .slice(0, 5)
         const importWithdrawnQuantity = importSubstitutionRows.reduce(
           (sum, row) => sum + Math.round(parseNumber(row['Выведен из эксплуатации'])),
           0,
@@ -256,6 +358,9 @@ function StartDashboard() {
         }
 
         bdrRows.forEach((row) => {
+          const communicationServiceCost = parseNumber(row[selectedBdrField])
+          if (communicationServiceCost === 0) return
+
           const department = String(row['Подразделение'] ?? '').trim() || 'Не указано'
           const objectName = String(row['Объект'] ?? '').trim() || 'Не указан'
           const serviceItem = String(row['Статья бюджета УС'] ?? '').trim() || 'Статья не указана'
@@ -265,7 +370,7 @@ function StartDashboard() {
           const contractorsContracts = usage.communicationServices.get(serviceItem) ?? new Set<string>()
           contractorsContracts.add(`${contractor} — ${contract}`)
           usage.communicationServices.set(serviceItem, contractorsContracts)
-          usage.communicationServiceCostTotal += parseNumber(row['Лимит'])
+          usage.communicationServiceCostTotal += communicationServiceCost
         })
 
         importSubstitutionRows.forEach((row) => {
@@ -296,6 +401,7 @@ function StartDashboard() {
               .map(([type, quantity]) => ({ type, quantity }))
               .sort((left, right) => left.type.localeCompare(right.type, 'ru')),
           }))
+          .filter((row) => row.communicationServices.length > 0)
           .sort((left, right) => left.department.localeCompare(right.department, 'ru')
             || left.objectName.localeCompare(right.objectName, 'ru')))
 
@@ -342,6 +448,7 @@ function StartDashboard() {
           importRegistryQuantity,
           importWithdrawnQuantity,
           importRegistryPercent: importAdjustedQuantity > 0 ? (importRegistryQuantity / importAdjustedQuantity) * 100 : 0,
+          topEquipmentTypes,
         })
       } catch (err) {
         if (!isMounted) return
@@ -370,6 +477,36 @@ function StartDashboard() {
   const formatQuantity = (value: number): string => new Intl.NumberFormat('ru-RU', {
     maximumFractionDigits: 2,
   }).format(value)
+
+  function openDashboardPopup(hash: string, name: string, features: string): void {
+    const popup = window.open(`${window.location.pathname}${hash}`, name, features)
+    if (popup) popup.focus()
+  }
+
+  function openBudgetMainWindow(): void {
+    openDashboardPopup(
+      '#budget-main-window',
+      'budget-main-window',
+      'popup=yes,width=1400,height=900,resizable=yes,scrollbars=yes',
+    )
+  }
+
+  function openImportSubstitutionTableWindow(): void {
+    openDashboardPopup(
+      '#import-substitution-table-window',
+      'import-substitution-table-window',
+      'popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes',
+    )
+  }
+
+  function openEquipmentAccountingWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#equipment-accounting-window`,
+      'equipment-accounting-window',
+      'popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes',
+    )
+    if (popup) popup.focus()
+  }
 
   const objectSummaryColumns: Array<{ key: ObjectUsageSortKey; label: string }> = [
     { key: 'department', label: 'Подразделение' },
@@ -480,10 +617,25 @@ function StartDashboard() {
       <div className="dashboard-header">             
           <h2>Обзор ключевых метрик</h2>        
       </div>
+      {tileStatusesError && (
+        <p className="hint hint--error" role="alert">
+          Не удалось загрузить статусы актуальности: {tileStatusesError}
+        </p>
+      )}
 
       <div className="dashboard-grid">
-        <a className="dashboard-card dashboard-card--link dashboard-card--budget-summary" href="#budget">
-          <h3>Услуги связи</h3>
+        <a
+          className="dashboard-card dashboard-card--link dashboard-card--budget-summary"
+          href="#budget-main-window"
+          onClick={(event) => {
+            event.preventDefault()
+            openBudgetMainWindow()
+          }}
+        >
+          <DashboardTrafficLight status={tileStatuses.services} label="Услуги связи" />
+          <h3>
+            Услуги связи ({DASHBOARD_BDR_FIELDS.find((field) => field.value === dashboardBdrField)?.label ?? dashboardBdrField})
+          </h3>
           <ul className="dashboard-compact-list">
             {summary.topServices.map((item) => (
               <li key={item.name}>
@@ -497,6 +649,7 @@ function StartDashboard() {
         </a>
 
         <a className="dashboard-card dashboard-card--link" href="#contracts">
+          <DashboardTrafficLight status={tileStatuses.contracts} label="Договоры" />
           <h3>Договоры</h3>
           <p className="dashboard-card-value">Всего договоров: <strong>{formatCount(summary.contractCount)}</strong></p>
           {renderStatusItems(summary.contractStatusCounts)}
@@ -504,6 +657,7 @@ function StartDashboard() {
           {renderStatusItems(summary.agreementStatusCounts)}
         </a>
         <a className="dashboard-card dashboard-card--link" href="#cellular">
+          <DashboardTrafficLight status={tileStatuses.cellular} label="Сотовая связь" />
           <h3>Сотовая связь</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
@@ -530,6 +684,7 @@ function StartDashboard() {
         </a>
 
         <a className="dashboard-card dashboard-card--link" href="#satellites">
+          <DashboardTrafficLight status={tileStatuses.satellites} label="Спутники" />
           <h3>Спутники (ГКС)</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
@@ -552,6 +707,7 @@ function StartDashboard() {
         </a>
 
         <a className="dashboard-card dashboard-card--link" href="#equipment-purchases">
+          <DashboardTrafficLight status={tileStatuses.purchases} label="Закупки" />
           <h3>Закупки</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
@@ -581,7 +737,15 @@ function StartDashboard() {
           </ul>          
         </a>
 
-        <a className="dashboard-card dashboard-card--link" href="#import-substitution">
+        <a
+          className="dashboard-card dashboard-card--link"
+          href="#import-substitution-table-window"
+          onClick={(event) => {
+            event.preventDefault()
+            openImportSubstitutionTableWindow()
+          }}
+        >
+          <DashboardTrafficLight status={tileStatuses['import-substitution']} label="Импортозамещение" />
           <h3>Импортозамещение</h3>
           <ul className="dashboard-stat-list">
             <li className="dashboard-stat-item">
@@ -598,6 +762,27 @@ function StartDashboard() {
             </li>
           </ul>
                   </a>
+
+        <button
+          type="button"
+          className="dashboard-card dashboard-card--link dashboard-card--equipment-dashboard"
+          onClick={openEquipmentAccountingWindow}
+          aria-label="Открыть учет оборудования в новом окне"
+        >
+          <DashboardTrafficLight status={tileStatuses['equipment-accounting']} label="Учет оборудования" />
+          <h3>Учет оборудования</h3>
+          <ul className="dashboard-stat-list dashboard-equipment-import-list">
+            {summary.topEquipmentTypes.map((item) => (
+              <li className="dashboard-stat-item" key={item.type}>
+                <span>{item.type}</span>
+                <strong>{formatQuantity(item.quantity)}</strong>
+              </li>
+            ))}
+            {summary.topEquipmentTypes.length === 0 && (
+              <li className="dashboard-stat-item"><span>Нет данных</span></li>
+            )}
+          </ul>
+        </button>
 
         <div className="dashboard-card dashboard-card--links">
           <h3>ссылки</h3>
@@ -637,7 +822,10 @@ function StartDashboard() {
                       className="dashboard-object-summary__sort-button"
                       onClick={() => toggleObjectSummarySort(key)}
                     >
-                      {label}{objectSummarySort.key === key ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                      {key === 'communicationServiceCostTotal'
+                        ? `ЗАТРАТЫ В ГОД (${DASHBOARD_BDR_FIELDS.find((field) => field.value === dashboardBdrField)?.label ?? dashboardBdrField})`
+                        : label}
+                      {objectSummarySort.key === key ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
                     </button>
                     <input
                       className="dashboard-object-summary__filter"
@@ -716,16 +904,10 @@ function StartDashboard() {
 // Содержит вкладки бюджета, детализаций и Газпром телеком.
 function BudgetSectionPage({
   onOpenBudgetDept,
-  onOpenBudgetPao,
-  onOpenBudgetMatrix,
-  onOpenBudgetContractPao,
   onOpenBudgetMain,
   onOpenSatellitesDetails,
 }: {
   onOpenBudgetDept: () => void
-  onOpenBudgetPao: () => void
-  onOpenBudgetMatrix: () => void
-  onOpenBudgetContractPao: () => void
   onOpenBudgetMain: () => void
   onOpenSatellitesDetails: () => void
 }) {
@@ -762,16 +944,7 @@ function BudgetSectionPage({
       {activeTab === 'budget' && (
         <div className="budget-popup-links">
           <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetDept}>
-            Свод по лимитам по подразделениям
-          </button>
-          <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetPao}>
-            Свод по лимитам по статьям бюджета УС
-          </button>
-          <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetMatrix}>
-            Свод лимитов: подразделения × статьи бюджета
-          </button>
-          <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetContractPao}>
-            Свод: договоры и статьи бюджета
+            Своды по лимитам
           </button>
           <button type="button" className="budget-popup-link-btn" onClick={onOpenBudgetMain}>
             БДР Услуги связи
@@ -794,9 +967,6 @@ export default function App() {
   const isAddRowPopup = window.location.hash === '#add-row-window'
   const isSatellitesDetailsPopup = window.location.hash === '#satellites-window'
   const isBudgetDeptPopup = window.location.hash === '#budget-dept-window'
-  const isBudgetPaoPopup = window.location.hash === '#budget-pao-window'
-  const isBudgetMatrixPopup = window.location.hash === '#budget-matrix-window'
-  const isBudgetContractPaoPopup = window.location.hash === '#budget-contract-pao-window'
   const isBudgetMainPopup = window.location.hash === '#budget-main-window'
   const isCellularTariffGuidePopup = window.location.hash === '#cellular-tariff-guide-window'
   const isCellularIdentifierGuidePopup = window.location.hash === '#cellular-identifier-guide-window'
@@ -830,9 +1000,6 @@ export default function App() {
       if (window.location.hash === '#add-row-window') return
       if (window.location.hash === '#satellites-window') return
       if (window.location.hash === '#budget-dept-window') return
-      if (window.location.hash === '#budget-pao-window') return
-      if (window.location.hash === '#budget-matrix-window') return
-      if (window.location.hash === '#budget-contract-pao-window') return
       if (window.location.hash === '#budget-main-window') return
       if (window.location.hash === '#cellular-tariff-guide-window') return
       if (window.location.hash === '#cellular-identifier-guide-window') return
@@ -871,6 +1038,14 @@ export default function App() {
     }
     if (nextPage === 'notes') {
       window.location.hash = '#notes'
+      return
+    }
+    if (nextPage === 'primary') {
+      window.location.hash = '#primary'
+      return
+    }
+    if (nextPage === 'personal-account') {
+      window.location.hash = '#personal-account'
       return
     }
     if (nextPage === 'satellites') {
@@ -990,36 +1165,6 @@ export default function App() {
     if (popup) popup.focus()
   }
 
-  // Открывает попап-окно сводной таблицы по статьям бюджета УС.
-  function openBudgetPaoWindow(): void {
-    const popup = window.open(
-      `${window.location.pathname}#budget-pao-window`,
-      'budget-pao-window',
-      'popup=yes,width=800,height=700,resizable=yes,scrollbars=yes'
-    )
-    if (popup) popup.focus()
-  }
-
-  // Открывает попап-окно матрицы подразделения × статьи бюджета.
-  function openBudgetMatrixWindow(): void {
-    const popup = window.open(
-      `${window.location.pathname}#budget-matrix-window`,
-      'budget-matrix-window',
-      'popup=yes,width=1200,height=800,resizable=yes,scrollbars=yes'
-    )
-    if (popup) popup.focus()
-  }
-
-  // Открывает попап-окно сводной таблицы по договорам и статьям бюджета УС.
-  function openBudgetContractPaoWindow(): void {
-    const popup = window.open(
-      `${window.location.pathname}#budget-contract-pao-window`,
-      'budget-contract-pao-window',
-      'popup=yes,width=1200,height=800,resizable=yes,scrollbars=yes'
-    )
-    if (popup) popup.focus()
-  }
-
   // Открывает попап-окно основной таблицы лимитов.
   function openBudgetMainWindow(): void {
     const popup = window.open(
@@ -1033,31 +1178,7 @@ export default function App() {
   if (isBudgetDeptPopup) {
     return (
       <main>
-        <BudgetSummaryPopup view="dept" />
-      </main>
-    )
-  }
-
-  if (isBudgetPaoPopup) {
-    return (
-      <main>
-        <BudgetSummaryPopup view="pao" />
-      </main>
-    )
-  }
-
-  if (isBudgetMatrixPopup) {
-    return (
-      <main>
-        <BudgetSummaryPopup view="matrix" />
-      </main>
-    )
-  }
-
-  if (isBudgetContractPaoPopup) {
-    return (
-      <main>
-        <BudgetSummaryPopup view="contractPao" />
+        <BudgetSummaryPopup />
       </main>
     )
   }
@@ -1210,6 +1331,11 @@ export default function App() {
   return (
     <main>
       <nav className="app-nav">
+        <div className="app-nav-personal">
+          <a href="#personal-account" onClick={(event) => { event.preventDefault(); goTo('personal-account') }}>
+            ЛК
+          </a>
+        </div>
         <div className="app-nav-center">
           <a href="#start" onClick={(event) => { event.preventDefault(); goTo('start') }}>
             Начало
@@ -1219,6 +1345,9 @@ export default function App() {
           </a>
           <a href="#contracts" onClick={(event) => { event.preventDefault(); goTo('contracts') }}>
             Договора
+          </a>
+          <a href="#primary" onClick={(event) => { event.preventDefault(); goTo('primary') }}>
+            Первичные
           </a>
           <a href="#notes" onClick={(event) => { event.preventDefault(); goTo('notes') }}>
             Заметки
@@ -1253,9 +1382,6 @@ export default function App() {
       {page === 'budget' && (
         <BudgetSectionPage
           onOpenBudgetDept={openBudgetDeptWindow}
-          onOpenBudgetPao={openBudgetPaoWindow}
-          onOpenBudgetMatrix={openBudgetMatrixWindow}
-          onOpenBudgetContractPao={openBudgetContractPaoWindow}
           onOpenBudgetMain={openBudgetMainWindow}
           onOpenSatellitesDetails={openSatellitesDetailsWindow}
         />
@@ -1264,6 +1390,8 @@ export default function App() {
       {page === 'satellites-control' && <SatellitesControlPage onBack={() => goTo('satellites')} />}
       {page === 'contracts' && <ContractsPage onOpenContract={openContractWindow} />}
       {page === 'notes' && <NotesPage />}
+      {page === 'personal-account' && <PersonalAccountPage />}
+      {page === 'primary' && <PrimaryPage />}
     </main>
   )
 }

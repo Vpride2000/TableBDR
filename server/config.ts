@@ -55,7 +55,7 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
   dogovors: {
     tableName: 'GN_dogovor',
     idColumn: 'GN_dgv_id',
-    editableColumns: ['GN_dogovor', 'GN_contarctor_FK', 'GN_dogovor_date', 'GN_dogovor_signer_FK', 'GN_dogovor_note'],
+    editableColumns: ['GN_dogovor', 'GN_contarctor_FK', 'GN_dogovor_date', 'GN_dogovor_signer_FK', 'GN_dogovor_personal_account', 'GN_dogovor_note'],
     nullableColumns: ['GN_dogovor_date'],
     nullableForeignKeyColumns: ['GN_dogovor_signer_FK'],
   },

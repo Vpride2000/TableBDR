@@ -41,7 +41,7 @@ const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: s
     endpoint: '/api/gn/dogovors',
     entity: 'dogovors',
     idColumn: 'GN_dgv_id',
-    columns: ['GN_dgv_id', 'GN_dogovor', 'GN_contarctor_FK', 'GN_dogovor_date', 'GN_dogovor_signer_FK', 'GN_dogovor_note'],
+    columns: ['GN_dgv_id', 'GN_dogovor', 'GN_contarctor_FK', 'GN_dogovor_date', 'GN_dogovor_signer_FK', 'GN_dogovor_personal_account', 'GN_dogovor_note'],
   },
   { title: 'Объекты', endpoint: '/api/gn/objects', entity: 'objects', idColumn: 'GN_do_id', columns: ['GN_departament_object', 'GN_department_FKs', 'УСЛУГИ СВЯЗИ', 'УЧЕТ ОБОРУДОВАНИЯ'] },
   { title: 'ОКДП ТКО для ИС ПРИТ', endpoint: '/api/gn/invest-okdp-tko-is-prit', entity: 'invest-okdp-tko-is-prit', idColumn: 'GN_invest_okdp_tko_is_prit_id' },
@@ -164,6 +164,7 @@ const GUIDE_COLUMN_LABELS: Record<string, Record<string, string>> = {
     GN_contarctor_FK: 'Контрагент',
     GN_dogovor_date: 'Дата',
     GN_dogovor_signer_FK: 'Подписант',
+    GN_dogovor_personal_account: 'Лицевой счет',
     GN_dogovor_note: 'Примечание',
   },
   objects: {
@@ -265,6 +266,7 @@ const DOGOVOR_COLUMN_DEFAULT_WIDTHS: Record<string, number> = {
   GN_contarctor_FK: 190,
   GN_dogovor_date: 120,
   GN_dogovor_signer_FK: 180,
+  GN_dogovor_personal_account: 150,
   GN_dogovor_note: 220,
   actions: 110,
 };
@@ -823,6 +825,14 @@ function DataTable({
                       </option>
                     ))}
                   </select>
+                ) : section.entity === 'dogovors' && col === 'GN_dogovor_personal_account' ? (
+                  <textarea
+                    className="guide-dogovors-edit-field"
+                    rows={3}
+                    value={String(newRow[col] ?? '')}
+                    onChange={(event) => updateNewRow(col, event.target.value)}
+                    aria-label="Лицевые счета, по одному на строку"
+                  />
                 ) : (
                   <input
                     type={dateColumns.includes(col) ? 'date' : 'text'}
@@ -936,6 +946,14 @@ function DataTable({
                           </option>
                         ))}
                       </select>
+                    ) : isEditing && section.entity === 'dogovors' && col === 'GN_dogovor_personal_account' ? (
+                      <textarea
+                        className="guide-dogovors-edit-field"
+                        rows={3}
+                        value={String(draft[col] ?? '')}
+                        onChange={(event) => updateDraft(col, event.target.value)}
+                        aria-label="Лицевые счета, по одному на строку"
+                      />
                     ) : isEditing && col !== section.idColumn && !readonlyColumns.includes(col) ? (
                       <input
                         className={isDogovors ? 'guide-dogovors-edit-field' : undefined}
@@ -944,7 +962,9 @@ function DataTable({
                         onChange={(event) => updateDraft(col, event.target.value)}
                       />
                     ) : (
-                      renderCellValue(col, row)
+                      col === 'GN_dogovor_personal_account'
+                        ? String(row[col] ?? '').split(/\r?\n/).filter(Boolean).join(', ')
+                        : renderCellValue(col, row)
                     )}
                   </td>
                 ))}

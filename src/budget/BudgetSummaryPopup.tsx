@@ -1,20 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatHttpError } from '../utils/httpUtils';
-import BudgetSummaryByDepartment from './BudgetSummaryByDepartment';
-import BudgetSummaryByPaoItem from './BudgetSummaryByPaoItem';
-import BudgetSummaryByBudgetItemDepartment from './BudgetSummaryByBudgetItemDepartment';
-import BudgetSummaryByContractPaoItem from './BudgetSummaryByContractPaoItem';
 
-// Попап-страница для отображения одной из сводных таблиц бюджета.
-// Загружает данные самостоятельно и рендерит нужный вид без ленивой загрузки.
+// Попап со сводом БДР по двум выбранным полям.
 
 type Row = Record<string, unknown>;
-
-export type BudgetSummaryView = 'dept' | 'pao' | 'matrix' | 'contractPao';
-
-interface Props {
-  view: BudgetSummaryView;
-}
 
 function parseNumericValue(value: unknown): number {
   if (typeof value === 'number') return value;
@@ -26,18 +15,66 @@ function parseNumericValue(value: unknown): number {
   return 0;
 }
 
-const VIEW_TITLES: Record<BudgetSummaryView, string> = {
-  dept: 'Свод по лимитам по подразделениям',
-  pao: 'Свод по лимитам по статьям бюджета УС',
-  matrix: 'Свод лимитов: подразделения × статьи бюджета',
-  contractPao: 'Свод: договоры и статьи бюджета',
+const SUMMARY_NUMBER_FORMATTER = new Intl.NumberFormat('ru-RU');
+const BDR_SUMMARY_COLUMNS = [
+  'Статья бюджета УС',
+  'Подразделение',
+  'Объект',
+  'Договор',
+  'Контрагент',
+  'Статья бюджета',
+  'БДР25корр',
+  'БДР26',
+  'БДР26корр',
+  'БДР27',
+] as const;
+type BdrSummaryColumn = typeof BDR_SUMMARY_COLUMNS[number];
+type SummarySortColumn = 'first' | 'second';
+type SummarySortDirection = 'asc' | 'desc';
+
+const BDR_SUMMARY_VALUE_COLUMNS = [
+  { value: 'Лимит', label: 'Лимит' },
+  { value: 'БДР25корр', label: 'БДР25корр' },
+  { value: 'БДР26', label: 'БДР26' },
+  { value: 'БДР26корр', label: 'БДР26корр' },
+  { value: 'БДР27', label: 'БДР27' },
+] as const;
+type BdrSummaryValueColumn = typeof BDR_SUMMARY_VALUE_COLUMNS[number]['value'];
+
+const BDR_SUMMARY_COLUMN_LABELS: Record<BdrSummaryColumn, string> = {
+  'Статья бюджета УС': 'Статья бюджета УС',
+  Подразделение: 'Подразделение',
+  Объект: 'Объект',
+  Договор: 'Договор',
+  Контрагент: 'Контрагент',
+  'Статья бюджета': 'Статья бюджета ГН',
+  БДР25корр: 'БДР25корр',
+  БДР26: 'БДР26',
+  БДР26корр: 'БДР26корр',
+  БДР27: 'БДР27',
 };
 
-export default function BudgetSummaryPopup({ view }: Props) {
+function isBdrSummaryColumn(value: string): value is BdrSummaryColumn {
+  return BDR_SUMMARY_COLUMNS.some((column) => column === value);
+}
+
+function isBdrSummaryValueColumn(value: string): value is BdrSummaryValueColumn {
+  return BDR_SUMMARY_VALUE_COLUMNS.some((column) => column.value === value);
+}
+
+export default function BudgetSummaryPopup() {
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [swapContractPao, setSwapContractPao] = useState(false);
+  const [summaryFirstColumn, setSummaryFirstColumn] = useState<BdrSummaryColumn>('Подразделение');
+  const [summarySecondColumn, setSummarySecondColumn] = useState<BdrSummaryColumn>('Статья бюджета УС');
+  const [swapSummaryColumns, setSwapSummaryColumns] = useState(false);
+  const [isThreeDimensional, setIsThreeDimensional] = useState(false);
+  const [summaryValueColumn, setSummaryValueColumn] = useState<BdrSummaryValueColumn>('БДР26корр');
+  const [summarySort, setSummarySort] = useState<{ column: SummarySortColumn; direction: SummarySortDirection }>({
+    column: 'first',
+    direction: 'asc',
+  });
 
   useEffect(() => {
     fetch('/api/gn/bdr')
@@ -50,144 +87,203 @@ export default function BudgetSummaryPopup({ view }: Props) {
       .finally(() => setLoading(false));
   }, []);
 
-  const summaryByDepartment = useMemo(() => {
-    const totals = new Map<string, { total: number; byPaoItem: Map<string, number> }>();
+  const summaryBySelectedColumns = useMemo(() => {
+    const combinations = new Map<string, { firstValue: string; secondValue: string }>();
     data.forEach((row) => {
-      const department = String(row['Подразделение'] ?? '').trim() || 'Без подразделения';
-      const paoItem = String(row['Статья бюджета УС'] ?? '').trim() || 'Без статьи бюджета УС';
-      const limit = parseNumericValue(row['Лимит']);
-      const current = totals.get(department) ?? { total: 0, byPaoItem: new Map<string, number>() };
-      current.total += limit;
-      current.byPaoItem.set(paoItem, (current.byPaoItem.get(paoItem) ?? 0) + limit);
-      totals.set(department, current);
+      const firstValue = String(row[summaryFirstColumn] ?? '').trim() || '—';
+      const secondValue = String(row[summarySecondColumn] ?? '').trim() || '—';
+      const key = JSON.stringify([firstValue, secondValue]);
+      combinations.set(key, { firstValue, secondValue });
     });
-    return [...totals.entries()]
-      .map(([department, value]) => ({
-        department,
-        totalLimit: value.total,
-        paoItems: [...value.byPaoItem.entries()]
-          .map(([paoItem, totalLimit]) => ({ paoItem, totalLimit }))
-          .sort((a, b) => a.paoItem.localeCompare(b.paoItem, 'ru')),
-      }))
-      .sort((a, b) => a.department.localeCompare(b.department, 'ru'));
-  }, [data]);
+    const primaryColumn = summarySort.column === 'first'
+      ? (swapSummaryColumns ? 'secondValue' : 'firstValue')
+      : (swapSummaryColumns ? 'firstValue' : 'secondValue');
+    const secondaryColumn = primaryColumn === 'firstValue' ? 'secondValue' : 'firstValue';
+    const directionMultiplier = summarySort.direction === 'asc' ? 1 : -1;
+    return [...combinations.values()].sort((a, b) => (
+      directionMultiplier * a[primaryColumn].localeCompare(b[primaryColumn], 'ru', { numeric: true, sensitivity: 'base' })
+      || a[secondaryColumn].localeCompare(b[secondaryColumn], 'ru', { numeric: true, sensitivity: 'base' })
+    ));
+  }, [data, summaryFirstColumn, summarySecondColumn, summarySort, swapSummaryColumns]);
 
-  const summaryByPaoItem = useMemo(() => {
-    const totals = new Map<string, number>();
+  const summaryPivot = useMemo(() => {
+    const rowField = swapSummaryColumns ? summarySecondColumn : summaryFirstColumn;
+    const headerField = swapSummaryColumns ? summaryFirstColumn : summarySecondColumn;
+    const valuesByRow = new Map<string, Map<string, number>>();
+    const rowValues = new Set<string>();
+    const headerValues = new Set<string>();
+
     data.forEach((row) => {
-      const paoItem = String(row['Статья бюджета УС'] ?? '').trim() || 'Без статьи бюджета УС';
-      const limit = parseNumericValue(row['Лимит']);
-      totals.set(paoItem, (totals.get(paoItem) ?? 0) + limit);
+      const rowValue = String(row[rowField] ?? '').trim() || '—';
+      const headerValue = String(row[headerField] ?? '').trim() || '—';
+      const numericValue = parseNumericValue(row[summaryValueColumn]);
+      rowValues.add(rowValue);
+      headerValues.add(headerValue);
+      const currentRow = valuesByRow.get(rowValue) ?? new Map<string, number>();
+      currentRow.set(headerValue, (currentRow.get(headerValue) ?? 0) + numericValue);
+      valuesByRow.set(rowValue, currentRow);
     });
-    return [...totals.entries()]
-      .map(([paoItem, totalLimit]) => ({ paoItem, totalLimit }))
-      .sort((a, b) => a.paoItem.localeCompare(b.paoItem, 'ru'));
-  }, [data]);
 
-  const summaryByBudgetItemDepartment = useMemo(() => {
-    const departmentsSet = new Set<string>();
-    const byBudgetItem = new Map<string, Map<string, number>>();
-    data.forEach((row) => {
-      const budgetItem = String(row['Статья бюджета'] ?? '').trim() || 'Без статьи бюджета';
-      const department = String(row['Подразделение'] ?? '').trim() || 'Без подразделения';
-      const limit = parseNumericValue(row['Лимит']);
-      departmentsSet.add(department);
-      const budgetItemRow = byBudgetItem.get(budgetItem) ?? new Map<string, number>();
-      budgetItemRow.set(department, (budgetItemRow.get(department) ?? 0) + limit);
-      byBudgetItem.set(budgetItem, budgetItemRow);
+    const rows = [...rowValues].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true, sensitivity: 'base' }));
+    const headers = [...headerValues].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true, sensitivity: 'base' }));
+    const totalsByHeader = new Map(headers.map((header) => [header, 0]));
+    const rowTotals = new Map<string, number>();
+    rows.forEach((rowValue) => {
+      let rowTotal = 0;
+      headers.forEach((header) => {
+        const value = valuesByRow.get(rowValue)?.get(header) ?? 0;
+        rowTotal += value;
+        totalsByHeader.set(header, (totalsByHeader.get(header) ?? 0) + value);
+      });
+      rowTotals.set(rowValue, rowTotal);
     });
-    const departments = [...departmentsSet].sort((a, b) => a.localeCompare(b, 'ru'));
-    const budgetItems = [...byBudgetItem.keys()].sort((a, b) => a.localeCompare(b, 'ru'));
-    const rows = budgetItems.map((budgetItem) => {
-      const source = byBudgetItem.get(budgetItem) ?? new Map<string, number>();
-      const byDepartment: Record<string, number> = {};
-      departments.forEach((dep) => { byDepartment[dep] = source.get(dep) ?? 0; });
-      const total = departments.reduce((sum, dep) => sum + byDepartment[dep], 0);
-      return { budgetItem, byDepartment, total };
-    });
-    const totalsByDepartment: Record<string, number> = {};
-    departments.forEach((dep) => {
-      totalsByDepartment[dep] = rows.reduce((sum, row) => sum + (row.byDepartment[dep] ?? 0), 0);
-    });
-    const total = rows.reduce((sum, row) => sum + row.total, 0);
-    return { departments, rows, totalsByDepartment, total };
-  }, [data]);
+    const total = [...rowTotals.values()].reduce((sum, value) => sum + value, 0);
 
-  const summaryByContractPaoItem = useMemo(() => {
-    const groupKeyName = swapContractPao ? 'Статья бюджета' : 'Договор';
-    const itemKeyName = swapContractPao ? 'Договор' : 'Статья бюджета';
-    const groupFallback = swapContractPao ? 'Без статьи бюджета' : 'Без договора';
-    const itemFallback = swapContractPao ? 'Без договора' : 'Без статьи бюджета';
+    return { rowField, headerField, rows, headers, valuesByRow, rowTotals, totalsByHeader, total };
+  }, [data, summaryFirstColumn, summarySecondColumn, summaryValueColumn, swapSummaryColumns]);
 
-    const byGroup = new Map<string, Set<string>>();
-    data.forEach((row) => {
-      const groupValue = String(row[groupKeyName] ?? '').trim() || groupFallback;
-      const itemValue = String(row[itemKeyName] ?? '').trim() || itemFallback;
-      const items = byGroup.get(groupValue) ?? new Set<string>();
-      items.add(itemValue);
-      byGroup.set(groupValue, items);
-    });
-    const groups = [...byGroup.keys()]
-      .sort((a, b) => a.localeCompare(b, 'ru'))
-      .map((label) => ({
-        label,
-        items: [...(byGroup.get(label) ?? new Set<string>())].sort((a, b) => a.localeCompare(b, 'ru')),
-      }));
-    return { groupHeader: groupKeyName, itemsHeader: itemKeyName, groups };
-  }, [data, swapContractPao]);
+  function toggleSummarySort(column: SummarySortColumn): void {
+    setSummarySort((current) => ({
+      column,
+      direction: current.column === column && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  }
 
   return (
     <section className="budget">
-      <h2 style={{ padding: '12px 16px', marginBottom: '8px' }}>{VIEW_TITLES[view]}</h2>
+      <h2 style={{ padding: '12px 16px', marginBottom: '8px' }}>Своды по лимитам</h2>
       {loading && <p className="hint">Загрузка данных...</p>}
       {error && <p className="hint hint--error">Ошибка: {error}</p>}
 
-      {!loading && !error && view === 'dept' && (
-        <div className="guide-table-wrap budget-summary-wrap budget-summary-wrap--matrix">
-          <BudgetSummaryByDepartment
-            summaryByDepartment={summaryByDepartment}
-            summaryTotalLimit={summaryByDepartment.reduce((s, i) => s + i.totalLimit, 0)}
-          />
+      {!loading && !error && (
+        <div className="guide-table-wrap budget-summary-wrap">
+          <div style={{ display: 'grid', gap: '8px', justifyItems: 'start', padding: '0 16px 12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <input
+                type="checkbox"
+                checked={isThreeDimensional}
+                onChange={(event) => setIsThreeDimensional(event.target.checked)}
+              />
+              2D/3D
+            </label>
+            <label style={{ display: 'grid', gap: '4px' }}>
+              {isThreeDimensional ? 'Столбец слева' : 'Первый столбец'}
+              <select
+                value={summaryFirstColumn}
+                onChange={(event) => {
+                  if (isBdrSummaryColumn(event.target.value)) setSummaryFirstColumn(event.target.value);
+                }}
+              >
+                {BDR_SUMMARY_COLUMNS.map((column) => (
+                  <option key={column} value={column}>{BDR_SUMMARY_COLUMN_LABELS[column]}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: '4px' }}>
+              {isThreeDimensional ? 'Строка заголовок' : 'Второй столбец'}
+              <select
+                value={summarySecondColumn}
+                onChange={(event) => {
+                  if (isBdrSummaryColumn(event.target.value)) setSummarySecondColumn(event.target.value);
+                }}
+              >
+                {BDR_SUMMARY_COLUMNS.map((column) => (
+                  <option key={column} value={column}>{BDR_SUMMARY_COLUMN_LABELS[column]}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <input
+                type="checkbox"
+                checked={swapSummaryColumns}
+                onChange={(event) => setSwapSummaryColumns(event.target.checked)}
+              />
+              Поменять местами столбцы
+            </label>
+            {isThreeDimensional && (
+              <label style={{ display: 'grid', gap: '4px' }}>
+                Значение (числовое поле)
+                <select
+                  value={summaryValueColumn}
+                  onChange={(event) => {
+                    if (isBdrSummaryValueColumn(event.target.value)) setSummaryValueColumn(event.target.value);
+                  }}
+                >
+                  {BDR_SUMMARY_VALUE_COLUMNS.map((column) => (
+                    <option key={column.value} value={column.value}>{column.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          {!isThreeDimensional ? (
+            <table className="guide-table table-compact budget-summary-table">
+            <thead>
+              <tr>
+                <th>
+                  <button type="button" className="dashboard-object-summary__sort-button" onClick={() => toggleSummarySort('first')}>
+                    {BDR_SUMMARY_COLUMN_LABELS[swapSummaryColumns ? summarySecondColumn : summaryFirstColumn]}
+                    {summarySort.column === 'first' ? (summarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                  </button>
+                </th>
+                <th>
+                  <button type="button" className="dashboard-object-summary__sort-button" onClick={() => toggleSummarySort('second')}>
+                    {BDR_SUMMARY_COLUMN_LABELS[swapSummaryColumns ? summaryFirstColumn : summarySecondColumn]}
+                    {summarySort.column === 'second' ? (summarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                  </button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {summaryBySelectedColumns.map((item) => (
+                <tr key={JSON.stringify([item.firstValue, item.secondValue])} className="budget-summary-department-row">
+                  <td>{swapSummaryColumns ? item.secondValue : item.firstValue}</td>
+                  <td>{swapSummaryColumns ? item.firstValue : item.secondValue}</td>
+                </tr>
+              ))}
+            </tbody>
+            </table>
+          ) : (
+            <div className="guide-table-wrap">
+              <table className="guide-table table-compact budget-summary-pivot-table">
+                <thead>
+                  <tr>
+                    <th>{BDR_SUMMARY_COLUMN_LABELS[summaryPivot.rowField]}</th>
+                    {summaryPivot.headers.map((header) => <th key={header}>{header}</th>)}
+                    <th>Итого</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summaryPivot.rows.map((rowValue) => (
+                    <tr key={rowValue}>
+                      <td>{rowValue}</td>
+                      {summaryPivot.headers.map((header) => (
+                        <td key={`${rowValue}-${header}`} className="number-cell">
+                          {SUMMARY_NUMBER_FORMATTER.format(summaryPivot.valuesByRow.get(rowValue)?.get(header) ?? 0)}
+                        </td>
+                      ))}
+                      <td className="number-cell">{SUMMARY_NUMBER_FORMATTER.format(summaryPivot.rowTotals.get(rowValue) ?? 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="budget-summary-total-row">
+                    <td>Итого</td>
+                    {summaryPivot.headers.map((header) => (
+                      <td key={header} className="number-cell">
+                        {SUMMARY_NUMBER_FORMATTER.format(summaryPivot.totalsByHeader.get(header) ?? 0)}
+                      </td>
+                    ))}
+                    <td className="number-cell">{SUMMARY_NUMBER_FORMATTER.format(summaryPivot.total)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              <p className="hint">Значение в ячейках — сумма поля «{summaryValueColumn}».</p>
+            </div>
+          )}
         </div>
       )}
 
-      {!loading && !error && view === 'pao' && (
-        <div className="guide-table-wrap budget-summary-wrap">
-          <BudgetSummaryByPaoItem
-            summaryByPaoItem={summaryByPaoItem}
-            summaryPaoTotalLimit={summaryByPaoItem.reduce((s, i) => s + i.totalLimit, 0)}
-          />
-        </div>
-      )}
-
-      {!loading && !error && view === 'matrix' && (
-        <div className="guide-table-wrap budget-summary-wrap">
-          <BudgetSummaryByBudgetItemDepartment
-            departments={summaryByBudgetItemDepartment.departments}
-            rows={summaryByBudgetItemDepartment.rows}
-            totalsByDepartment={summaryByBudgetItemDepartment.totalsByDepartment}
-            total={summaryByBudgetItemDepartment.total}
-          />
-        </div>
-      )}
-
-      {!loading && !error && view === 'contractPao' && (
-        <div className="guide-table-wrap budget-summary-wrap">
-          <label className="budget-summary-swap-toggle" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0 16px 12px' }}>
-            <input
-              type="checkbox"
-              checked={swapContractPao}
-              onChange={(event) => setSwapContractPao(event.target.checked)}
-            />
-            Поменять местами
-          </label>
-          <BudgetSummaryByContractPaoItem
-            groupHeader={summaryByContractPaoItem.groupHeader}
-            itemsHeader={summaryByContractPaoItem.itemsHeader}
-            groups={summaryByContractPaoItem.groups}
-          />
-        </div>
-      )}
     </section>
   );
 }

@@ -6,7 +6,7 @@ import type { ContractAdditionalAgreement } from '../types/types';
 // Загружает все строки BDR и фильтрует их по названию договора.
 type Row = Record<string, unknown>;
 type LookupOption = { value: string; label: string }
-type DogovorMetadata = { date: string; signer: string }
+type DogovorMetadata = { dogovorId: number | null; date: string; signer: string; personalAccount: string }
 const CONTRACT_CONTROL_UPDATED_KEY = 'contracts-control-updated'
 const BDR_CURRENCY_FORMATTER = new Intl.NumberFormat('ru-RU', {
   style: 'currency',
@@ -54,7 +54,11 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
   const [contractLoading, setContractLoading] = useState(true);
   const [contractError, setContractError] = useState<string | null>(null);
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([]);
-  const [dogovorMetadata, setDogovorMetadata] = useState<DogovorMetadata>({ date: '', signer: '' });
+  const [dogovorMetadata, setDogovorMetadata] = useState<DogovorMetadata>({ dogovorId: null, date: '', signer: '', personalAccount: '' });
+  const [personalAccountDraft, setPersonalAccountDraft] = useState('')
+  const [isEditingPersonalAccount, setIsEditingPersonalAccount] = useState(false)
+  const [personalAccountSaving, setPersonalAccountSaving] = useState(false)
+  const [personalAccountError, setPersonalAccountError] = useState<string | null>(null)
   const [contractDraft, setContractDraft] = useState<ContractInfo | null>(null);
   const [isEditingContract, setIsEditingContract] = useState(false);
   const [contractSaveLoading, setContractSaveLoading] = useState(false);
@@ -110,7 +114,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
       setAgreementsError(null);
       setContractLoading(true);
       setContractError(null);
-      setDogovorMetadata({ date: '', signer: '' });
+      setDogovorMetadata({ dogovorId: null, date: '', signer: '', personalAccount: '' });
 
       try {
         const [contractsResponse, contractorsResponse, dogovorsResponse, departmentsResponse, agreementsResponse] = await Promise.all([
@@ -145,9 +149,12 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
         const dogovor = dogovors.find((row) => Number(row.GN_dgv_id) === contract.GN_contract_dogovor_FK);
         const signer = departments.find((row) => Number(row.GN_Dep_id) === Number(dogovor?.GN_dogovor_signer_FK));
         setDogovorMetadata({
+          dogovorId: Number(dogovor?.GN_dgv_id) || null,
           date: String(dogovor?.GN_dogovor_date ?? ''),
           signer: String(signer?.GN_department ?? ''),
+          personalAccount: String(dogovor?.GN_dogovor_personal_account ?? ''),
         });
+        setPersonalAccountDraft(String(dogovor?.GN_dogovor_personal_account ?? ''));
         const contractAgreements = allAgreements.filter(a => a.GN_contract_id_FK === contract.GN_contract_id);
         setAgreements(contractAgreements);
       } catch (err) {
@@ -181,10 +188,35 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
     if (value instanceof Date) {
       return value.toISOString().slice(0, 10)
     }
-
     const normalizedValue = String(value ?? '')
     if (normalizedValue === '') return ''
     return normalizedValue.length >= 10 ? normalizedValue.slice(0, 10) : normalizedValue
+  }
+
+  async function savePersonalAccount(): Promise<void> {
+    if (!dogovorMetadata.dogovorId) {
+      setPersonalAccountError('Не удалось определить договор для сохранения лицевого счета.')
+      return
+    }
+    setPersonalAccountSaving(true)
+    setPersonalAccountError(null)
+    try {
+      const response = await fetch(`/api/gn/dogovors/${dogovorMetadata.dogovorId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ GN_dogovor_personal_account: personalAccountDraft }),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string }
+        throw new Error(payload.error || formatHttpError(response.status))
+      }
+      setDogovorMetadata((previous) => ({ ...previous, personalAccount: personalAccountDraft }))
+      setIsEditingPersonalAccount(false)
+    } catch (saveError) {
+      setPersonalAccountError(saveError instanceof Error ? saveError.message : 'Не удалось сохранить лицевой счет')
+    } finally {
+      setPersonalAccountSaving(false)
+    }
   }
 
   function normalizeDateValueWithFallback(value: unknown): string {
@@ -539,6 +571,43 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
               <div className="contract-details-meta-row">
                 <strong>Подписант:</strong> {dogovorMetadata.signer}
               </div>
+              <div className="contract-details-meta-row">
+                <strong>Лицевой счет:</strong>
+                {isEditingPersonalAccount ? (
+                  <>
+                    <textarea
+                      value={personalAccountDraft}
+                      onChange={(event) => setPersonalAccountDraft(event.target.value)}
+                      aria-label="Лицевой счет договора"
+                      placeholder="Укажите каждый лицевой счет с новой строки"
+                      rows={3}
+                    />
+                    <button type="button" className="page-action-btn page-action-btn--success" onClick={() => void savePersonalAccount()} disabled={personalAccountSaving}>
+                      {personalAccountSaving ? 'Сохранение...' : 'Сохранить'}
+                    </button>
+                    <button
+                      type="button"
+                      className="page-action-btn page-action-btn--secondary"
+                      onClick={() => {
+                        setPersonalAccountDraft(dogovorMetadata.personalAccount)
+                        setIsEditingPersonalAccount(false)
+                        setPersonalAccountError(null)
+                      }}
+                      disabled={personalAccountSaving}
+                    >
+                      Отмена
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span>{dogovorMetadata.personalAccount.split(/\r?\n/).filter(Boolean).join(', ')}</span>
+                    <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => setIsEditingPersonalAccount(true)}>
+                      Изменить
+                    </button>
+                  </>
+                )}
+              </div>
+              {personalAccountError && <p className="hint hint--error" role="alert">{personalAccountError}</p>}
             </>
           )}
         </div>

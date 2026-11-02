@@ -68,7 +68,7 @@ body {
 }
 
 .budget {
-  width: 100vw;
+  width: 100%;
   max-width: 100%;
   margin: 0;
   padding: 24px 16px;
@@ -115,13 +115,6 @@ p {
 
 
 
-.budget {
-  width: 100%;
-  margin: 0;
-  padding: 24px 16px;
-  overflow-x: auto;
-}
-
 .budget-popup-title {
   margin: 12px 16px 0;
   font-size: 1.4rem;
@@ -151,6 +144,11 @@ p {
   justify-content: center;
   justify-self: center;
   align-items: center;
+}
+
+.app-nav-personal {
+  grid-column: 1;
+  justify-self: start;
 }
 
 .app-nav-guide {
@@ -606,64 +604,13 @@ p {
   flex: 0 0 auto;
 }
 
-.budget-summary-row {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-}
-
-
-
-.budget-summary-toggle {
-  margin: 0 0 6px;
-  font-size: 1.05rem;
-  line-height: 1;
-  font-weight: 600;
-  color: #0c4a6e;
-  background: transparent;
-  border: 0;
-  padding: 10px 14px;
-  letter-spacing: 0.2px;
-  cursor: pointer;
-  text-align: left;
-}
-
-.budget-summary-toggle:hover {
-  color: #075985;
-}
-
-.budget-summary-toggle:focus-visible {
-  outline: 2px solid rgba(12, 74, 110, 0.35);
-  outline-offset: 2px;
-}
-
 .guide-table.budget-summary-table {
   width: auto;
   min-width: 420px;
 }
 
-.budget-summary-wrap--matrix .guide-table.budget-summary-table {
-  min-width: 340px;
-}
-
-.budget-summary-matrix-table {
-  font-size: 0.78rem;
-}
-
-.budget-summary-matrix-table th,
-.budget-summary-matrix-table td {
-  padding: 6px 8px;
-}
-
 .budget-summary-department-row td {
   font-weight: 600;
-}
-
-.budget-summary-detail-row td {
-  font-size: 0.72rem;
-  opacity: 0.9;
 }
 
 .budget-summary-total-row td {
@@ -820,11 +767,6 @@ p {
   overflow-x: auto;
 }
 
-.guide-table.cellular-main-table {
-  width: max-content;
-  min-width: 0;
-}
-
 .budget-main-table-wrap {
   width: 100%;
   max-width: 100%;
@@ -855,7 +797,10 @@ p {
   white-space: nowrap;
 }
 
-.budget-main-table thead th {
+.budget-main-table thead th,
+.gazprom-telecom-grid th,
+.import-substitution-table thead th,
+.equipment-accounting-table .import-substitution-resizable-header {
   position: sticky;
   top: 0;
   z-index: 2;
@@ -883,6 +828,7 @@ p {
 .budget-main-table thead .budget-main-column-row th {
   top: 26px;
   z-index: 3;
+  border-top: 0;
 }
 
 .budget-main-table thead .budget-main-group-title {
@@ -906,10 +852,6 @@ p {
 .budget-main-table thead .budget-main-column-row .budget-pair-start,
 .budget-main-table thead .budget-main-column-row .budget-pair-end {
   border-bottom: 2px solid #64748b;
-}
-
-.budget-main-table thead .budget-main-column-row th {
-  border-top: 0;
 }
 
 .budget-main-table .table-sort-button {
@@ -1009,7 +951,9 @@ p {
   font-size: 0.62rem;
 }
 
-.budget-column-resizer {
+.budget-column-resizer,
+.guide-column-resizer,
+.dashboard-object-summary__resizer {
   position: absolute;
   top: 0;
   right: -3px;
@@ -1020,7 +964,9 @@ p {
   touch-action: none;
 }
 
-.budget-column-resizer:hover {
+.budget-column-resizer:hover,
+.guide-column-resizer:hover,
+.dashboard-object-summary__resizer:hover {
   background: rgba(59, 130, 246, 0.3);
 }
 
@@ -1093,12 +1039,18 @@ p {
 .table-sort-button {
   border: none;
   background: transparent;
-  color: inherit;
   font: inherit;
-  font-weight: inherit;
+  color: var(--text-h);
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
   padding: 0;
   cursor: pointer;
-  white-space: nowrap;
+  transition: color 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .table-sort-button:hover {
@@ -1196,22 +1148,8 @@ p {
   padding-right: 12px;
 }
 
-.guide-column-resizer {
-  position: absolute;
-  top: 0;
-  right: -3px;
-  bottom: 0;
-  z-index: 2;
-  width: 8px;
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.guide-column-resizer:hover {
-  background: rgba(59, 130, 246, 0.3);
-}
-
-.guide-reference-table--dogovors .guide-dogovors-edit-field {
+.guide-reference-table--dogovors .guide-dogovors-edit-field,
+.equipment-accounting-table .invest-program-inline-input {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -1429,13 +1367,6 @@ p {
   overflow-wrap: anywhere;
 }
 
-.gazprom-telecom-grid th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--bg);
-}
-
 table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-button:not(.limit-cell-button):not(.contract-cell-button) {
   display: block;
   width: 100%;
@@ -1471,7 +1402,8 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   margin-top: 4px;
 }
 
-.gazprom-telecom-grid th [role="separator"] {
+.gazprom-telecom-grid th [role="separator"],
+.import-substitution-column-resizer {
   position: absolute;
   top: 0;
   right: -4px;
@@ -1517,6 +1449,7 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 }
 
 .excel-action-toolbar__icon {
+  position: relative;
   display: inline-flex;
   width: 32px;
   height: 32px;
@@ -1557,6 +1490,23 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .excel-action-toolbar__icon:focus-visible {
   outline: 2px solid #217346;
   outline-offset: 2px;
+}
+
+.excel-action-toolbar__history-count {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  place-items: center;
+  border-radius: 999px;
+  background: #0c4a6e;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .guide-new-row-fields {
@@ -2006,6 +1956,7 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
 .notes-page-list {
   grid-column: 3;
+  overflow-y: auto;
 }
 
 .notes-resizer--pages {
@@ -2014,6 +1965,7 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
 .notes-editor-panel {
   grid-column: 5;
+  overflow: auto;
 }
 
 .notes-resizer {
@@ -2081,14 +2033,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .notes-page-list {
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 95%, var(--text) 5%);
-}
-
-.notes-page-list {
-  overflow-y: auto;
-}
-
-.notes-editor-panel {
-  overflow: auto;
 }
 
 .notes-panel-heading {
@@ -2427,6 +2371,8 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
   .notes-editor-panel {
     grid-column: 1 / -1;
+    min-height: 520px;
+    border-top: 1px solid var(--border);
   }
 
   .notes-workspace--notebooks-collapsed {
@@ -2439,11 +2385,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
   .notes-workspace--notebooks-collapsed.notes-workspace--pages-collapsed {
     grid-template-columns: 54px 54px;
-  }
-
-  .notes-editor-panel {
-    min-height: 520px;
-    border-top: 1px solid var(--border);
   }
 
   .notes-page-list {
@@ -2564,21 +2505,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   line-height: 1.2;
 }
 
-.dashboard-object-summary__resizer {
-  position: absolute;
-  top: 0;
-  right: -3px;
-  bottom: 0;
-  z-index: 2;
-  width: 8px;
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.dashboard-object-summary__resizer:hover {
-  background: rgba(59, 130, 246, 0.3);
-}
-
 .dashboard-object-summary__sort-button {
   display: block;
   width: 100%;
@@ -2642,11 +2568,24 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 }
 
 .dashboard-card {
+  position: relative;
   background: #fff;
   border: 1px solid #e5e4e7;
   border-radius: 10px;
   padding: 10px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.dashboard-traffic-light {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  width: 36px;
+  height: 15px;
+}
+
+.dashboard-card > h3:first-of-type {
+  padding-right: 22px;
 }
 
 .dashboard-card--link {
@@ -2655,12 +2594,29 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 
+.dashboard-equipment-import-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.dashboard-card--equipment-dashboard {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .dashboard-card--budget-summary {
   text-align: left;
 }
 
 .dashboard-card--budget-summary > h3:first-child {
   text-align: center;
+}
+
+.dashboard-card--budget-summary > .dashboard-traffic-light + h3 {
+  text-align: left;
 }
 
 .dashboard-card--link:hover,
@@ -2821,7 +2777,9 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   overflow-x: auto;
 }
 
-.invest-program-table-wrap--narrow .guide-table {
+.guide-table.cellular-main-table,
+.invest-program-table-wrap--narrow .guide-table,
+.equipment-accounting-table {
   width: max-content;
   min-width: 0;
 }
@@ -2834,17 +2792,232 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   overflow-y: auto;
 }
 
-.import-substitution-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--bg);
-}
-
 .equipment-accounting-page {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+}
+
+.personal-account-statuses {
+  max-width: 760px;
+  margin-top: 24px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: left;
+}
+
+.personal-account-statuses h2 {
+  margin-bottom: 8px;
+}
+
+.personal-account-status-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.personal-account-status-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(240px, 1.2fr) minmax(90px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.personal-account-status-row select {
+  min-height: 36px;
+  padding: 6px 8px;
+}
+
+.personal-account-session {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 760px;
+}
+
+.personal-account-login {
+  max-width: 420px;
+}
+
+.equipment-dashboard-page {
+  width: 100%;
+  min-width: 0;
+  padding: 20px;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.equipment-dashboard-description {
+  margin: 0 0 16px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.equipment-dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 0 0 20px;
+}
+
+.equipment-dashboard-metric {
+  display: flex;
+  min-height: 84px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.equipment-dashboard-metric span {
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.equipment-dashboard-metric strong {
+  color: var(--text-h);
+  font-size: 1.5rem;
+  font-weight: 650;
+  line-height: 1.15;
+}
+
+.equipment-dashboard-metric--accent {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.equipment-dashboard-table-wrap {
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.equipment-dashboard-table {
+  width: 100%;
+  min-width: 760px;
+}
+
+.equipment-dashboard-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+
+.equipment-dashboard-percent {
+  display: flex;
+  min-width: 160px;
+  align-items: center;
+  gap: 10px;
+}
+
+.equipment-dashboard-percent__track {
+  width: 100px;
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.equipment-dashboard-percent__track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #217346;
+}
+
+.equipment-dashboard-percent strong {
+  min-width: 48px;
+  color: var(--text-h);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 600px) {
+  .personal-account-status-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+.equipment-history-dialog-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.equipment-history-dialog {
+  width: min(680px, 100%);
+  max-height: min(80vh, 720px);
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+
+.equipment-history-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.equipment-history-dialog__header h3 {
+  margin: 0;
+  color: var(--text-h);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.equipment-history-dialog__close {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.equipment-change-history__list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.equipment-change-history__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.equipment-change-history__details {
+  display: grid;
+  gap: 2px;
+}
+
+.equipment-change-history__list time {
+  color: var(--text);
+  font-size: 0.85em;
 }
 
 .equipment-accounting-top-scroll {
@@ -2876,11 +3049,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   box-sizing: border-box;
 }
 
-.equipment-accounting-table {
-  width: max-content;
-  min-width: 0;
-}
-
 .equipment-accounting-table th,
 .equipment-accounting-table td {
   padding: 4px 6px;
@@ -2897,24 +3065,120 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   padding-bottom: 50px;
 }
 
+.primary-page .page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.primary-table-wrap {
+  max-height: min(72vh, 820px);
+  overflow: auto;
+}
+
+.primary-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+.primary-table th,
+.primary-table td {
+  padding: 5px 7px;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.primary-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg, #fff);
+}
+
+.primary-table thead > tr:first-child > th {
+  height: 24px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.primary-table thead > tr:first-child .guide-sort-button {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.primary-table .guide-search-row th {
+  top: 35px;
+}
+
+.primary-table .guide-search-row input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.primary-table__resizable-header {
+  position: relative;
+  padding-right: 10px !important;
+}
+
+.primary-table__resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.primary-table__resizer:hover {
+  background: rgba(60, 120, 180, 0.3);
+}
+
+.primary-table td > input,
+.primary-table td > select,
+.primary-table td > textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 90px;
+  max-width: 100%;
+  padding: 4px;
+}
+
+.primary-table td > textarea {
+  min-height: 54px;
+  resize: vertical;
+}
+
+.primary-table td > .primary-table__multi-select {
+  min-height: 72px;
+}
+
+.primary-table__editing-row > td {
+  background: var(--surface, #f8fafb);
+}
+
+.primary-table__actions {
+  display: flex;
+  gap: 4px;
+}
+
 .equipment-accounting-table .contract-filter-input {
   display: block;
   margin-top: 3px;
   width: 100%;
-}
-
-.equipment-accounting-table .invest-program-inline-input {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.equipment-accounting-table .import-substitution-resizable-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--bg);
 }
 
 .equipment-accounting-column-title {
@@ -3042,6 +3306,20 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .invest-program-actions-cell {
   white-space: nowrap;
   text-align: center;
+}
+
+.equipment-accounting-row-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.equipment-accounting-row-updated {
+  color: var(--text);
+  font-size: 0.62rem;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .purchase-state-row-actions {
@@ -3636,10 +3914,12 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
 .invest-popup-field input {
   width: 100%;
-  padding: 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  padding: 5px 7px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
   box-sizing: border-box;
+  font: inherit;
+  min-width: 0;
 }
 
 .invest-popup-field input:focus {
@@ -3648,40 +3928,60 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 }
 
 .table-wrapper {
+  width: 100%;
   overflow-x: auto;
   overflow-y: auto;
   max-height: 600px;
   border-radius: 8px;
   border: 1px solid var(--border);
+  padding: 20px;
 }
 
 .data-table {
   width: 100%;
   border-collapse: collapse;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.9rem;
+  min-width: 600px;
   background: var(--bg);
-  font-size: 0.875rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.data-table th,
+.data-table td {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  text-align: left;
 }
 
 .data-table th {
-  background: #f3f4f6;
-  color: var(--text);
-  font-weight: 700;
-  padding: 12px;
-  text-align: left;
-  border: 1px solid var(--border);
+  background: var(--accent-bg);
+  color: var(--text-h);
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
   position: sticky;
   top: 0;
   z-index: 10;
 }
 
 .data-table td {
-  padding: 12px;
-  border: 1px solid var(--border);
   color: var(--text);
 }
 
 .data-table tr:hover {
   background: #f9fafb;
+}
+
+.data-table tbody tr:hover {
+  background: rgba(170, 59, 255, 0.05);
+}
+
+.data-table tr.editing-row {
+  background: rgba(170, 59, 255, 0.1);
 }
 
 .data-table input[type="text"],
@@ -3696,20 +3996,23 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 }
 
 .data-table input:focus,
-.data-table select:focus {
+.data-table select:focus,
+.form-input:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-bg);
 }
 
 .action-btn {
+  cursor: pointer;
+  border: none;
   padding: 6px 12px;
   border-radius: 4px;
-  cursor: pointer;
   font: inherit;
-  font-size: 0.75rem;
-  border: none;
-  transition: all 0.2s ease;
+  font-size: 0.82rem;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s;
+  margin-right: 4px;
 }
 
 .action-btn:hover:not(:disabled) {
@@ -3718,17 +4021,18 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 }
 
 .action-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
 .action-btn--edit {
   background: var(--accent);
   color: white;
+  border: none;
 }
 
 .action-btn--edit:hover:not(:disabled) {
-  background: #1e40af;
+  background: #8b2dcc;
 }
 
 .action-btn--delete {
@@ -3804,12 +4108,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   }
 }
 
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
 .form-field label {
   font-weight: 600;
   color: var(--text-h);
@@ -3824,12 +4122,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   font-size: 0.9rem;
   background: var(--bg);
   box-sizing: border-box;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-bg);
 }
 
 .new-row-form-actions {
@@ -3899,35 +4191,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .import-substitution-new-row-form .action-btn {
   padding: 5px 9px;
   font-size: 0.78rem;
-}
-
-.contracts-agreements-title {
-  margin-bottom: 10px;
-  font-weight: 700;
-  color: #111827;
-}
-
-.contracts-agreements-table th,
-.contracts-agreements-table td {
-  padding: 8px 10px;
-  border: 1px solid #e5e7eb;
-}
-
-.contracts-agreements-table th {
-  background: #f3f4f6;
-  font-weight: 700;
-}
-
-.contracts-agreements-table td {
-  background: #fff;
-}
-
-.invest-popup-field input {
-  border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  padding: 5px 7px;
-  font: inherit;
-  min-width: 0;
 }
 
 .invest-popup-actions {
@@ -4003,7 +4266,8 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   cursor: pointer;
 }
 
-.budget-popup-link-btn:hover {
+.budget-popup-link-btn:hover,
+.page-text-link:hover {
   background: transparent;
   color: #075985;
   text-decoration: underline;
@@ -4023,12 +4287,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   text-decoration: none;
   box-shadow: none;
   cursor: pointer;
-}
-
-.page-text-link:hover {
-  background: transparent;
-  color: #075985;
-  text-decoration: underline;
 }
 
 .import-substitution-summary-section h2 {
@@ -4075,85 +4333,16 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   position: relative;
 }
 
-.import-substitution-column-resizer {
-  position: absolute;
-  top: 0;
-  right: -4px;
-  bottom: 0;
-  z-index: 1;
-  width: 8px;
-  cursor: col-resize;
-  touch-action: none;
-}
-
 .import-substitution-column-resizer:hover,
 .import-substitution-column-resizer:active {
   background: rgba(59, 130, 246, 0.3);
 }
 
 /* ===== Таблица импортозамещения ===== */
-.table-wrapper {
-  width: 100%;
-  overflow-x: auto;
-  padding: 20px;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 0.9rem;
-  min-width: 600px;
-  background: var(--bg);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.data-table th,
-.data-table td {
-  padding: 12px 16px;
-  border: 1px solid var(--border);
-  text-align: left;
-}
-
-.data-table th {
-  background: var(--accent-bg);
-  font-weight: 600;
-  color: var(--text-h);
-  font-size: 0.9rem;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.data-table tbody tr:hover {
-  background: rgba(170, 59, 255, 0.05);
-}
-
-.data-table tr.editing-row {
-  background: rgba(170, 59, 255, 0.1);
-}
-
 .table-header-content {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.table-sort-button {
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  color: var(--text-h);
-  font-weight: 600;
-  font-size: 0.9rem;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  padding: 0;
-  transition: color 0.15s;
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .table-sort-button:hover,
@@ -4206,131 +4395,6 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .actions-cell {
   text-align: center;
   white-space: nowrap;
-}
-
-.action-btn {
-  cursor: pointer;
-  border: none;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 0.82rem;
-  font-weight: 500;
-  transition: background 0.15s, border-color 0.15s;
-  margin-right: 4px;
-}
-
-.action-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.action-btn--edit {
-  background: var(--accent);
-  color: white;
-  border: none;
-}
-
-.action-btn--edit:hover:not(:disabled) {
-  background: #8b2dcc;
-}
-
-.action-btn--save {
-  background: #10b981;
-  color: white;
-  border: none;
-}
-
-.action-btn--save:hover:not(:disabled) {
-  background: #059669;
-}
-
-.action-btn--cancel {
-  background: transparent;
-  color: var(--accent);
-  border: 1.5px solid var(--accent);
-}
-
-.action-btn--cancel:hover:not(:disabled) {
-  background: var(--accent-bg);
-}
-
-.error-message {
-  color: #dc2626;
-  font-size: 0.75rem;
-  margin-top: 4px;
-  display: block;
-}
-
-/* ===== Форма добавления новой записи ===== */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-  text-align: center;
-}
-
-.table-actions {
-  margin-bottom: 20px;
-  display: flex;
-  gap: 10px;
-}
-
-.new-row-form {
-  background: var(--accent-bg);
-  border: 2px solid var(--accent-border);
-  border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 20px;
-}
-
-.new-row-form-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-@media (max-width: 768px) {
-  .new-row-form-fields {
-    grid-template-columns: 1fr;
-  }
-}
-
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-field label {
-  font-weight: 600;
-  color: var(--text-h);
-  font-size: 0.9rem;
-}
-
-.form-input {
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font: inherit;
-  font-size: 0.9rem;
-  background: var(--bg);
-  box-sizing: border-box;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-bg);
-}
-
-.new-row-form-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
 }
 
 /* Сводная таблица импортозамещения: кнопки разворачивания и уровни */

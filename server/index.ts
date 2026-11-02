@@ -1,7 +1,7 @@
 ﻿import 'dotenv/config';
 import express from 'express';
 import { setupRoutes } from './routes.js';
-import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureDogovorColumns, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable, ensureOgruzReferenceColumns, ensureEquipmentModelReferenceColumns, ensureObjectDepartmentColumns, ensureReferenceTables, ensureReferenceSequences, ensureExcelImportDeletionColumns, ensureGazpromTelecomTable, ensureNotesTables } from './db.js';
+import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureDogovorColumns, ensurePrimaryDocumentsTables, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable, ensureOgruzReferenceColumns, ensureEquipmentModelReferenceColumns, ensureObjectDepartmentColumns, ensureReferenceTables, ensureReferenceSequences, ensureExcelImportDeletionColumns, ensureGazpromTelecomTable, ensureNotesTables, ensureDashboardTileStatusesTable, ensureDashboardSettingsTable } from './db.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -63,6 +63,7 @@ async function start(): Promise<void> {
     await ensureCellularTables(client);
     await ensureReferenceTables(client);
     await ensureDogovorColumns(client);
+    await ensurePrimaryDocumentsTables(client);
     await ensureGazpromTelecomTable(client);
     await ensureImportSubstitutionTable(client);
     await ensureOgruzReferenceColumns(client);
@@ -71,6 +72,8 @@ async function start(): Promise<void> {
     await ensureReferenceSequences(client);
     await ensureExcelImportDeletionColumns(client);
     await ensureNotesTables(client);
+    await ensureDashboardTileStatusesTable(client);
+    await ensureDashboardSettingsTable(client);
     await bootstrapCellularFromXlsx(client, PROJECT_ROOT);
   } finally {
     await client.end();

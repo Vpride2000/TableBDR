@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS "GN_dogovor" (
   "GN_contarctor_FK" INTEGER NOT NULL,
   "GN_dogovor_date" DATE,
   "GN_dogovor_signer_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+  "GN_dogovor_personal_account" TEXT NOT NULL DEFAULT '',
   "GN_dogovor_note" TEXT,
   PRIMARY KEY("GN_dgv_id")
 );
@@ -53,6 +54,30 @@ CREATE TABLE IF NOT EXISTS "GN_departament_object" (
 );
 
 COMMENT ON TABLE "GN_departament_object" IS 'Объекты Общества';
+
+CREATE TABLE IF NOT EXISTS "GN_primary_documents" (
+  "GN_primary_document_id" SERIAL PRIMARY KEY,
+  "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+  "GN_dogovor_FK" INTEGER REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
+  "personal_account" TEXT NOT NULL DEFAULT '',
+  "amount_with_vat" NUMERIC(15, 2) NOT NULL DEFAULT 0,
+  "details" TEXT NOT NULL DEFAULT '',
+  "edo_arrival_date" DATE,
+  "sed_launch_date" DATE,
+  "note" TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS "GN_primary_document_objects" (
+  "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+  "object_id" INTEGER NOT NULL REFERENCES "GN_departament_object"("GN_do_id") ON DELETE RESTRICT,
+  PRIMARY KEY ("primary_document_id", "object_id")
+);
+
+CREATE TABLE IF NOT EXISTS "GN_primary_document_budget_items" (
+  "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+  "budget_item_id" INTEGER NOT NULL REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE RESTRICT,
+  PRIMARY KEY ("primary_document_id", "budget_item_id")
+);
 
 CREATE TABLE IF NOT EXISTS "GN_invest_okdp_tko_is_prit" (
   "GN_invest_okdp_tko_is_prit_id" SERIAL NOT NULL UNIQUE,

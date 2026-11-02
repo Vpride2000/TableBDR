@@ -29,3 +29,4 @@
 - Keep communication concise and focused.
 - Follow development best practices.
 - Do not check or run project builds.
+- Before adding CSS, look for and reuse existing styles; do not create new styles when an existing style can be reused.

@@ -6,6 +6,16 @@ import ExcelActionToolbar from '../components/ExcelActionToolbar'
 type Row = Record<string, unknown>;
 type SortDirection = 'asc' | 'desc';
 type SelectOption = { value: string; label: string };
+type EquipmentChange =
+  | { type: 'update'; rowId: number; before: Row }
+  | { type: 'create' | 'delete'; rowId: number };
+
+interface EquipmentHistoryEntry {
+  id: number;
+  label: string;
+  createdAt: number;
+  changes: EquipmentChange[];
+}
 
 type EquipmentColumn =
   | 'Подразделение'
@@ -130,7 +140,59 @@ function formatYear(year: string): string {
   return year || 'без года';
 }
 
+function formatLastModified(value: unknown): string {
+  if (!value) return 'Дата неизвестна';
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return 'Дата неизвестна';
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 const EQUIPMENT_ACCOUNTING_STORAGE_KEY = 'equipment-accounting-view-state';
+const EQUIPMENT_HISTORY_STORAGE_KEY = 'equipment-accounting-change-history';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readEquipmentHistory(): { entries: EquipmentHistoryEntry[]; error: string | null } {
+  try {
+    const savedHistory = window.localStorage.getItem(EQUIPMENT_HISTORY_STORAGE_KEY);
+    if (!savedHistory) return { entries: [], error: null };
+
+    const parsed: unknown = JSON.parse(savedHistory);
+    if (!Array.isArray(parsed)) {
+      return { entries: [], error: 'Сохраненный журнал поврежден и не может быть загружен.' };
+    }
+
+    const entries = parsed.filter((entry): entry is EquipmentHistoryEntry => (
+      isRecord(entry)
+      && Number.isSafeInteger(entry.id)
+      && typeof entry.label === 'string'
+      && typeof entry.createdAt === 'number'
+      && Array.isArray(entry.changes)
+      && entry.changes.every((change) => (
+        isRecord(change)
+        && Number.isSafeInteger(change.rowId)
+        && (change.type === 'create'
+          || change.type === 'delete'
+          || (change.type === 'update' && isRecord(change.before)))
+      ))
+    )).slice(0, 10);
+
+    if (entries.length !== parsed.length) {
+      return { entries, error: 'Некоторые записи журнала повреждены и были пропущены.' };
+    }
+    return { entries, error: null };
+  } catch {
+    return { entries: [], error: 'Не удалось прочитать сохраненный журнал изменений.' };
+  }
+}
 
 type EquipmentAccountingViewState = {
   filters?: Record<string, string>;
@@ -155,13 +217,20 @@ function readEquipmentAccountingViewState(): EquipmentAccountingViewState {
 
 export default function EquipmentAccountingTable({ requiredType }: { requiredType?: string } = {}): React.ReactElement {
   const savedViewState = readEquipmentAccountingViewState();
+  const [persistedHistory] = useState(readEquipmentHistory);
   const [data, setData] = useState<Row[]>([]);
+  const [history, setHistory] = useState<EquipmentHistoryEntry[]>(persistedHistory.entries);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyStorageError, setHistoryStorageError] = useState<string | null>(persistedHistory.error);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
   const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef(persistedHistory.entries);
+  const historyIdRef = useRef(persistedHistory.entries.reduce((maxId, entry) => Math.max(maxId, entry.id), 0));
   const [filters, setFilters] = useState<Record<string, string>>(savedViewState.filters ?? {});
   const [multiFilters, setMultiFilters] = useState<Record<string, string[]>>(savedViewState.multiFilters ?? {});
   const [hideDepartment, setHideDepartment] = useState(requiredType ? false : savedViewState.hideDepartment ?? false);
@@ -198,6 +267,62 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       : data,
     [data, requiredType],
   );
+
+  function recordHistory(label: string, changes: EquipmentChange[]): void {
+    if (changes.length === 0) return;
+    saveHistory([{
+      id: ++historyIdRef.current,
+      label,
+      createdAt: Date.now(),
+      changes,
+    }, ...historyRef.current].slice(0, 10));
+  }
+
+  function saveHistory(nextHistory: EquipmentHistoryEntry[]): void {
+    historyRef.current = nextHistory;
+    setHistory(nextHistory);
+    try {
+      window.localStorage.setItem(EQUIPMENT_HISTORY_STORAGE_KEY, JSON.stringify(nextHistory));
+      setHistoryStorageError(null);
+    } catch {
+      setHistoryStorageError('Не удалось сохранить журнал изменений в этом браузере. После обновления страницы новые действия могут быть потеряны.');
+    }
+  }
+
+  async function undoChange(entryId: number): Promise<void> {
+    const entry = history.find((item) => item.id === entryId);
+    if (!entry || saving) return;
+    setSaving(true);
+    setHistoryError(null);
+    try {
+      for (const change of [...entry.changes].reverse()) {
+        const response = change.type === 'update'
+          ? await fetch(`/api/import-substitution/${change.rowId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(change.before),
+          })
+          : change.type === 'create'
+            ? await fetch(`/api/import-substitution/${change.rowId}`, { method: 'DELETE' })
+            : await fetch(`/api/import-substitution/${change.rowId}/restore`, { method: 'POST' });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || formatHttpError(response.status));
+        }
+      }
+
+      saveHistory(historyRef.current.filter((item) => item.id !== entry.id));
+      const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
+      if (!refreshed.ok) {
+        throw new Error(`Изменение отменено, но не удалось обновить таблицу: ${formatHttpError(refreshed.status)}`);
+      }
+      setData((await refreshed.json()) as Row[]);
+    } catch (requestError) {
+      setHistoryError(requestError instanceof Error ? requestError.message : 'Не удалось отменить изменение');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (requiredType) return;
@@ -552,6 +677,11 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
   async function saveEdit(): Promise<void> {
     if (editingRowId == null) return;
     const editingSummaryRow = summaryRows.find((row) => row.sourceRowId === editingRowId);
+    const previousRow = data.find((row) => Number(row['GN_import_substitution_id']) === editingRowId);
+    if (!previousRow) {
+      setSaveError('Не удалось найти исходную строку для сохранения истории изменений');
+      return;
+    }
     const decommissionedQuantity = Math.round(parseQuantity(draft['Выведен из эксплуатации']));
     if (editingSummaryRow && decommissionedQuantity > editingSummaryRow.quantityTotal) {
       setSaveError(`Выведено из эксплуатации не может быть больше итого: ${formatQuantity(editingSummaryRow.quantityTotal)}`);
@@ -569,6 +699,11 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
+      recordHistory(`Изменение строки №${editingRowId}`, [{
+        type: 'update',
+        rowId: editingRowId,
+        before: { ...previousRow },
+      }]);
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
       setData((await refreshed.json()) as Row[]);
@@ -602,6 +737,10 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       return;
     }
     const sourceRow = data.find((row) => Number(row['GN_import_substitution_id']) === editingRowId);
+    if (!sourceRow) {
+      setCopyError('Не удалось найти исходную строку для сохранения истории изменений.');
+      return;
+    }
     const sourceQuantity = parseQuantity(sourceRow?.['Количество']);
     if (parseQuantity(draft['Количество']) !== sourceQuantity) {
       setCopyError('Сначала сохраните изменение количества отдельно, затем создайте копию.');
@@ -615,6 +754,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
 
     setSaving(true);
     setCopyError(null);
+    let sourceUpdated = false;
     try {
       const editResponse = await fetch(`/api/import-substitution/${editingRowId}`, {
         method: 'PUT',
@@ -625,6 +765,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         const payload = (await editResponse.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error || `HTTP ${editResponse.status}`);
       }
+      sourceUpdated = true;
 
       const response = await fetch(`/api/import-substitution/${editingRowId}/copy`, {
         method: 'POST',
@@ -639,6 +780,16 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
+      const copyResult = await response.json() as { copiedRowId?: number | string };
+      const copiedRowId = Number(copyResult.copiedRowId);
+      if (!Number.isSafeInteger(copiedRowId) || copiedRowId <= 0) {
+        throw new Error('Сервер не вернул идентификатор созданной копии');
+      }
+      recordHistory(`Копирование строки №${editingRowId}`, [
+        { type: 'create', rowId: copiedRowId },
+        { type: 'update', rowId: editingRowId, before: { ...sourceRow } },
+      ]);
+      sourceUpdated = false;
 
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
@@ -646,6 +797,13 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       setCopyDialogOpen(false);
       cancelEdit();
     } catch (requestError) {
+      if (sourceUpdated) {
+        recordHistory(`Изменение строки №${editingRowId} перед неудачным копированием`, [{
+          type: 'update',
+          rowId: editingRowId,
+          before: { ...sourceRow },
+        }]);
+      }
       setCopyError(requestError instanceof Error ? requestError.message : 'Не удалось скопировать строку');
     } finally {
       setSaving(false);
@@ -665,6 +823,12 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
+      const createdRow = await response.json() as Row;
+      const createdRowId = Number(createdRow['GN_import_substitution_id']);
+      if (!Number.isSafeInteger(createdRowId) || createdRowId <= 0) {
+        throw new Error('Сервер не вернул идентификатор созданной строки');
+      }
+      recordHistory(`Добавление строки №${createdRowId}`, [{ type: 'create', rowId: createdRowId }]);
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
       setData((await refreshed.json()) as Row[]);
@@ -678,6 +842,11 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
 
   async function deleteRow(rowId: number): Promise<void> {
     if (!window.confirm('Удалить строку?')) return;
+    const deletedRow = data.find((row) => Number(row['GN_import_substitution_id']) === rowId);
+    if (!deletedRow) {
+      setSaveError('Не удалось найти строку для сохранения истории изменений');
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -686,6 +855,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
+      recordHistory(`Удаление строки №${rowId}`, [{ type: 'delete', rowId }]);
       setData((previous) => previous.filter((row) => Number(row['GN_import_substitution_id']) !== rowId));
       cancelEdit();
     } catch (requestError) {
@@ -731,6 +901,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
     setExcelImporting(true);
     setExcelImportError(null);
     setExcelImportMessage(null);
+    const changes: EquipmentChange[] = [];
     try {
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheetName = workbook.SheetNames[0];
@@ -775,15 +946,39 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
           const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
           throw new Error(`Строка ${index + 2}: ${errorPayload.error || formatHttpError(response.status)}`);
         }
+        if (shouldUpdate) {
+          const previousRow = data.find((item) => Number(item['GN_import_substitution_id']) === rowId);
+          if (!previousRow) throw new Error(`Строка ${index + 2}: не удалось сохранить исходное состояние`);
+          changes.push({ type: 'update', rowId, before: { ...previousRow } });
+        } else {
+          const createdRow = await response.json() as Row;
+          const createdRowId = Number(createdRow['GN_import_substitution_id']);
+          if (!Number.isSafeInteger(createdRowId) || createdRowId <= 0) {
+            throw new Error(`Строка ${index + 2}: сервер не вернул идентификатор созданной строки`);
+          }
+          changes.push({ type: 'create', rowId: createdRowId });
+        }
         savedRows += 1;
       }
 
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
       setData((await refreshed.json()) as Row[]);
+      recordHistory(`Импорт Excel: ${savedRows} строк`, changes);
+      changes.length = 0;
       setExcelImportMessage(`Загрузка завершена. Загружено строк: ${savedRows}.`);
     } catch (requestError) {
       setExcelImportError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить Excel-файл');
+      if (changes.length > 0) {
+        recordHistory(`Частичный импорт Excel: ${changes.length} строк`, changes);
+        try {
+          const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
+          if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
+          setData((await refreshed.json()) as Row[]);
+        } catch (refreshError) {
+          setExcelImportError((previous) => `${previous ?? 'Импорт завершился частично'}. Не удалось обновить таблицу: ${refreshError instanceof Error ? refreshError.message : 'ошибка загрузки'}`);
+        }
+      }
     } finally {
       setExcelImporting(false);
     }
@@ -812,9 +1007,68 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
           addRowDisabled={creatingRow}
           onExport={exportToExcel}
           onUpload={(file) => void importFromExcel(file)}
+          onHistory={() => {
+            setHistoryError(null);
+            setHistoryOpen(true);
+          }}
+          historyCount={history.length}
           uploading={excelImporting}
           showUpload={requiredType !== 'МСЭ'}
         />
+        {historyOpen && (
+          <div
+            className="equipment-history-dialog-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !saving) setHistoryOpen(false);
+            }}
+          >
+            <section
+              className="equipment-history-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="equipment-history-title"
+            >
+              <header className="equipment-history-dialog__header">
+                <h3 id="equipment-history-title">Журнал изменений — последние 10 действий</h3>
+                <button
+                  type="button"
+                  className="equipment-history-dialog__close"
+                  onClick={() => setHistoryOpen(false)}
+                  disabled={saving}
+                  aria-label="Закрыть журнал изменений"
+                >
+                  ×
+                </button>
+              </header>
+              {historyError && <p className="hint hint--error" role="alert">Ошибка отмены: {historyError}</p>}
+              {historyStorageError && <p className="hint hint--error" role="alert">{historyStorageError}</p>}
+              {history.length === 0 ? (
+                <p className="hint">Изменений пока нет.</p>
+              ) : (
+                <ol className="equipment-change-history__list" aria-live="polite">
+                  {history.map((entry) => (
+                    <li key={entry.id}>
+                      <div className="equipment-change-history__details">
+                        <span>{entry.label}</span>
+                        <time dateTime={new Date(entry.createdAt).toISOString()}>
+                          {new Date(entry.createdAt).toLocaleString('ru-RU')}
+                        </time>
+                      </div>
+                      <button
+                        type="button"
+                        className="page-action-btn page-action-btn--secondary"
+                        onClick={() => void undoChange(entry.id)}
+                        disabled={saving || excelImporting}
+                      >
+                        {saving ? 'Отмена...' : 'Откатить'}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+          </div>
+        )}
         {excelImporting && <p className="hint" role="status">Загрузка...</p>}
         {excelImportMessage && <p className="hint">{excelImportMessage}</p>}
         {excelImportError && <p className="hint hint--error">Ошибка загрузки из Excel: {excelImportError}</p>}
@@ -954,6 +1208,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         >
           <table className="guide-table table-compact import-substitution-table equipment-accounting-table">
             <colgroup>
+              <col style={{ width: '52px' }} />
               {visibleColumns.map((column) => (
                 <col key={column} style={{ width: `${columnWidths[column] ?? 90}px` }} />
               ))}
@@ -961,6 +1216,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
             </colgroup>
             <thead>
               <tr>
+                <th className="equipment-accounting-row-number-header">№ (ID с БД)</th>
                 {visibleColumns.map((column) => (
                   <th
                     key={column}
@@ -1022,8 +1278,9 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
               </tr>
             </thead>
             <tbody>
-              {filteredAndSortedData.map((row) => {
+              {filteredAndSortedData.map((row, rowIndex) => {
                 const isEditing = editingRowId === row.sourceRowId;
+                const sourceRow = data.find((item) => Number(item['GN_import_substitution_id']) === row.sourceRowId);
                 return (
                   <tr
                     key={row.key}
@@ -1033,6 +1290,9 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
                         : 'equipment-accounting-row--partial'
                       : undefined}
                   >
+                    <td className="equipment-accounting-row-number" title={`Номер строки в журнале действий: ${row.sourceRowId}`}>
+                      {rowIndex + 1} ({row.sourceRowId})
+                    </td>
                     {visibleColumns.map((column) => (
                       <td
                         key={column}
@@ -1102,9 +1362,18 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
                         </>
                       ) : (
                         disableQuantitySumming && (
-                          <button type="button" className="invest-program-row-action-button" onClick={() => startEdit(row)}>
-                            ИЗМ
-                          </button>
+                          <div className="equipment-accounting-row-action">
+                            <button type="button" className="invest-program-row-action-button" onClick={() => startEdit(row)}>
+                              ИЗМ
+                            </button>
+                            <time
+                              className="equipment-accounting-row-updated"
+                              dateTime={sourceRow?.['updatedAt'] ? String(sourceRow['updatedAt']) : undefined}
+                              title="Дата последнего изменения строки"
+                            >
+                              {formatLastModified(sourceRow?.['updatedAt'])}
+                            </time>
+                          </div>
                         )
                       )}
                     </td>

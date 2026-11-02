@@ -6,6 +6,8 @@ type ExcelActionToolbarProps = {
   addRowDisabled?: boolean
   onExport: () => void
   onUpload?: (file: File) => void
+  onHistory?: () => void
+  historyCount?: number
   uploading?: boolean
   className?: string
   showUpload?: boolean
@@ -17,6 +19,8 @@ export default function ExcelActionToolbar({
   addRowDisabled = false,
   onExport,
   onUpload,
+  onHistory,
+  historyCount = 0,
   uploading = false,
   className = '',
   showUpload = true,
@@ -54,6 +58,22 @@ export default function ExcelActionToolbar({
             <path d="M4 5h24v22H4zM4 12h24M4 19h24M12 5v22M20 5v22" fill="none" stroke="#14532d" strokeLinejoin="round" strokeWidth="1.8" />
             <path d="M24 3v8m-4-4h8" fill="none" stroke="#14532d" strokeLinecap="round" strokeWidth="2.4" />
           </svg>
+        </button>
+      )}
+      {onHistory && (
+        <button
+          type="button"
+          className="excel-action-toolbar__icon excel-action-toolbar__history"
+          onClick={onHistory}
+          title={`Журнал изменений (${historyCount})`}
+          aria-label={`Открыть журнал изменений, записей: ${historyCount}`}
+        >
+          <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+            <path d="M8 4h16v24H8zM12 10h8m-8 5h8m-8 5h5" fill="none" stroke="#0c4a6e" strokeLinejoin="round" strokeLinecap="round" strokeWidth="2" />
+            <path d="M4 10v6h6" fill="none" stroke="#0c4a6e" strokeLinejoin="round" strokeLinecap="round" strokeWidth="2" />
+            <path d="M4.5 16a12 12 0 1 0 3-8" fill="none" stroke="#0c4a6e" strokeLinecap="round" strokeWidth="2" />
+          </svg>
+          {historyCount > 0 && <span className="excel-action-toolbar__history-count">{historyCount}</span>}
         </button>
       )}
       <button
