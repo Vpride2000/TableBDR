@@ -38,6 +38,8 @@ import {
   DEFAULT_DASHBOARD_BDR_FIELD,
   isDashboardBdrField,
 } from './utils/dashboardBdrField'
+import { addDashboardServiceCost, type DashboardServiceAccumulator } from './utils/dashboardServices'
+import { addDashboardEquipment, type DashboardEquipmentAccumulator } from './utils/dashboardEquipment'
 
 type Page = 'start' | 'budget' | 'guide' | 'contracts' | 'satellites' | 'satellites-control' | 'cellular' | 'import-substitution' | 'notes' | 'personal-account' | 'primary'
 
@@ -105,13 +107,27 @@ interface DashboardSummary {
 interface ObjectUsageSummaryRow {
   department: string
   objectName: string
-  communicationServices: Array<{ serviceItem: string; contractorsContracts: string[] }>
+  communicationServices: Array<{ serviceItem: string; contractorsContracts: string[]; cost: number }>
   communicationServiceCostTotal: number
-  equipmentTypes: Array<{ type: string; quantity: number }>
+  equipmentTypes: Array<{ type: string; quantity: number; cost: number }>
   equipmentCostTotal: number
 }
 
-type ObjectUsageSortKey = 'department' | 'objectName' | 'communicationServices' | 'communicationServiceCostTotal' | 'equipmentTypes' | 'equipmentCostTotal'
+type PrimarySedMonthSummary = {
+  key: 'october' | 'november' | 'december'
+  label: string
+  selected: number
+  acceptedIn1C: number
+  total: number
+}
+
+type ObjectUsageColumnKey = 'department' | 'objectName' | 'communicationServices' | 'equipmentTypes'
+type ObjectUsageSortKey = ObjectUsageColumnKey | 'communicationServiceCostTotal' | 'equipmentCostTotal'
+
+function parseDashboardNumber(value: unknown): number {
+  const parsed = Number(String(value ?? '').replace(/\s+/g, '').replace(',', '.'))
+  return Number.isFinite(parsed) ? parsed : 0
+}
 
 function DashboardTrafficLight({ status, label }: { status: DashboardTileStatus; label: string }): React.ReactElement {
   const colors: Record<DashboardTileStatus, string> = {
@@ -124,28 +140,15 @@ function DashboardTrafficLight({ status, label }: { status: DashboardTileStatus;
     yellow: 'частично обновлено',
     green: 'данные актуальны',
   }
-  const order: DashboardTileStatus[] = ['red', 'yellow', 'green']
-
   return (
     <svg
       className="dashboard-traffic-light"
-      viewBox="0 0 48 20"
+      viewBox="0 0 24 24"
       role="img"
       aria-label={`${label}: ${statusLabels[status]}`}
       title={`${label}: ${statusLabels[status]}`}
     >
-      <rect x="1" y="2" width="46" height="16" rx="7" fill="#b8c0c5" stroke="#78858c" strokeWidth="1" />
-      {order.map((light, index) => (
-        <circle
-          key={light}
-          cx={9 + index * 15}
-          cy="10"
-          r="4"
-          fill={light === status ? colors[light] : '#718087'}
-          stroke={light === status ? '#fff' : '#59666d'}
-          strokeWidth="1"
-        />
-      ))}
+      <circle cx="12" cy="12" r="9" fill={colors[status]} stroke="#fff" strokeWidth="2" />
     </svg>
   )
 }
@@ -154,27 +157,30 @@ function StartDashboard() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [tileStatuses, setTileStatuses] = useState<DashboardTileStatuses>(DEFAULT_DASHBOARD_TILE_STATUSES)
   const [tileStatusesError, setTileStatusesError] = useState<string | null>(null)
+  const [primarySedSummary, setPrimarySedSummary] = useState<PrimarySedMonthSummary[] | null>(null)
+  const [primarySedError, setPrimarySedError] = useState<string | null>(null)
   const [dashboardBdrField, setDashboardBdrField] = useState(DEFAULT_DASHBOARD_BDR_FIELD)
   const [objectUsageSummary, setObjectUsageSummary] = useState<ObjectUsageSummaryRow[]>([])
-  const [objectSummaryFilters, setObjectSummaryFilters] = useState<Record<ObjectUsageSortKey, string>>({
+  const [objectSummaryExpanded, setObjectSummaryExpanded] = useState(false)
+  const [objectSummaryLoaded, setObjectSummaryLoaded] = useState(false)
+  const [objectSummaryLoading, setObjectSummaryLoading] = useState(false)
+  const [objectSummaryError, setObjectSummaryError] = useState<string | null>(null)
+  const [objectSummaryAttempt, setObjectSummaryAttempt] = useState(0)
+  const [objectSummaryFilters, setObjectSummaryFilters] = useState<Record<ObjectUsageColumnKey, string>>({
     department: '',
     objectName: '',
     communicationServices: '',
-    communicationServiceCostTotal: '',
     equipmentTypes: '',
-    equipmentCostTotal: '',
   })
   const [objectSummarySort, setObjectSummarySort] = useState<{ key: ObjectUsageSortKey; direction: 'asc' | 'desc' }>({
     key: 'department',
     direction: 'asc',
   })
-  const [objectSummaryColumnWidths, setObjectSummaryColumnWidths] = useState<Record<ObjectUsageSortKey, number>>({
+  const [objectSummaryColumnWidths, setObjectSummaryColumnWidths] = useState<Record<ObjectUsageColumnKey, number>>({
     department: 120,
     objectName: 130,
     communicationServices: 250,
-    communicationServiceCostTotal: 130,
     equipmentTypes: 230,
-    equipmentCostTotal: 190,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -200,6 +206,43 @@ function StartDashboard() {
     }
 
     void loadTileStatuses()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    async function loadPrimarySedSummary(): Promise<void> {
+      try {
+        const response = await fetch('/api/primary', { cache: 'no-store' })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const rows = await response.json() as Array<Record<string, unknown>>
+        const months: PrimarySedMonthSummary[] = [
+          { key: 'october', label: 'Октябрь', selected: 0, acceptedIn1C: 0, total: rows.length },
+          { key: 'november', label: 'Ноябрь', selected: 0, acceptedIn1C: 0, total: rows.length },
+          { key: 'december', label: 'Декабрь', selected: 0, acceptedIn1C: 0, total: rows.length },
+        ]
+        rows.forEach((row) => {
+          const monthData = row.monthData
+          if (!monthData || typeof monthData !== 'object' || Array.isArray(monthData)) return
+          months.forEach((month) => {
+            const values = (monthData as Record<string, unknown>)[month.key]
+            if (!values || typeof values !== 'object' || Array.isArray(values)) return
+            const monthValues = values as Record<string, unknown>
+            if (monthValues.sedLaunched === true) month.selected += 1
+            if (monthValues.acceptedIn1C === true) month.acceptedIn1C += 1
+          })
+        })
+        if (active) setPrimarySedSummary(months)
+      } catch (requestError) {
+        if (active) setPrimarySedError(requestError instanceof Error
+          ? requestError.message
+          : 'Не удалось загрузить данные первичных документов')
+      }
+    }
+
+    void loadPrimarySedSummary()
     return () => {
       active = false
     }
@@ -246,11 +289,7 @@ function StartDashboard() {
           directionCount: number
         }
 
-        const parseNumber = (value: unknown): number => {
-          const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
-          const parsed = Number(normalized)
-          return Number.isFinite(parsed) ? parsed : 0
-        }
+        const parseNumber = parseDashboardNumber
 
         const serviceBudgetByType = new Map<string, number>()
         bdrRows.forEach((row) => {
@@ -333,77 +372,7 @@ function StartDashboard() {
           return acc
         }, {})
 
-        const objectUsage = new Map<string, {
-          department: string
-          objectName: string
-          communicationServices: Map<string, Set<string>>
-          communicationServiceCostTotal: number
-          equipmentTypes: Map<string, number>
-          equipmentCostTotal: number
-        }>()
-        const getObjectUsage = (department: string, objectName: string) => {
-          const key = `${department}\u0000${objectName}`
-          const existing = objectUsage.get(key)
-          if (existing) return existing
-          const next = {
-            department,
-            objectName,
-            communicationServices: new Map<string, Set<string>>(),
-            communicationServiceCostTotal: 0,
-            equipmentTypes: new Map<string, number>(),
-            equipmentCostTotal: 0,
-          }
-          objectUsage.set(key, next)
-          return next
-        }
-
-        bdrRows.forEach((row) => {
-          const communicationServiceCost = parseNumber(row[selectedBdrField])
-          if (communicationServiceCost === 0) return
-
-          const department = String(row['Подразделение'] ?? '').trim() || 'Не указано'
-          const objectName = String(row['Объект'] ?? '').trim() || 'Не указан'
-          const serviceItem = String(row['Статья бюджета УС'] ?? '').trim() || 'Статья не указана'
-          const contract = String(row['Договор'] ?? '').trim() || 'Договор не указан'
-          const contractor = String(row['Контрагент'] ?? '').trim() || 'Контрагент не указан'
-          const usage = getObjectUsage(department, objectName)
-          const contractorsContracts = usage.communicationServices.get(serviceItem) ?? new Set<string>()
-          contractorsContracts.add(`${contractor} — ${contract}`)
-          usage.communicationServices.set(serviceItem, contractorsContracts)
-          usage.communicationServiceCostTotal += communicationServiceCost
-        })
-
-        importSubstitutionRows.forEach((row) => {
-          const department = String(row['Подразделение'] ?? '').trim() || 'Не указано'
-          const rawObjects = Array.isArray(row['ОБЪЕКТ']) ? row['ОБЪЕКТ'] : [row['ОБЪЕКТ']]
-          const objectNames = rawObjects.map((value) => String(value ?? '').trim()).filter(Boolean)
-          const equipmentType = String(row['Тип'] ?? '').trim()
-          const quantity = parseNumber(row['Количество'])
-          objectNames.forEach((objectName) => {
-            const usage = getObjectUsage(department, objectName)
-            if (equipmentType) usage.equipmentTypes.set(equipmentType, (usage.equipmentTypes.get(equipmentType) ?? 0) + quantity)
-            usage.equipmentCostTotal += parseNumber(row['Платеж ТР без НДС'])
-          })
-        })
-
         if (!isMounted) return
-
-        setObjectUsageSummary([...objectUsage.values()]
-          .map((row) => ({
-            ...row,
-            communicationServices: [...row.communicationServices.entries()]
-              .map(([serviceItem, contractorsContracts]) => ({
-                serviceItem,
-                contractorsContracts: [...contractorsContracts].sort((left, right) => left.localeCompare(right, 'ru')),
-              }))
-              .sort((left, right) => left.serviceItem.localeCompare(right.serviceItem, 'ru')),
-            equipmentTypes: [...row.equipmentTypes.entries()]
-              .map(([type, quantity]) => ({ type, quantity }))
-              .sort((left, right) => left.type.localeCompare(right.type, 'ru')),
-          }))
-          .filter((row) => row.communicationServices.length > 0)
-          .sort((left, right) => left.department.localeCompare(right.department, 'ru')
-            || left.objectName.localeCompare(right.objectName, 'ru')))
 
         setSummary({
           serviceLines: bdrRows.length,
@@ -465,11 +434,112 @@ function StartDashboard() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!objectSummaryExpanded || objectSummaryLoaded) return
+    const controller = new AbortController()
+    async function loadObjectSummary(): Promise<void> {
+      setObjectSummaryLoading(true)
+      setObjectSummaryError(null)
+      try {
+        const [bdrResponse, equipmentResponse] = await Promise.all([
+          fetch('/api/gn/bdr', { cache: 'no-store', signal: controller.signal }),
+          fetch('/api/import-substitution', { cache: 'no-store', signal: controller.signal }),
+        ])
+        if (!bdrResponse.ok) throw new Error(`БДР HTTP ${bdrResponse.status}`)
+        if (!equipmentResponse.ok) throw new Error(`Оборудование HTTP ${equipmentResponse.status}`)
+        const [bdrRows, equipmentRows] = await Promise.all([
+          bdrResponse.json() as Promise<Array<Record<string, unknown>>>,
+          equipmentResponse.json() as Promise<Array<Record<string, unknown>>>,
+        ])
+        const parseNumber = parseDashboardNumber
+        const objectUsage = new Map<string, {
+          department: string
+          objectName: string
+          communicationServices: Map<string, DashboardServiceAccumulator>
+          communicationServiceCostTotal: number
+          equipmentTypes: Map<string, DashboardEquipmentAccumulator>
+          equipmentCostTotal: number
+        }>()
+        const getObjectUsage = (department: string, objectName: string) => {
+          const key = `${department}\u0000${objectName}`
+          const existing = objectUsage.get(key)
+          if (existing) return existing
+          const next = {
+            department,
+            objectName,
+            communicationServices: new Map<string, DashboardServiceAccumulator>(),
+            communicationServiceCostTotal: 0,
+            equipmentTypes: new Map<string, DashboardEquipmentAccumulator>(),
+            equipmentCostTotal: 0,
+          }
+          objectUsage.set(key, next)
+          return next
+        }
+        bdrRows.forEach((row) => {
+          const cost = parseNumber(row[dashboardBdrField])
+          if (cost === 0) return
+          const usage = getObjectUsage(
+            String(row['Подразделение'] ?? '').trim() || 'Не указано',
+            String(row['Объект'] ?? '').trim() || 'Не указан',
+          )
+          const service = String(row['Статья бюджета УС'] ?? '').trim() || 'Статья не указана'
+          const contract = String(row['Договор'] ?? '').trim() || 'Договор не указан'
+          const contractor = String(row['Контрагент'] ?? '').trim() || 'Контрагент не указан'
+          addDashboardServiceCost(usage.communicationServices, service, `${contractor} — ${contract}`, cost)
+          usage.communicationServiceCostTotal += cost
+        })
+        equipmentRows.forEach((row) => {
+          const department = String(row['Подразделение'] ?? '').trim() || 'Не указано'
+          const rawObjects = Array.isArray(row['ОБЪЕКТ']) ? row['ОБЪЕКТ'] : [row['ОБЪЕКТ']]
+          const objectNames = rawObjects.map((value) => String(value ?? '').trim()).filter(Boolean)
+          const equipmentType = String(row['Тип'] ?? '').trim() || 'Не указан'
+          const quantity = parseNumber(row['Количество'])
+          const cost = parseNumber(row['Платеж ТР без НДС'])
+          objectNames.forEach((objectName) => {
+            const usage = getObjectUsage(department, objectName)
+            addDashboardEquipment(usage.equipmentTypes, equipmentType, quantity, cost)
+            usage.equipmentCostTotal += cost
+          })
+        })
+        if (controller.signal.aborted) return
+        setObjectUsageSummary([...objectUsage.values()]
+          .map((row) => ({
+            ...row,
+            communicationServices: [...row.communicationServices.entries()]
+              .map(([serviceItem, { contractorsContracts, cost }]) => ({
+                serviceItem,
+                cost,
+                contractorsContracts: [...contractorsContracts].sort((left, right) => left.localeCompare(right, 'ru')),
+              }))
+              .sort((left, right) => left.serviceItem.localeCompare(right.serviceItem, 'ru')),
+            equipmentTypes: [...row.equipmentTypes.entries()]
+              .map(([type, { quantity, cost }]) => ({ type, quantity, cost }))
+              .sort((left, right) => left.type.localeCompare(right.type, 'ru')),
+          }))
+          .filter((row) => row.communicationServices.length > 0)
+          .sort((left, right) => left.department.localeCompare(right.department, 'ru')
+            || left.objectName.localeCompare(right.objectName, 'ru')))
+        setObjectSummaryLoaded(true)
+      } catch (err) {
+        if (!controller.signal.aborted) setObjectSummaryError(err instanceof Error ? err.message : 'Не удалось загрузить данные')
+      } finally {
+        if (!controller.signal.aborted) setObjectSummaryLoading(false)
+      }
+    }
+    void loadObjectSummary()
+    return () => controller.abort()
+  }, [objectSummaryExpanded, objectSummaryLoaded, objectSummaryAttempt, dashboardBdrField])
+
   const formatCount = (value: number): string => new Intl.NumberFormat('ru-RU').format(value)
   const formatMoney = (value: number): string => new Intl.NumberFormat('ru-RU', {
     style: 'currency',
     currency: 'RUB',
     maximumFractionDigits: 0,
+  }).format(value)
+  const formatServiceMoney = (value: number): string => new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 2,
   }).format(value)
   const formatPercent = (value: number): string => new Intl.NumberFormat('ru-RU', {
     maximumFractionDigits: 1,
@@ -508,13 +578,11 @@ function StartDashboard() {
     if (popup) popup.focus()
   }
 
-  const objectSummaryColumns: Array<{ key: ObjectUsageSortKey; label: string }> = [
+  const objectSummaryColumns: Array<{ key: ObjectUsageColumnKey; label: string }> = [
     { key: 'department', label: 'Подразделение' },
     { key: 'objectName', label: 'Объект' },
     { key: 'communicationServices', label: 'Услуги связи' },
-    { key: 'communicationServiceCostTotal', label: 'ЗАТРАТЫ В ГОД' },
     { key: 'equipmentTypes', label: 'ОБОРУДОВАНИЕ' },
-    { key: 'equipmentCostTotal', label: 'СТОИМОСТЬ ВСЕГО ОБОРУДОВАНИЯ' },
   ]
   const objectSummaryTableWidth = Object.values(objectSummaryColumnWidths).reduce((total, width) => total + width, 0)
 
@@ -523,15 +591,15 @@ function StartDashboard() {
     if (key === 'objectName') return row.objectName
     if (key === 'communicationServices') {
       return row.communicationServices
-        .map(({ serviceItem, contractorsContracts }) => `${serviceItem} ${contractorsContracts.join('; ')}`)
+        .map(({ serviceItem, contractorsContracts, cost }) => `${serviceItem} ${contractorsContracts.join('; ')} ${cost}`)
         .join(' ')
     }
     if (key === 'communicationServiceCostTotal') return row.communicationServiceCostTotal
-    if (key === 'equipmentTypes') return row.equipmentTypes.map(({ type, quantity }) => `${type} ${quantity}`).join(' ')
+    if (key === 'equipmentTypes') return row.equipmentTypes.map(({ type, quantity, cost }) => `${type} ${quantity} ${cost}`).join(' ')
     return row.equipmentCostTotal
   }
 
-  const filteredAndSortedObjectUsageSummary = objectUsageSummary
+  const filteredAndSortedObjectUsageSummary = (objectSummaryExpanded ? objectUsageSummary : [])
     .filter((row) => objectSummaryColumns.every(({ key }) => (
       String(getObjectSummarySortValue(row, key)).toLocaleLowerCase()
         .includes(objectSummaryFilters[key].trim().toLocaleLowerCase())
@@ -559,7 +627,7 @@ function StartDashboard() {
       : { key, direction: 'asc' })
   }
 
-  function startObjectSummaryColumnResize(event: ReactPointerEvent<HTMLSpanElement>, key: ObjectUsageSortKey): void {
+  function startObjectSummaryColumnResize(event: ReactPointerEvent<HTMLSpanElement>, key: ObjectUsageColumnKey): void {
     event.preventDefault()
     event.stopPropagation()
     const header = event.currentTarget.closest('th')
@@ -655,6 +723,33 @@ function StartDashboard() {
           {renderStatusItems(summary.contractStatusCounts)}
           <p className="dashboard-card-value dashboard-card-value--spaced">Всего доп. соглашений: <strong>{formatCount(summary.agreementCount)}</strong></p>
           {renderStatusItems(summary.agreementStatusCounts)}
+        </a>
+        <a className="dashboard-card dashboard-card--link" href="#primary">
+          <DashboardTrafficLight status={tileStatuses.primary} label="Первичные" />
+          <h3>Первичные</h3>
+          <p className="dashboard-card-value">Запущен в СЭД / принято на учет в 1С</p>
+          {primarySedError && (
+            <p className="hint hint--error" role="alert">
+              Не удалось загрузить данные первичных документов: {primarySedError}
+            </p>
+          )}
+          {primarySedSummary ? (
+            <ul className="dashboard-stat-list">
+              {primarySedSummary.map((month) => (
+                <li className="dashboard-stat-item" key={month.key}>
+                  <span>{month.label}</span>
+                  <strong>
+                    {formatPercent(month.total > 0 ? (month.selected / month.total) * 100 : 0)}
+                    {' '}({formatCount(month.selected)} / {formatCount(month.total)})
+                    {' · 1С: '}
+                    {formatPercent(month.total > 0 ? (month.acceptedIn1C / month.total) * 100 : 0)}
+                  </strong>
+                </li>
+              ))}
+            </ul>
+          ) : !primarySedError ? (
+            <p className="dashboard-card-value">Загрузка...</p>
+          ) : null}
         </a>
         <a className="dashboard-card dashboard-card--link" href="#cellular">
           <DashboardTrafficLight status={tileStatuses.cellular} label="Сотовая связь" />
@@ -798,7 +893,25 @@ function StartDashboard() {
         </div>
       </div>
       <section className="dashboard-object-summary">
-        <h2>Сводка по подразделениям и объектам</h2>
+        <h2>
+          <button type="button" className="invest-program-section-toggle page-text-link"
+            aria-expanded={objectSummaryExpanded} aria-controls="dashboard-object-summary-content"
+            onClick={() => setObjectSummaryExpanded((expanded) => !expanded)}>
+            <span aria-hidden="true">{objectSummaryExpanded ? '▾' : '▸'}</span>
+            Сводка по подразделениям и объектам
+          </button>
+        </h2>
+        <div id="dashboard-object-summary-content" hidden={!objectSummaryExpanded}>
+        {objectSummaryExpanded && objectSummaryLoading && <p className="hint">Загрузка данных...</p>}
+        {objectSummaryExpanded && objectSummaryError && (
+          <>
+            <p className="hint hint--error" role="alert">Ошибка: {objectSummaryError}</p>
+            <button type="button" className="page-text-link" onClick={() => setObjectSummaryAttempt((attempt) => attempt + 1)}>
+              Повторить загрузку
+            </button>
+          </>
+        )}
+        {objectSummaryExpanded && objectSummaryLoaded && (
         <div className="guide-table-wrap dashboard-object-summary__table-wrap">
           <table
             className="guide-table table-compact dashboard-object-summary__table"
@@ -822,8 +935,8 @@ function StartDashboard() {
                       className="dashboard-object-summary__sort-button"
                       onClick={() => toggleObjectSummarySort(key)}
                     >
-                      {key === 'communicationServiceCostTotal'
-                        ? `ЗАТРАТЫ В ГОД (${DASHBOARD_BDR_FIELDS.find((field) => field.value === dashboardBdrField)?.label ?? dashboardBdrField})`
+                      {key === 'communicationServices'
+                        ? `Услуги связи (${DASHBOARD_BDR_FIELDS.find((field) => field.value === dashboardBdrField)?.label ?? dashboardBdrField})`
                         : label}
                       {objectSummarySort.key === key ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
                     </button>
@@ -837,15 +950,27 @@ function StartDashboard() {
                         [key]: event.target.value,
                       }))}
                     />
-                    {key === 'communicationServiceCostTotal' && (
-                      <span className="dashboard-object-summary__header-total">
-                        {formatMoney(objectSummaryCostTotals.communicationServiceCostTotal)}
-                      </span>
+                    {key === 'communicationServices' && (
+                      <>
+                        <button type="button" className="dashboard-object-summary__sort-button"
+                          onClick={() => toggleObjectSummarySort('communicationServiceCostTotal')}>
+                          Затраты в год{objectSummarySort.key === 'communicationServiceCostTotal' ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </button>
+                        <span className="dashboard-object-summary__header-total">
+                          {formatServiceMoney(objectSummaryCostTotals.communicationServiceCostTotal)}
+                        </span>
+                      </>
                     )}
-                    {key === 'equipmentCostTotal' && (
-                      <span className="dashboard-object-summary__header-total">
-                        {formatMoney(objectSummaryCostTotals.equipmentCostTotal)}
-                      </span>
+                    {key === 'equipmentTypes' && (
+                      <>
+                        <button type="button" className="dashboard-object-summary__sort-button"
+                          onClick={() => toggleObjectSummarySort('equipmentCostTotal')}>
+                          Стоимость оборудования{objectSummarySort.key === 'equipmentCostTotal' ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </button>
+                        <span className="dashboard-object-summary__header-total">
+                          {formatServiceMoney(objectSummaryCostTotals.equipmentCostTotal)}
+                        </span>
+                      </>
                     )}
                     <span
                       className="dashboard-object-summary__resizer"
@@ -866,34 +991,43 @@ function StartDashboard() {
                   <td>
                     {row.communicationServices.length > 0 ? (
                       <ul className="dashboard-object-summary__list">
-                        {row.communicationServices.map(({ serviceItem, contractorsContracts }) => (
+                        {row.communicationServices.map(({ serviceItem, contractorsContracts, cost }) => (
                           <li key={serviceItem}>
-                            <strong>{serviceItem}</strong> ({contractorsContracts.join('; ')})
+                            <strong>{serviceItem}</strong> ({contractorsContracts.join('; ')}) — {formatServiceMoney(cost)}
                           </li>
                         ))}
                       </ul>
                     ) : '—'}
+                    <strong>Итого: {formatServiceMoney(row.communicationServiceCostTotal)}</strong>
                   </td>
-                  <td>{formatMoney(row.communicationServiceCostTotal)}</td>
                   <td>
                     {row.equipmentTypes.length > 0 ? (
                       <ul className="dashboard-object-summary__list">
-                        {row.equipmentTypes.map(({ type, quantity }) => (
-                          <li key={type}>{type} — {formatQuantity(quantity)} шт.</li>
+                        {row.equipmentTypes.map(({ type, quantity, cost }) => (
+                          <li key={type}>{type} — {formatQuantity(quantity)} шт. — {formatServiceMoney(cost)}</li>
                         ))}
                       </ul>
                     ) : '—'}
+                    <strong>Итого: {formatServiceMoney(row.equipmentCostTotal)}</strong>
                   </td>
-                  <td>{formatMoney(row.equipmentCostTotal)}</td>
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={2}><strong>Итого</strong></td>
+                <td><strong>{formatServiceMoney(objectSummaryCostTotals.communicationServiceCostTotal)}</strong></td>
+                <td><strong>{formatServiceMoney(objectSummaryCostTotals.equipmentCostTotal)}</strong></td>
+              </tr>
+            </tfoot>
           </table>
           {filteredAndSortedObjectUsageSummary.length === 0 && (
             <p className="hint">
               {objectUsageSummary.length === 0 ? 'Нет данных по объектам.' : 'По заданным фильтрам данные не найдены.'}
             </p>
           )}
+        </div>
+        )}
         </div>
       </section>
     </section>
@@ -1391,7 +1525,7 @@ export default function App() {
       {page === 'contracts' && <ContractsPage onOpenContract={openContractWindow} />}
       {page === 'notes' && <NotesPage />}
       {page === 'personal-account' && <PersonalAccountPage />}
-      {page === 'primary' && <PrimaryPage />}
+      {page === 'primary' && <PrimaryPage onOpenContract={openContractWindow} />}
     </main>
   )
 }

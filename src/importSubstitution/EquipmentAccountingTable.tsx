@@ -35,6 +35,7 @@ type EquipmentColumn =
   | 'ИМЯ'
   | 'СЕРИЙНЫЙ НОМЕР'
   | 'Примечание';
+type EquipmentSortColumn = EquipmentColumn | 'Действие';
 
 interface EquipmentSummaryRow {
   key: string;
@@ -160,16 +161,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readEquipmentHistory(): { entries: EquipmentHistoryEntry[]; error: string | null } {
+function readLegacyEquipmentHistory(): { entries: EquipmentHistoryEntry[]; error: string | null } {
   try {
-    const savedHistory = window.localStorage.getItem(EQUIPMENT_HISTORY_STORAGE_KEY);
-    if (!savedHistory) return { entries: [], error: null };
-
-    const parsed: unknown = JSON.parse(savedHistory);
-    if (!Array.isArray(parsed)) {
-      return { entries: [], error: 'Сохраненный журнал поврежден и не может быть загружен.' };
-    }
-
+    const stored = window.localStorage.getItem(EQUIPMENT_HISTORY_STORAGE_KEY);
+    if (!stored) return { entries: [], error: null };
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return { entries: [], error: 'Старый журнал изменений поврежден.' };
     const entries = parsed.filter((entry): entry is EquipmentHistoryEntry => (
       isRecord(entry)
       && Number.isSafeInteger(entry.id)
@@ -183,14 +180,13 @@ function readEquipmentHistory(): { entries: EquipmentHistoryEntry[]; error: stri
           || change.type === 'delete'
           || (change.type === 'update' && isRecord(change.before)))
       ))
-    )).slice(0, 10);
-
+    )).slice(0, 50);
     if (entries.length !== parsed.length) {
-      return { entries, error: 'Некоторые записи журнала повреждены и были пропущены.' };
+      return { entries, error: 'Некоторые записи старого журнала повреждены и пропущены.' };
     }
     return { entries, error: null };
   } catch {
-    return { entries: [], error: 'Не удалось прочитать сохраненный журнал изменений.' };
+    return { entries: [], error: 'Не удалось прочитать старый журнал изменений.' };
   }
 }
 
@@ -203,7 +199,7 @@ type EquipmentAccountingViewState = {
   departmentFilters?: string[];
   planAvailabilityFilter?: string;
   columnWidths?: Record<string, number>;
-  sort?: { column: EquipmentColumn; direction: SortDirection };
+  sort?: { column: EquipmentSortColumn; direction: SortDirection };
 };
 
 function readEquipmentAccountingViewState(): EquipmentAccountingViewState {
@@ -217,11 +213,10 @@ function readEquipmentAccountingViewState(): EquipmentAccountingViewState {
 
 export default function EquipmentAccountingTable({ requiredType }: { requiredType?: string } = {}): React.ReactElement {
   const savedViewState = readEquipmentAccountingViewState();
-  const [persistedHistory] = useState(readEquipmentHistory);
   const [data, setData] = useState<Row[]>([]);
-  const [history, setHistory] = useState<EquipmentHistoryEntry[]>(persistedHistory.entries);
+  const [history, setHistory] = useState<EquipmentHistoryEntry[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [historyStorageError, setHistoryStorageError] = useState<string | null>(persistedHistory.error);
+  const [historyStorageError, setHistoryStorageError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
@@ -229,8 +224,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
   const [error, setError] = useState<string | null>(null);
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
-  const historyRef = useRef(persistedHistory.entries);
-  const historyIdRef = useRef(persistedHistory.entries.reduce((maxId, entry) => Math.max(maxId, entry.id), 0));
+  const historyRef = useRef<EquipmentHistoryEntry[]>([]);
   const [filters, setFilters] = useState<Record<string, string>>(savedViewState.filters ?? {});
   const [multiFilters, setMultiFilters] = useState<Record<string, string[]>>(savedViewState.multiFilters ?? {});
   const [hideDepartment, setHideDepartment] = useState(requiredType ? false : savedViewState.hideDepartment ?? false);
@@ -257,7 +251,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
   const [copyObjects, setCopyObjects] = useState<string[]>([]);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [lookupRows, setLookupRows] = useState<Record<string, Row[]>>({});
-  const [sort, setSort] = useState<{ column: EquipmentColumn; direction: SortDirection }>(savedViewState.sort ?? {
+  const [sort, setSort] = useState<{ column: EquipmentSortColumn; direction: SortDirection }>(savedViewState.sort ?? {
     column: 'Подразделение',
     direction: 'asc',
   });
@@ -268,25 +262,31 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
     [data, requiredType],
   );
 
-  function recordHistory(label: string, changes: EquipmentChange[]): void {
+  async function recordHistory(label: string, changes: EquipmentChange[]): Promise<void> {
     if (changes.length === 0) return;
-    saveHistory([{
-      id: ++historyIdRef.current,
-      label,
-      createdAt: Date.now(),
-      changes,
-    }, ...historyRef.current].slice(0, 10));
+    try {
+      const response = await fetch('/api/import-substitution/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label, changes }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || formatHttpError(response.status));
+      }
+      const entry = await response.json() as EquipmentHistoryEntry;
+      saveHistory([entry, ...historyRef.current].slice(0, 50));
+      setHistoryStorageError(null);
+    } catch (requestError) {
+      setHistoryStorageError(requestError instanceof Error
+        ? `Изменение сохранено, но журнал не записан: ${requestError.message}`
+        : 'Изменение сохранено, но не удалось записать его в журнал.');
+    }
   }
 
   function saveHistory(nextHistory: EquipmentHistoryEntry[]): void {
     historyRef.current = nextHistory;
     setHistory(nextHistory);
-    try {
-      window.localStorage.setItem(EQUIPMENT_HISTORY_STORAGE_KEY, JSON.stringify(nextHistory));
-      setHistoryStorageError(null);
-    } catch {
-      setHistoryStorageError('Не удалось сохранить журнал изменений в этом браузере. После обновления страницы новые действия могут быть потеряны.');
-    }
   }
 
   async function undoChange(entryId: number): Promise<void> {
@@ -311,6 +311,11 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         }
       }
 
+      const historyResponse = await fetch(`/api/import-substitution/history/${entry.id}`, { method: 'DELETE' });
+      if (!historyResponse.ok) {
+        const payload = (await historyResponse.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || `Изменение отменено, но запись журнала не удалена: ${formatHttpError(historyResponse.status)}`);
+      }
       saveHistory(historyRef.current.filter((item) => item.id !== entry.id));
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) {
@@ -349,6 +354,48 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       .then((rows) => setData(rows))
       .catch((requestError: Error) => setError(formatErrorMessage(requestError)))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/import-substitution/history', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || formatHttpError(response.status));
+        }
+        return response.json() as Promise<EquipmentHistoryEntry[]>;
+      })
+      .then(async (entries) => {
+        if (!active) return;
+        if (entries.length > 0) {
+          saveHistory(entries);
+          return;
+        }
+        const legacy = readLegacyEquipmentHistory();
+        if (legacy.error) setHistoryStorageError(legacy.error);
+        if (legacy.entries.length === 0) return;
+        const migrationResponse = await fetch('/api/import-substitution/history/migrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entries: legacy.entries }),
+        });
+        if (!migrationResponse.ok) {
+          const payload = (await migrationResponse.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || formatHttpError(migrationResponse.status));
+        }
+        const migratedEntries = await migrationResponse.json() as EquipmentHistoryEntry[];
+        if (!active) return;
+        saveHistory(migratedEntries);
+        window.localStorage.removeItem(EQUIPMENT_HISTORY_STORAGE_KEY);
+        setHistoryStorageError(null);
+      })
+      .catch((requestError: Error) => {
+        if (active) setHistoryStorageError(`Не удалось загрузить журнал изменений: ${requestError.message}`);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -464,6 +511,10 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
   }, [departmentFilters, disableQuantitySumming, hideDepartment, planAvailabilityFilter, scopedData]);
 
   const filteredAndSortedData = useMemo(() => {
+    const updatedAtById = new Map(data.map((row) => {
+      const timestamp = new Date(String(row['updatedAt'] ?? '')).getTime();
+      return [Number(row['GN_import_substitution_id']), Number.isFinite(timestamp) ? timestamp : 0] as const;
+    }));
     const filtered = summaryRows.filter((row) => COLUMNS.every((column) => {
       if (departmentFilters.length > 0 && !departmentFilters.some((department) => (
         row.values['Подразделение'] === department
@@ -491,14 +542,16 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
     }));
 
     const sorted = filtered.sort((left, right) => {
-      const comparison = sort.column === 'Количество'
-        ? left.quantityTotal - right.quantityTotal
-        : compareValues(left.values[sort.column], right.values[sort.column]);
+      const comparison = sort.column === 'Действие'
+        ? (updatedAtById.get(left.sourceRowId) ?? 0) - (updatedAtById.get(right.sourceRowId) ?? 0)
+        : sort.column === 'Количество'
+          ? left.quantityTotal - right.quantityTotal
+          : compareValues(left.values[sort.column], right.values[sort.column]);
       return sort.direction === 'asc' ? comparison : -comparison;
     });
 
     return sorted;
-  }, [departmentFilters, disableQuantitySumming, filters, hideDepartment, multiFilters, sort, summaryRows]);
+  }, [data, departmentFilters, disableQuantitySumming, filters, hideDepartment, multiFilters, sort, summaryRows]);
 
   const displayedQuantityTotal = useMemo(
     () => filteredAndSortedData.reduce((total, row) => total + row.quantityTotal, 0),
@@ -610,7 +663,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
     return `Итого: ${formatIntegerQuantity(row.quantityTotal)} (${details.join(' | ')})`;
   }
 
-  function toggleSort(column: EquipmentColumn): void {
+  function toggleSort(column: EquipmentSortColumn): void {
     setSort((previous) => previous.column === column
       ? { column, direction: previous.direction === 'asc' ? 'desc' : 'asc' }
       : { column, direction: 'asc' });
@@ -699,7 +752,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
-      recordHistory(`Изменение строки №${editingRowId}`, [{
+      await recordHistory(`Изменение строки №${editingRowId}`, [{
         type: 'update',
         rowId: editingRowId,
         before: { ...previousRow },
@@ -785,7 +838,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       if (!Number.isSafeInteger(copiedRowId) || copiedRowId <= 0) {
         throw new Error('Сервер не вернул идентификатор созданной копии');
       }
-      recordHistory(`Копирование строки №${editingRowId}`, [
+      await recordHistory(`Копирование строки №${editingRowId}`, [
         { type: 'create', rowId: copiedRowId },
         { type: 'update', rowId: editingRowId, before: { ...sourceRow } },
       ]);
@@ -798,7 +851,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       cancelEdit();
     } catch (requestError) {
       if (sourceUpdated) {
-        recordHistory(`Изменение строки №${editingRowId} перед неудачным копированием`, [{
+        await recordHistory(`Изменение строки №${editingRowId} перед неудачным копированием`, [{
           type: 'update',
           rowId: editingRowId,
           before: { ...sourceRow },
@@ -828,7 +881,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       if (!Number.isSafeInteger(createdRowId) || createdRowId <= 0) {
         throw new Error('Сервер не вернул идентификатор созданной строки');
       }
-      recordHistory(`Добавление строки №${createdRowId}`, [{ type: 'create', rowId: createdRowId }]);
+      await recordHistory(`Добавление строки №${createdRowId}`, [{ type: 'create', rowId: createdRowId }]);
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
       setData((await refreshed.json()) as Row[]);
@@ -855,7 +908,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
-      recordHistory(`Удаление строки №${rowId}`, [{ type: 'delete', rowId }]);
+      await recordHistory(`Удаление строки №${rowId}`, [{ type: 'delete', rowId }]);
       setData((previous) => previous.filter((row) => Number(row['GN_import_substitution_id']) !== rowId));
       cancelEdit();
     } catch (requestError) {
@@ -964,13 +1017,13 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
       setData((await refreshed.json()) as Row[]);
-      recordHistory(`Импорт Excel: ${savedRows} строк`, changes);
+      await recordHistory(`Импорт Excel: ${savedRows} строк`, changes);
       changes.length = 0;
       setExcelImportMessage(`Загрузка завершена. Загружено строк: ${savedRows}.`);
     } catch (requestError) {
       setExcelImportError(requestError instanceof Error ? requestError.message : 'Не удалось загрузить Excel-файл');
       if (changes.length > 0) {
-        recordHistory(`Частичный импорт Excel: ${changes.length} строк`, changes);
+        await recordHistory(`Частичный импорт Excel: ${changes.length} строк`, changes);
         try {
           const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
           if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
@@ -1029,7 +1082,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
               aria-labelledby="equipment-history-title"
             >
               <header className="equipment-history-dialog__header">
-                <h3 id="equipment-history-title">Журнал изменений — последние 10 действий</h3>
+                <h3 id="equipment-history-title">Журнал изменений — последние 50 действий</h3>
                 <button
                   type="button"
                   className="equipment-history-dialog__close"
@@ -1273,7 +1326,9 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
                   </th>
                 ))}
                 <th className="equipment-accounting-actions-header">
-                  <span>Действие</span>
+                  <button type="button" onClick={() => toggleSort('Действие')}>
+                    Действие{sort.column === 'Действие' && (sort.direction === 'asc' ? ' ↑' : ' ↓')}
+                  </button>
                 </th>
               </tr>
             </thead>

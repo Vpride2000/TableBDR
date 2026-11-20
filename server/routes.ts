@@ -2,6 +2,7 @@ import { Express, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import { createDbClient, toFiniteNumber, buildFallbackCalculationLine } from './db.js';
 import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS, LimitCalculationLineInput, LimitCalculationLineRow, LimitCalculationResponseLine } from './config.js';
+import { isSafeNoteLink } from '../shared/noteFormatting.js';
 
 // Маршруты backend-сервера.
 // Этот модуль регистрирует HTTP endpoints для сущностей GN и расчета лимитов.
@@ -48,13 +49,14 @@ function normalizeNotesTags(value: unknown): string[] | null {
   return tags;
 }
 
-function isNotesDocument(value: unknown, root = true): boolean {
+export function isNotesDocument(value: unknown, root = true): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const node = value as { type?: unknown; text?: unknown; content?: unknown; attrs?: unknown; marks?: unknown };
   if (typeof node.type !== 'string') return false;
   const allowedKeys = new Set(['type', 'text', 'content', 'attrs', 'marks']);
   if (Object.keys(node).some((key) => !allowedKeys.has(key))) return false;
-  const allowedTypes = new Set(['doc', 'paragraph', 'text', 'heading', 'bulletList', 'orderedList', 'listItem', 'hardBreak']);
+  const allowedTypes = new Set(['doc', 'paragraph', 'text', 'heading', 'bulletList', 'orderedList', 'listItem', 'hardBreak',
+    'blockquote', 'codeBlock', 'table', 'tableRow', 'tableCell', 'tableHeader', 'taskList', 'taskItem']);
   if (!allowedTypes.has(node.type) || (root && node.type !== 'doc')) return false;
   if (node.type === 'text') {
     if (typeof node.text !== 'string' || node.text.length > 1_000_000 || node.content !== undefined) return false;
@@ -64,10 +66,29 @@ function isNotesDocument(value: unknown, root = true): boolean {
   if (node.attrs !== undefined) {
     if (!node.attrs || typeof node.attrs !== 'object' || Array.isArray(node.attrs)) return false;
     const attrs = node.attrs as Record<string, unknown>;
-    if (node.type === 'heading') {
-      if (Object.keys(attrs).some((key) => key !== 'level') || ![1, 2, 3].includes(Number(attrs.level))) return false;
+    if (node.type === 'heading' || node.type === 'paragraph') {
+      if (Object.keys(attrs).some((key) => !['level', 'textAlign'].includes(key))
+        || (node.type === 'heading' && ![1, 2, 3].includes(Number(attrs.level)))
+        || (node.type === 'paragraph' && attrs.level !== undefined)
+        || (attrs.textAlign != null && !['left', 'center', 'right', 'justify'].includes(String(attrs.textAlign)))) return false;
     } else if (node.type === 'orderedList') {
-      if (Object.keys(attrs).some((key) => key !== 'order') || (attrs.order !== undefined && !Number.isInteger(attrs.order))) return false;
+      if (Object.keys(attrs).some((key) => !['order', 'start', 'type'].includes(key))
+        || (attrs.order !== undefined && !Number.isInteger(attrs.order))
+        || (attrs.start !== undefined && !Number.isSafeInteger(attrs.start))
+        || (attrs.type !== undefined && attrs.type !== null
+          && (typeof attrs.type !== 'string' || !['1', 'a', 'A', 'i', 'I'].includes(attrs.type)))) return false;
+    } else if (node.type === 'codeBlock') {
+      if (Object.keys(attrs).some((key) => key !== 'language')
+        || (attrs.language != null && (typeof attrs.language !== 'string' || !/^[\w+-]{1,40}$/.test(attrs.language)))) return false;
+    } else if (node.type === 'taskItem') {
+      if (Object.keys(attrs).some((key) => key !== 'checked') || typeof attrs.checked !== 'boolean') return false;
+    } else if (node.type === 'tableCell' || node.type === 'tableHeader') {
+      if (Object.keys(attrs).some((key) => !['colspan', 'rowspan', 'colwidth', 'align'].includes(key))
+        || ['colspan', 'rowspan'].some((key) => attrs[key] !== undefined
+          && (!Number.isSafeInteger(attrs[key]) || Number(attrs[key]) < 1 || Number(attrs[key]) > 100))
+        || (attrs.colwidth != null && (!Array.isArray(attrs.colwidth)
+          || attrs.colwidth.length > 100 || attrs.colwidth.some((width: unknown) => !Number.isSafeInteger(width) || Number(width) < 0 || Number(width) > 10000)))
+        || (attrs.align != null && !['left', 'center', 'right'].includes(String(attrs.align)))) return false;
     } else {
       return false;
     }
@@ -75,9 +96,28 @@ function isNotesDocument(value: unknown, root = true): boolean {
   if (node.marks !== undefined) {
     if (!Array.isArray(node.marks) || node.marks.some((mark) => {
       if (!mark || typeof mark !== 'object' || Array.isArray(mark)) return true;
-      const markValue = mark as { type?: unknown };
-      return Object.keys(mark).some((key) => key !== 'type')
-        || !['bold', 'italic'].includes(String(markValue.type));
+      const markValue = mark as { type?: unknown; attrs?: unknown };
+      if (Object.keys(mark).some((key) => !['type', 'attrs'].includes(key))) return true;
+      if (['bold', 'italic', 'underline', 'strike', 'code'].includes(String(markValue.type))) return markValue.attrs !== undefined;
+      if (!markValue.attrs || typeof markValue.attrs !== 'object' || Array.isArray(markValue.attrs)) return true;
+      const attrs = markValue.attrs as Record<string, unknown>;
+      if (markValue.type === 'link') {
+        return Object.keys(attrs).some((key) => !['href', 'target', 'rel', 'class', 'title'].includes(key))
+          || !isSafeNoteLink(attrs.href)
+          || (attrs.target != null && attrs.target !== '_blank')
+          || (attrs.rel != null && attrs.rel !== 'noopener noreferrer nofollow')
+          || attrs.class != null || (attrs.title != null && (typeof attrs.title !== 'string' || attrs.title.length > 200));
+      }
+      const isColor = (value: unknown) => value == null || (typeof value === 'string'
+        && (/^#[0-9a-f]{3,8}$/i.test(value) || /^rgba?\([\d.,% ]+\)$/i.test(value) || /^[a-z]{1,20}$/i.test(value)));
+      if (markValue.type === 'highlight') return Object.keys(attrs).some((key) => key !== 'color') || !isColor(attrs.color);
+      if (markValue.type === 'textStyle') {
+        return Object.keys(attrs).some((key) => !['color', 'fontFamily', 'fontSize'].includes(key))
+          || !isColor(attrs.color)
+          || (attrs.fontFamily != null && (typeof attrs.fontFamily !== 'string' || !/^[\w\s,'"-]{1,120}$/.test(attrs.fontFamily)))
+          || (attrs.fontSize != null && (typeof attrs.fontSize !== 'string' || !/^\d{1,3}(?:\.\d{1,2})?(?:px|pt|em|rem|%)$/.test(attrs.fontSize)));
+      }
+      return true;
     })) return false;
   }
   if (node.content !== undefined) {
@@ -98,6 +138,7 @@ export function setupRoutes(app: Express): void {
   const dashboardTileKeys = [
     'services',
     'contracts',
+    'primary',
     'cellular',
     'satellites',
     'purchases',
@@ -2248,7 +2289,30 @@ export function setupRoutes(app: Express): void {
          WHERE "is_deleted" = FALSE
          ORDER BY "GN_cellular_identifier_id" ASC`
       );
-      res.json(result.rows);
+      const costs = await client.query(
+        `SELECT
+           c."GN_cellular_identifier_FK" AS identifier_id,
+           t."GN_cellular_tariff_plan_cost" * 1.22 AS cost_with_vat
+         FROM "GN_cellular" c
+         JOIN "GN_cellular_tariff_plan" t
+           ON t."GN_cellular_tariff_plan_id" = c."GN_cellular_tariff_plan_FK"
+         ORDER BY c."GN_cellular_identifier_FK",
+                  c."GN_cellular_tariff_plan_enabled_date" DESC NULLS LAST,
+                  c."GN_cellular_id" DESC`
+      );
+      const costByIdentifier = new Map<number, number>();
+      costs.rows.forEach((row: { identifier_id: number; cost_with_vat: string | number | null }) => {
+        const identifierId = Number(row.identifier_id);
+        if (!costByIdentifier.has(identifierId) && row.cost_with_vat != null) {
+          costByIdentifier.set(identifierId, Number(row.cost_with_vat));
+        }
+      });
+      res.json(result.rows.map((row: Record<string, unknown>) => ({
+        ...row,
+        GN_cellular_identifier_tariff_cost_with_vat: String(row.GN_cellular_identifier_fio ?? '').trim()
+          ? costByIdentifier.get(Number(row.GN_cellular_identifier_id)) ?? null
+          : null,
+      })));
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to fetch GN_cellular_identifier' });
@@ -3427,6 +3491,149 @@ export function setupRoutes(app: Express): void {
   });
 
   // Импортозамещение endpoints
+  app.get('/api/import-substitution/history', async (_req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(`
+        SELECT "id", "label",
+               EXTRACT(EPOCH FROM "created_at") * 1000 AS "createdAt",
+               "changes"
+        FROM "GN_import_substitution_history"
+        ORDER BY "id" DESC
+        LIMIT 50
+      `);
+      res.json(result.rows);
+    } catch (err) {
+      console.error('Failed to fetch equipment accounting history', err);
+      res.status(500).json({ error: 'Не удалось загрузить журнал изменений оборудования' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  function isValidEquipmentHistoryChange(change: unknown): boolean {
+    if (!change || typeof change !== 'object' || Array.isArray(change)) return false;
+    const item = change as Record<string, unknown>;
+    if (!Number.isSafeInteger(item.rowId) || Number(item.rowId) <= 0) return false;
+    if (item.type === 'create' || item.type === 'delete') return true;
+    return item.type === 'update' && Boolean(item.before)
+      && typeof item.before === 'object' && !Array.isArray(item.before);
+  }
+
+  app.post('/api/import-substitution/history/migrate', async (req: Request, res: Response): Promise<void> => {
+    const { entries } = req.body as { entries?: unknown };
+    if (!Array.isArray(entries) || entries.length === 0 || entries.length > 50
+      || entries.some((entry: unknown) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return true;
+        const item = entry as Record<string, unknown>;
+        return typeof item.label !== 'string' || item.label.trim().length === 0 || item.label.length > 500
+          || typeof item.createdAt !== 'number' || !Number.isFinite(item.createdAt)
+          || !Array.isArray(item.changes) || item.changes.length === 0 || item.changes.length > 10000
+          || item.changes.some((change: unknown) => !isValidEquipmentHistoryChange(change));
+      })) {
+      res.status(400).json({ error: 'Некорректные данные старого журнала изменений' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+      await client.query('LOCK TABLE "GN_import_substitution_history" IN EXCLUSIVE MODE');
+      const count = await client.query<{ count: string }>(
+        'SELECT COUNT(*) AS count FROM "GN_import_substitution_history"',
+      );
+      if (Number(count.rows[0].count) === 0) {
+        for (const entry of [...entries].reverse()) {
+          const item = entry as { label: string; createdAt: number; changes: unknown[] };
+          await client.query(`
+            INSERT INTO "GN_import_substitution_history" ("label", "created_at", "changes")
+            VALUES ($1, TO_TIMESTAMP($2 / 1000.0), $3::jsonb)
+          `, [item.label.trim(), item.createdAt, JSON.stringify(item.changes)]);
+        }
+      }
+      const result = await client.query(`
+        SELECT "id", "label",
+               (EXTRACT(EPOCH FROM "created_at") * 1000)::double precision AS "createdAt",
+               "changes"
+        FROM "GN_import_substitution_history"
+        ORDER BY "id" DESC
+        LIMIT 50
+      `);
+      await client.query('COMMIT');
+      res.json(result.rows);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to migrate legacy equipment accounting history', err);
+      res.status(500).json({ error: 'Не удалось перенести старый журнал изменений в базу данных' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.post('/api/import-substitution/history', async (req: Request, res: Response): Promise<void> => {
+    const { label, changes } = req.body as { label?: unknown; changes?: unknown };
+    if (typeof label !== 'string' || label.trim().length === 0 || label.length > 500
+      || !Array.isArray(changes) || changes.length === 0 || changes.length > 10000
+      || changes.some((change: unknown) => !isValidEquipmentHistoryChange(change))) {
+      res.status(400).json({ error: 'Проверьте описание и данные записи журнала изменений' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+      await client.query('LOCK TABLE "GN_import_substitution_history" IN EXCLUSIVE MODE');
+      const result = await client.query(`
+        INSERT INTO "GN_import_substitution_history" ("label", "changes")
+        VALUES ($1, $2::jsonb)
+        RETURNING "id", "label", (EXTRACT(EPOCH FROM "created_at") * 1000)::double precision AS "createdAt", "changes"
+      `, [label.trim(), JSON.stringify(changes)]);
+      await client.query(`
+        DELETE FROM "GN_import_substitution_history"
+        WHERE "id" IN (
+          SELECT "id"
+          FROM "GN_import_substitution_history"
+          ORDER BY "id" DESC
+          OFFSET 50
+        )
+      `);
+      await client.query('COMMIT');
+      res.status(201).json(result.rows[0]);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to save equipment accounting history', err);
+      res.status(500).json({ error: 'Не удалось сохранить журнал изменений оборудования' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.delete('/api/import-substitution/history/:id', async (req: Request, res: Response): Promise<void> => {
+    const entryId = Number(req.params.id);
+    if (!Number.isSafeInteger(entryId) || entryId <= 0) {
+      res.status(400).json({ error: 'Некорректный номер записи журнала изменений' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      const result = await client.query(
+        'DELETE FROM "GN_import_substitution_history" WHERE "id" = $1 RETURNING "id"',
+        [entryId],
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: 'Запись журнала изменений не найдена' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Failed to delete equipment accounting history entry', err);
+      res.status(500).json({ error: 'Не удалось удалить запись журнала изменений' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.get('/api/import-substitution', async (req: Request, res: Response): Promise<void> => {
     res.setHeader('Cache-Control', 'no-store');
     const client = await createDbClient();
@@ -3941,6 +4148,27 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.get('/api/primary/contract-departments', async (_req: Request, res: Response): Promise<void> => {
+    const client = await createDbClient();
+    try {
+      const result = await client.query(`
+        SELECT "GN_department_FK" AS "departmentId", "GN_dogovor_FK" AS "contractId"
+        FROM "GN_bdr"
+        WHERE "is_deleted" = FALSE AND "GN_department_FK" IS NOT NULL AND "GN_dogovor_FK" IS NOT NULL
+        UNION
+        SELECT "GN_department_FK" AS "departmentId", "GN_dogovor_FK" AS "contractId"
+        FROM "GN_gazprom_telecom"
+        WHERE "GN_department_FK" IS NOT NULL AND "GN_dogovor_FK" IS NOT NULL
+      `);
+      res.json(result.rows);
+    } catch (err) {
+      console.error('Failed to fetch primary contract departments', err);
+      res.status(500).json({ error: 'Не удалось загрузить подразделения договоров' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.get('/api/primary', async (_req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
@@ -3952,11 +4180,9 @@ export function setupRoutes(app: Express): void {
           primary_document."GN_dogovor_FK" AS "contractId",
           dogovor."GN_dogovor" AS contract,
           primary_document."personal_account" AS "personalAccount",
-          primary_document."amount_with_vat" AS "amountWithVat",
+          primary_document."document_month" AS month,
           primary_document."details",
-          primary_document."edo_arrival_date" AS "edoArrivalDate",
-          primary_document."sed_launch_date" AS "sedLaunchDate",
-          primary_document."note"
+          primary_document."details_enabled" AS "detailsEnabled"
         FROM "GN_primary_documents" primary_document
         LEFT JOIN "GN_department" department
           ON department."GN_Dep_id" = primary_document."GN_department_FK"
@@ -3964,7 +4190,7 @@ export function setupRoutes(app: Express): void {
           ON dogovor."GN_dgv_id" = primary_document."GN_dogovor_FK"
         ORDER BY primary_document."GN_primary_document_id"
       `);
-      const [objects, budgetItems] = await Promise.all([
+      const [objects, budgetItems, expenseDepartments, monthValues] = await Promise.all([
         client.query(`
           SELECT relation."primary_document_id" AS id,
                  object."GN_do_id" AS "itemId",
@@ -3975,15 +4201,37 @@ export function setupRoutes(app: Express): void {
         `),
         client.query(`
           SELECT relation."primary_document_id" AS id,
-                 item."GN_b_id" AS "itemId",
-                 item."GN_budget_network_item" AS label
-          FROM "GN_primary_document_budget_items" relation
-          JOIN "GN_budget_network_item" item ON item."GN_b_id" = relation."budget_item_id"
-          ORDER BY relation."primary_document_id", item."GN_budget_network_item"
+                 item."PAO_b_id" AS "itemId",
+                 item."PAO__budget_network_item" AS label
+          FROM "GN_primary_document_pao_budget_items" relation
+          JOIN "PAO__budget_network_item" item ON item."PAO_b_id" = relation."budget_item_id"
+          ORDER BY relation."primary_document_id", item."PAO__budget_network_item"
+        `),
+        client.query(`
+          SELECT relation."primary_document_id" AS id,
+                 department."GN_Dep_id" AS "itemId",
+                 department."GN_department" AS label
+          FROM "GN_primary_document_expense_departments" relation
+          JOIN "GN_department" department ON department."GN_Dep_id" = relation."department_id"
+          ORDER BY relation."primary_document_id", department."GN_department"
+        `),
+        client.query(`
+          SELECT "primary_document_id" AS id,
+                 "document_month" AS month,
+                 "amount_with_vat" AS "amountWithVat",
+                 "edo_arrival_date" AS "edoArrivalDate",
+                 "sed_launch_date" AS "sedLaunchDate",
+                 "sed_launched" AS "sedLaunched",
+                 "accepted_in_1c" AS "acceptedIn1C",
+                 "note"
+          FROM "GN_primary_document_months"
+          ORDER BY "primary_document_id", "document_month"
         `),
       ]);
       const objectsById = new Map<number, Array<{ id: number; label: string }>>();
       const itemsById = new Map<number, Array<{ id: number; label: string }>>();
+      const expenseDepartmentsById = new Map<number, Array<{ id: number; label: string }>>();
+      const monthsById = new Map<number, Record<string, Record<string, unknown>>>();
       objects.rows.forEach((row: { id: number; itemId: number; label: string }) => {
         const list = objectsById.get(row.id) ?? [];
         list.push({ id: row.itemId, label: row.label });
@@ -3994,10 +4242,23 @@ export function setupRoutes(app: Express): void {
         list.push({ id: row.itemId, label: row.label });
         itemsById.set(row.id, list);
       });
+      expenseDepartments.rows.forEach((row: { id: number; itemId: number; label: string }) => {
+        const list = expenseDepartmentsById.get(row.id) ?? [];
+        list.push({ id: row.itemId, label: row.label });
+        expenseDepartmentsById.set(row.id, list);
+      });
+      monthValues.rows.forEach((row: Record<string, unknown> & { id: number; month: string }) => {
+        const values = monthsById.get(row.id) ?? {};
+        const { id, month, ...monthData } = row;
+        values[month] = monthData;
+        monthsById.set(id, values);
+      });
       res.json(result.rows.map((row: Record<string, unknown>) => ({
         ...row,
         objects: objectsById.get(Number(row.id)) ?? [],
         budgetItems: itemsById.get(Number(row.id)) ?? [],
+        expenseDepartments: expenseDepartmentsById.get(Number(row.id)) ?? [],
+        monthData: monthsById.get(Number(row.id)) ?? {},
       })));
     } catch (err) {
       console.error('Failed to fetch primary documents', err);
@@ -4027,28 +4288,45 @@ export function setupRoutes(app: Express): void {
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : undefined;
   }
 
+  function parsePrimaryMonth(value: unknown): 'october' | 'november' | 'december' | undefined {
+    return value === 'october' || value === 'november' || value === 'december' ? value : undefined;
+  }
+
   function parsePrimaryPayload(body: Record<string, unknown>) {
     const departmentId = parsePrimaryNullableId(body.departmentId);
     const contractId = parsePrimaryNullableId(body.contractId);
+    const month = parsePrimaryMonth(body.month);
     const objectIds = parsePrimaryIds(body.objectIds);
     const budgetItemIds = parsePrimaryIds(body.budgetItemIds);
+    const expenseDepartmentIds = parsePrimaryIds(body.expenseDepartmentIds);
     const amountWithVat = Number(String(body.amountWithVat ?? '0').replace(/\s/g, '').replace(',', '.'));
     const edoArrivalDate = parsePrimaryDate(body.edoArrivalDate);
     const sedLaunchDate = parsePrimaryDate(body.sedLaunchDate);
-    if (departmentId === undefined || contractId === undefined || !objectIds || !budgetItemIds
-      || !Number.isFinite(amountWithVat) || edoArrivalDate === undefined || sedLaunchDate === undefined) {
+    const sedLaunched = body.sedLaunched;
+    const acceptedIn1C = body.acceptedIn1C;
+    const detailsEnabled = body.detailsEnabled;
+    if (departmentId === undefined || contractId === undefined || !month || !objectIds || !budgetItemIds || !expenseDepartmentIds
+      || !Number.isFinite(amountWithVat) || edoArrivalDate === undefined || sedLaunchDate === undefined
+      || (sedLaunched !== undefined && typeof sedLaunched !== 'boolean')
+      || (acceptedIn1C !== undefined && typeof acceptedIn1C !== 'boolean')
+      || (detailsEnabled !== undefined && typeof detailsEnabled !== 'boolean')) {
       return null;
     }
     return {
       departmentId,
       contractId,
+      month,
       personalAccount: String(body.personalAccount ?? ''),
       objectIds,
       budgetItemIds,
+      expenseDepartmentIds,
       amountWithVat,
       details: String(body.details ?? ''),
+      detailsEnabled: typeof detailsEnabled === 'boolean' ? detailsEnabled : null,
       edoArrivalDate,
       sedLaunchDate,
+      sedLaunched: typeof sedLaunched === 'boolean' ? sedLaunched : null,
+      acceptedIn1C: typeof acceptedIn1C === 'boolean' ? acceptedIn1C : null,
       note: String(body.note ?? ''),
     };
   }
@@ -4058,9 +4336,11 @@ export function setupRoutes(app: Express): void {
     documentId: number,
     objectIds: number[],
     budgetItemIds: number[],
+    expenseDepartmentIds: number[],
   ): Promise<void> {
     await client.query('DELETE FROM "GN_primary_document_objects" WHERE "primary_document_id" = $1', [documentId]);
-    await client.query('DELETE FROM "GN_primary_document_budget_items" WHERE "primary_document_id" = $1', [documentId]);
+    await client.query('DELETE FROM "GN_primary_document_pao_budget_items" WHERE "primary_document_id" = $1', [documentId]);
+    await client.query('DELETE FROM "GN_primary_document_expense_departments" WHERE "primary_document_id" = $1', [documentId]);
     if (objectIds.length > 0) {
       await client.query(
         `INSERT INTO "GN_primary_document_objects" ("primary_document_id", "object_id")
@@ -4070,9 +4350,16 @@ export function setupRoutes(app: Express): void {
     }
     if (budgetItemIds.length > 0) {
       await client.query(
-        `INSERT INTO "GN_primary_document_budget_items" ("primary_document_id", "budget_item_id")
+        `INSERT INTO "GN_primary_document_pao_budget_items" ("primary_document_id", "budget_item_id")
          SELECT $1, unnest($2::integer[])`,
         [documentId, budgetItemIds],
+      );
+    }
+    if (expenseDepartmentIds.length > 0) {
+      await client.query(
+        `INSERT INTO "GN_primary_document_expense_departments" ("primary_document_id", "department_id")
+         SELECT $1, unnest($2::integer[])`,
+        [documentId, expenseDepartmentIds],
       );
     }
   }
@@ -4088,18 +4375,145 @@ export function setupRoutes(app: Express): void {
       await client.query('BEGIN');
       const result = await client.query(
         `INSERT INTO "GN_primary_documents"
-           ("GN_department_FK", "GN_dogovor_FK", "personal_account", "amount_with_vat", "details", "edo_arrival_date", "sed_launch_date", "note")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ("GN_department_FK", "GN_dogovor_FK", "personal_account", "document_month", "amount_with_vat", "details", "edo_arrival_date", "sed_launch_date", "note", "sed_launched", "details_enabled")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, $8::date IS NOT NULL), COALESCE($11, NULLIF(BTRIM($6), '') IS NOT NULL))
          RETURNING "GN_primary_document_id" AS id`,
-        [input.departmentId, input.contractId, input.personalAccount, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note],
+        [input.departmentId, input.contractId, input.personalAccount, input.month, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note, input.sedLaunched, input.detailsEnabled],
       );
-      await replacePrimaryLinks(client, Number(result.rows[0].id), input.objectIds, input.budgetItemIds);
+      const documentId = Number(result.rows[0].id);
+      await client.query(
+        `INSERT INTO "GN_primary_document_months"
+           ("primary_document_id", "document_month", "amount_with_vat", "edo_arrival_date", "sed_launch_date", "sed_launched", "accepted_in_1c", "note")
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6, $5::date IS NOT NULL), COALESCE($7, FALSE), $8)`,
+        [documentId, input.month, input.amountWithVat, input.edoArrivalDate, input.sedLaunchDate, input.sedLaunched, input.acceptedIn1C, input.note],
+      );
+      await replacePrimaryLinks(client, documentId, input.objectIds, input.budgetItemIds, input.expenseDepartmentIds);
       await client.query('COMMIT');
       res.status(201).json({ id: result.rows[0].id });
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('Failed to create primary document', err);
       res.status(400).json({ error: 'Не удалось создать первичный документ. Проверьте выбранные значения.' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.put('/api/primary/month/:month', async (req: Request, res: Response): Promise<void> => {
+    const month = parsePrimaryMonth(req.params.month);
+    const body = req.body as { documents?: unknown };
+    if (!month || !Array.isArray(body.documents)) {
+      res.status(400).json({ error: 'Проверьте месяц и список месячных данных' });
+      return;
+    }
+
+    const documents: Array<{ id: number; amountWithVat: number | null; sedLaunched: boolean; acceptedIn1C: boolean; note: string }> = [];
+    const documentIds = new Set<number>();
+    for (const value of body.documents) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        res.status(400).json({ error: 'Некорректные данные месяца' });
+        return;
+      }
+      const item = value as Record<string, unknown>;
+      const id = Number(item.id);
+      const rawAmount = typeof item.amountWithVat === 'string' ? item.amountWithVat.trim() : item.amountWithVat;
+      const amountWithVat = rawAmount === null || rawAmount === ''
+        ? null
+        : Number(String(rawAmount).replace(/\s/g, '').replace(',', '.'));
+      if (!Number.isSafeInteger(id) || id <= 0 || documentIds.has(id)
+        || (amountWithVat !== null && !Number.isFinite(amountWithVat))
+        || typeof item.sedLaunched !== 'boolean'
+        || typeof item.acceptedIn1C !== 'boolean'
+        || typeof item.note !== 'string') {
+        res.status(400).json({ error: 'Проверьте сумму, отметки СЭД и 1С и примечание месяца' });
+        return;
+      }
+      documentIds.add(id);
+      documents.push({ id, amountWithVat, sedLaunched: item.sedLaunched, acceptedIn1C: item.acceptedIn1C, note: item.note });
+    }
+
+    const client = await createDbClient();
+    let transactionStarted = false;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      for (const document of documents) {
+        const result = await client.query(
+          `INSERT INTO "GN_primary_document_months"
+             ("primary_document_id", "document_month", "amount_with_vat", "sed_launched", "accepted_in_1c", "note")
+           SELECT "GN_primary_document_id", $2, $3, $4, $5, $6
+           FROM "GN_primary_documents"
+           WHERE "GN_primary_document_id" = $1
+           ON CONFLICT ("primary_document_id", "document_month")
+           DO UPDATE SET "amount_with_vat" = EXCLUDED."amount_with_vat",
+                         "sed_launched" = EXCLUDED."sed_launched",
+                         "accepted_in_1c" = EXCLUDED."accepted_in_1c",
+                         "note" = EXCLUDED."note"`,
+          [document.id, month, document.amountWithVat, document.sedLaunched, document.acceptedIn1C, document.note],
+        );
+        if (result.rowCount === 0) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          res.status(409).json({ error: 'Одна из записей не найдена. Изменения не сохранены.' });
+          return;
+        }
+      }
+      await client.query('COMMIT');
+      transactionStarted = false;
+      res.json({ updated: documents.length });
+    } catch (err) {
+      if (transactionStarted) await client.query('ROLLBACK');
+      console.error('Failed to update primary month data', err);
+      res.status(500).json({ error: 'Не удалось сохранить данные месяца' });
+    } finally {
+      await client.end();
+    }
+  });
+
+  app.patch('/api/primary/:id/general', async (req: Request, res: Response): Promise<void> => {
+    const documentId = Number(req.params.id);
+    const body = req.body as Record<string, unknown>;
+    const departmentId = parsePrimaryNullableId(body.departmentId);
+    const contractId = parsePrimaryNullableId(body.contractId);
+    const objectIds = parsePrimaryIds(body.objectIds);
+    const budgetItemIds = parsePrimaryIds(body.budgetItemIds);
+    const expenseDepartmentIds = parsePrimaryIds(body.expenseDepartmentIds);
+    if (!Number.isSafeInteger(documentId) || documentId <= 0
+      || departmentId === undefined
+      || contractId === undefined
+      || !objectIds
+      || !budgetItemIds
+      || !expenseDepartmentIds
+      || typeof body.personalAccount !== 'string'
+      || typeof body.details !== 'string'
+      || typeof body.detailsEnabled !== 'boolean') {
+      res.status(400).json({ error: 'Проверьте подразделение, договор, лицевой счет, объекты, статьи бюджета и детализацию' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE "GN_primary_documents"
+         SET "GN_department_FK" = $2, "GN_dogovor_FK" = $3, "personal_account" = $4,
+             "details" = $5, "details_enabled" = $6
+         WHERE "GN_primary_document_id" = $1
+         RETURNING "GN_primary_document_id"`,
+        [documentId, departmentId, contractId, body.personalAccount, body.details, body.detailsEnabled],
+      );
+      if (result.rowCount === 0) {
+        await client.query('ROLLBACK');
+        res.status(404).json({ error: 'Первичный документ не найден' });
+        return;
+      }
+      await replacePrimaryLinks(client, documentId, objectIds, budgetItemIds, expenseDepartmentIds);
+      await client.query('COMMIT');
+      res.json({ id: documentId });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to update primary document general fields', err);
+      res.status(400).json({ error: 'Не удалось сохранить общие поля первичного документа. Проверьте выбранные значения.' });
     } finally {
       await client.end();
     }
@@ -4118,18 +4532,33 @@ export function setupRoutes(app: Express): void {
       const result = await client.query(
         `UPDATE "GN_primary_documents"
          SET "GN_department_FK" = $2, "GN_dogovor_FK" = $3, "personal_account" = $4,
-             "amount_with_vat" = $5, "details" = $6, "edo_arrival_date" = $7,
-             "sed_launch_date" = $8, "note" = $9
+             "document_month" = $5, "amount_with_vat" = $6, "details" = $7,
+             "edo_arrival_date" = $8, "sed_launch_date" = $9, "note" = $10,
+             "sed_launched" = COALESCE($11, "sed_launched"),
+             "details_enabled" = COALESCE($12, NULLIF(BTRIM($7), '') IS NOT NULL)
          WHERE "GN_primary_document_id" = $1
          RETURNING "GN_primary_document_id"`,
-        [documentId, input.departmentId, input.contractId, input.personalAccount, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note],
+        [documentId, input.departmentId, input.contractId, input.personalAccount, input.month, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note, input.sedLaunched, input.detailsEnabled],
       );
       if (result.rowCount === 0) {
         await client.query('ROLLBACK');
         res.status(404).json({ error: 'Первичный документ не найден' });
         return;
       }
-      await replacePrimaryLinks(client, documentId, input.objectIds, input.budgetItemIds);
+      await replacePrimaryLinks(client, documentId, input.objectIds, input.budgetItemIds, input.expenseDepartmentIds);
+      await client.query(
+        `INSERT INTO "GN_primary_document_months"
+           ("primary_document_id", "document_month", "amount_with_vat", "edo_arrival_date", "sed_launch_date", "sed_launched", "accepted_in_1c", "note")
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6, $5::date IS NOT NULL), COALESCE($7, FALSE), $8)
+         ON CONFLICT ("primary_document_id", "document_month")
+         DO UPDATE SET "amount_with_vat" = EXCLUDED."amount_with_vat",
+                       "edo_arrival_date" = EXCLUDED."edo_arrival_date",
+                       "sed_launch_date" = EXCLUDED."sed_launch_date",
+                       "sed_launched" = EXCLUDED."sed_launched",
+                       "accepted_in_1c" = EXCLUDED."accepted_in_1c",
+                       "note" = EXCLUDED."note"`,
+        [documentId, input.month, input.amountWithVat, input.edoArrivalDate, input.sedLaunchDate, input.sedLaunched, input.acceptedIn1C, input.note],
+      );
       await client.query('COMMIT');
       res.json({ id: documentId });
     } catch (err) {

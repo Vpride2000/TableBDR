@@ -1909,6 +1909,7 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .notes-add-inline,
 .notes-icon-button,
 .notes-editor-toolbar button,
+.notes-editor-toolbar select,
 .notes-tag button {
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -2266,10 +2267,19 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   border-bottom: 1px solid var(--border);
 }
 
-.notes-editor-toolbar button {
+.notes-editor-toolbar button,
+.notes-editor-toolbar select {
   min-height: 30px;
-  padding: 4px 8px;
+  padding: 4px 6px;
   font-size: 0.8rem;
+}
+
+.notes-editor-toolbar button:not(.notes-delete-page) {
+  min-width: 30px;
+}
+
+.notes-editor-toolbar select {
+  max-width: 108px;
 }
 
 .notes-editor-toolbar button.is-active {
@@ -2280,6 +2290,110 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .notes-editor-toolbar button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.notes-paste-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.notes-paste-options > span {
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.notes-paste-options > button {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-h);
+  background: var(--bg);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.notes-paste-options > button:hover {
+  background: var(--accent-bg);
+}
+
+.notes-color-picker {
+  position: relative;
+}
+
+.notes-color-picker > button {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.notes-color-picker-icon {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.notes-color-picker-icon span {
+  width: 14px;
+  height: 3px;
+  margin-top: 2px;
+  border: 1px solid var(--border);
+}
+
+.notes-color-palette {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  left: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.2);
+}
+
+.notes-color-palette.align-right {
+  right: 0;
+  left: auto;
+}
+
+.notes-color-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 24px);
+  gap: 3px;
+}
+
+.notes-editor-toolbar .notes-color-swatch {
+  width: 24px;
+  min-width: 0;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid #999;
+  border-radius: 2px;
+}
+
+.notes-editor-toolbar .notes-color-swatch[aria-pressed="true"] {
+  outline: 2px solid var(--accent-border);
+  outline-offset: -2px;
+}
+
+.notes-editor-toolbar .notes-color-reset {
+  width: 100%;
+  margin-top: 6px;
+  white-space: nowrap;
 }
 
 .notes-save-state {
@@ -2353,6 +2467,57 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .notes-rich-editor .tiptap ul,
 .notes-rich-editor .tiptap ol {
   padding-left: 24px;
+}
+
+.notes-rich-editor .tiptap blockquote {
+  margin-left: 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--border);
+}
+
+.notes-rich-editor .tiptap pre {
+  overflow-x: auto;
+  padding: 10px;
+  background: var(--accent-bg);
+  white-space: pre-wrap;
+}
+
+.notes-rich-editor .tiptap table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.notes-rich-editor .tiptap th,
+.notes-rich-editor .tiptap td {
+  min-width: 40px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.notes-rich-editor .tiptap th {
+  background: var(--accent-bg);
+}
+
+.notes-rich-editor .tiptap ul[data-type="taskList"] {
+  padding-left: 0;
+  list-style: none;
+}
+
+.notes-rich-editor .tiptap ul[data-type="taskList"] > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.notes-rich-editor .tiptap ul[data-type="taskList"] > li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.notes-rich-editor .tiptap ul[data-type="taskList"] > li[data-checked="true"] > div > :not(ul[data-type="taskList"]) {
+  text-decoration: line-through;
 }
 
 @media (max-width: 900px) {
@@ -2578,14 +2743,14 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
 .dashboard-traffic-light {
   position: absolute;
-  top: 8px;
-  right: 9px;
-  width: 36px;
-  height: 15px;
+  top: 7px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
 }
 
 .dashboard-card > h3:first-of-type {
-  padding-right: 22px;
+  padding-right: 28px;
 }
 
 .dashboard-card--link {
@@ -2600,11 +2765,20 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 }
 
 .dashboard-card--equipment-dashboard {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   width: 100%;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.dashboard-card--equipment-dashboard > h3 {
+  padding-right: 0;
+  text-align: center;
 }
 
 .dashboard-card--budget-summary {
@@ -2616,7 +2790,8 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 }
 
 .dashboard-card--budget-summary > .dashboard-traffic-light + h3 {
-  text-align: left;
+  padding-right: 0;
+  text-align: center;
 }
 
 .dashboard-card--link:hover,
@@ -3079,13 +3254,15 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
 .primary-table {
   width: max-content;
-  min-width: 100%;
-  table-layout: fixed;
+  min-width: 0;
+  margin-left: 0;
+  margin-right: auto;
+  table-layout: auto;
 }
 
 .primary-table th,
 .primary-table td {
-  padding: 5px 7px;
+  padding: 1px 2px;
   overflow-wrap: anywhere;
   vertical-align: top;
 }
@@ -3098,14 +3275,14 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 }
 
 .primary-table thead > tr:first-child > th {
-  height: 24px;
   background: transparent;
   box-shadow: none;
 }
 
-.primary-table thead > tr:first-child .guide-sort-button {
+.primary-table thead > tr:first-child .guide-sort-button,
+.primary-table thead > tr:nth-child(2) .guide-sort-button {
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
   border: 0;
   background: transparent;
@@ -3114,33 +3291,62 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   font: inherit;
   font-weight: 600;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.primary-table .guide-search-row th {
-  top: 35px;
-}
-
-.primary-table .guide-search-row input {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
+.primary-table thead > tr:nth-child(2) > th {
+  position: relative;
 }
 
 .primary-table__resizable-header {
   position: relative;
-  padding-right: 10px !important;
+  padding-right: 5px !important;
+}
+
+.primary-table__resizable-cell {
+  position: relative;
+}
+
+.primary-table__number-header {
+  min-width: 58px;
+  white-space: nowrap;
+}
+
+.guide-table.primary-table th.primary-table__number-header {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.primary-table__number-header > span {
+  margin-right: 4px;
+}
+
+.primary-table__column-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.primary-table__column-filter {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 72px;
+  padding: 1px 3px;
 }
 
 .primary-table__resizer {
   position: absolute;
   top: 0;
-  right: 0;
-  width: 7px;
+  right: -3px;
+  z-index: 3;
+  width: 8px;
   height: 100%;
   cursor: col-resize;
   touch-action: none;
+  user-select: none;
 }
 
 .primary-table__resizer:hover {
@@ -3152,18 +3358,56 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .primary-table td > textarea {
   box-sizing: border-box;
   width: 100%;
-  min-width: 90px;
+  min-width: 0;
   max-width: 100%;
-  padding: 4px;
+  padding: 1px 2px;
+}
+
+.primary-table td > input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.primary-table td > input[type="number"]::-webkit-inner-spin-button,
+.primary-table td > input[type="number"]::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
 }
 
 .primary-table td > textarea {
   min-height: 54px;
-  resize: vertical;
+  resize: both;
 }
 
-.primary-table td > .primary-table__multi-select {
-  min-height: 72px;
+.primary-table__select-resizable {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 100px;
+  min-height: 54px;
+  max-height: 240px;
+  resize: both;
+  overflow: auto;
+}
+
+.primary-table__select-search,
+.primary-table__select-resizable > select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.primary-table__select-resizable > select[multiple] {
+  min-height: 42px;
+  flex: 1 1 auto;
+}
+
+.primary-page .form-field-compact .primary-table__select-resizable {
+  width: 220px;
+  max-width: 80vw;
 }
 
 .primary-table__editing-row > td {
@@ -3172,7 +3416,111 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
 .primary-table__actions {
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.primary-table__number-cell {
+  vertical-align: middle !important;
+}
+
+.primary-table__number-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.primary-table__number-content > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.guide-table.primary-table .primary-table__number-content > .primary-table__icon-button,
+.guide-table.primary-table .primary-table__number-content > .primary-table__icon-button:last-child,
+.guide-table.primary-table .primary-table__month-header .primary-table__month-toggle,
+.guide-table.primary-table .primary-table__month-header .primary-table__month-edit-icon:last-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.guide-table.primary-table .primary-table__number-content > .primary-table__icon-button:hover,
+.guide-table.primary-table .primary-table__number-content > .primary-table__icon-button:last-child:hover,
+.guide-table.primary-table .primary-table__month-header .primary-table__month-edit-icon:last-child:hover {
+  background: var(--border, #e5e4e7);
+}
+
+.guide-table.primary-table .primary-table__number-header .primary-table__icon-button:last-child:hover {
+  background: transparent;
+}
+
+.guide-table.primary-table .primary-table__number-header .primary-table__add-button,
+.guide-table.primary-table .primary-table__number-header .primary-table__add-button:hover,
+.guide-table.primary-table .primary-table__number-header .primary-table__add-button:active,
+.guide-table.primary-table .primary-table__number-header .primary-table__add-button:focus {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.guide-table.primary-table .primary-table__number-header .primary-table__add-button:focus-visible {
+  text-decoration: underline;
+}
+
+.guide-table.primary-table .primary-table__month-header .primary-table__month-toggle,
+.guide-table.primary-table .primary-table__month-header .primary-table__month-toggle:hover,
+.guide-table.primary-table .primary-table__month-header .primary-table__month-toggle:active,
+.guide-table.primary-table .primary-table__month-header .primary-table__month-toggle:focus,
+.guide-table.primary-table .primary-table__month-header .primary-table__month-toggle:disabled {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.guide-table.primary-table .primary-table__month-header .primary-table__month-toggle:focus-visible {
+  text-decoration: underline;
+}
+
+.primary-table__month-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.primary-table__month-header > span,
+.primary-table .page-action-btn {
+  white-space: nowrap;
+}
+
+.primary-table__month-header .page-action-btn {
+  flex-shrink: 0;
+}
+
+.primary-table .page-action-btn {
+  padding: 1px 3px;
+  font-size: 0.75rem;
+}
+
+.primary-table .page-action-btn + .page-action-btn {
+  margin-left: 0;
 }
 
 .equipment-accounting-table .contract-filter-input {

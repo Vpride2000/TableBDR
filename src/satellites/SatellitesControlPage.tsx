@@ -16,6 +16,7 @@ interface Satellite {
   GN_satellite_modem: string | null
 }
 
+
 interface DepartmentOption {
   GN_Dep_id: number
   GN_department: string
@@ -598,23 +599,21 @@ export default function SatellitesControlPage() {
     return [...months].sort((left, right) => {
       const leftYear = extractMonthYear(left)
       const rightYear = extractMonthYear(right)
-      if (leftYear !== rightYear) return leftYear - rightYear
+      if (leftYear !== rightYear) return rightYear - leftYear
 
       const leftOrder = extractMonthOrder(left)
       const rightOrder = extractMonthOrder(right)
-      if (leftOrder !== rightOrder) return leftOrder - rightOrder
+      if (leftOrder !== rightOrder) return rightOrder - leftOrder
 
-      return left.localeCompare(right, 'ru')
+      return right.localeCompare(left, 'ru')
     })
   }, [months])
 
   useEffect(() => {
-    setExpandedMonths((prev) => {
+    setExpandedMonths(() => {
       const next: Record<string, boolean> = {}
-      sortedMonths.forEach((month) => {
-        if (prev[month]) {
-          next[month] = true
-        }
+      sortedMonths.forEach((month, index) => {
+        next[month] = index < 3
       })
       return next
     })
@@ -1424,4 +1423,3 @@ export default function SatellitesControlPage() {
     </section>
   )
 }
-

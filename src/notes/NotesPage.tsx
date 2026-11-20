@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -10,7 +11,8 @@ import {
 } from 'react'
 import type { JSONContent } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
+import { noteExtensions } from './noteExtensions'
+import { isSafeNoteLink } from '../../shared/noteFormatting'
 
 type Notebook = { id: number; title: string; position: number; updatedAt: string }
 type Section = { id: number; notebookId: number; title: string; position: number }
@@ -676,6 +678,112 @@ export default function NotesPage(): React.ReactElement {
   )
 }
 
+const NOTE_COLORS = [
+  '#000000', '#434343', '#666666', '#999999', '#cccccc', '#ffffff',
+  '#980000', '#c62828', '#ff9900', '#ffff00', '#2e7d32', '#1565c0',
+  '#6a1b9a', '#ff00ff', '#f8bbd0', '#fff59d', '#a5d6a7', '#90caf9',
+  '#f4cccc', '#fce5cd', '#fff2cc', '#d9ead3', '#d0e0e3', '#c9daf8',
+  '#ead1dc', '#e6b8af', '#f9cb9c', '#ffe599', '#b6d7a8', '#b4a7d6',
+]
+
+function NoteColorPicker({
+  label,
+  defaultLabel,
+  color,
+  disabled,
+  onChange,
+}: {
+  label: string
+  defaultLabel: string
+  color: string | null
+  disabled: boolean
+  onChange: (color: string | null) => void
+}): React.ReactElement {
+  const [open, setOpen] = useState(false)
+  const [alignRight, setAlignRight] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const paletteId = useId()
+
+  useEffect(() => {
+    if (!open) return
+    function handlePointerDown(event: PointerEvent): void {
+      if (event.target instanceof Node && !containerRef.current?.contains(event.target)) setOpen(false)
+    }
+    function handleKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setOpen(false)
+        buttonRef.current?.focus()
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  function chooseColor(value: string | null): void {
+    onChange(value)
+    setOpen(false)
+  }
+
+  return (
+    <div className="notes-color-picker" ref={containerRef}>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={label}
+        title={label}
+        aria-expanded={open}
+        aria-controls={paletteId}
+        disabled={disabled}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          if (!open) {
+            const button = buttonRef.current
+            const panel = button?.closest('.notes-editor-panel')
+            if (button && panel) {
+              setAlignRight(panel.getBoundingClientRect().right - button.getBoundingClientRect().left < 180)
+            }
+          }
+          setOpen((previous) => !previous)
+        }}
+      >
+        <span className="notes-color-picker-icon" aria-hidden="true">
+          {label === 'Цвет текста' ? 'A' : '▰'}
+          <span style={{ backgroundColor: color || (label === 'Цвет текста' ? '#000000' : '#fff59d') }} />
+        </span>
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className={`notes-color-palette${alignRight ? ' align-right' : ''}`} id={paletteId} role="group" aria-label={label}>
+          <div className="notes-color-palette-grid">
+            {NOTE_COLORS.map((value) => (
+              <button
+                key={value}
+                type="button"
+                className="notes-color-swatch"
+                aria-label={`${label}: ${value}`}
+                title={value}
+                aria-pressed={color?.toLowerCase() === value}
+                style={{ backgroundColor: value }}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseColor(value)}
+              />
+            ))}
+          </div>
+          <button type="button" className="notes-color-reset" onMouseDown={(event) => event.preventDefault()} onClick={() => chooseColor(null)}>
+            {defaultLabel}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function NoteEditor({
   page,
   onSaved,
@@ -691,28 +799,75 @@ function NoteEditor({
   const [tagInput, setTagInput] = useState('')
   const [saveState, setSaveState] = useState<'saved' | 'unsaved' | 'saving' | 'error'>('saved')
   const [saveError, setSaveError] = useState('')
+  const [formatError, setFormatError] = useState('')
   const [saveAttempt, setSaveAttempt] = useState(0)
+  const [pasteOptionsVisible, setPasteOptionsVisible] = useState(false)
+  const pendingPasteOptionsRef = useRef<{ from: number; to: number; text: string } | null>(null)
+  const skipPasteOptionsRef = useRef(false)
   const skipFirstSave = useRef(true)
   const saveQueue = useRef(Promise.resolve())
 
   const editor = useEditor({
-    extensions: [StarterKit.configure({
-      blockquote: false,
-      code: false,
-      codeBlock: false,
-      heading: { levels: [1, 2, 3] },
-      horizontalRule: false,
-      link: false,
-      strike: false,
-      trailingNode: false,
-      underline: false,
-    })],
+    extensions: noteExtensions,
+    shouldRerenderOnTransaction: true,
     content,
+    editorProps: {
+      handlePaste: (view, event) => {
+        if (skipPasteOptionsRef.current || !event?.clipboardData) return false
+        const text = event.clipboardData.getData('text/plain')
+        if (!text) return false
+        const from = view.state.selection.from
+        const previousDocument = view.state.doc
+        window.setTimeout(() => {
+          const nextState = view.state
+          if (nextState.doc.eq(previousDocument)) return
+          const to = nextState.selection.to
+          if (to < from) return
+          pendingPasteOptionsRef.current = { from, to, text }
+          setPasteOptionsVisible(true)
+        }, 0)
+        return false
+      },
+    },
     onUpdate: ({ editor: updatedEditor }) => {
       setContent(updatedEditor.getJSON())
       setSaveState('unsaved')
+      if (pendingPasteOptionsRef.current) {
+        pendingPasteOptionsRef.current = null
+        setPasteOptionsVisible(false)
+      }
+    },
+    onSelectionUpdate: () => {
+      if (pendingPasteOptionsRef.current) {
+        pendingPasteOptionsRef.current = null
+        setPasteOptionsVisible(false)
+      }
     },
   })
+
+  function dismissPasteOptions(): void {
+    pendingPasteOptionsRef.current = null
+    setPasteOptionsVisible(false)
+  }
+
+  function pasteAsPlainText(): void {
+    const pendingPaste = pendingPasteOptionsRef.current
+    if (!editor || !pendingPaste) return
+    dismissPasteOptions()
+    setFormatError('')
+    if (!editor.commands.setTextSelection({ from: pendingPaste.from, to: pendingPaste.to })) {
+      setFormatError('Не удалось выбрать вставленный текст.')
+      return
+    }
+    skipPasteOptionsRef.current = true
+    let pasted = false
+    try {
+      pasted = editor.view.pasteText(pendingPaste.text)
+    } finally {
+      skipPasteOptionsRef.current = false
+    }
+    if (!pasted) setFormatError('Не удалось вставить текст без оформления.')
+  }
 
   useEffect(() => {
     if (skipFirstSave.current) {
@@ -758,21 +913,45 @@ function NoteEditor({
     setTagInput('')
   }
 
+  function editLink(): void {
+    if (!editor) return
+    if (editor.state.selection.empty && !editor.isActive('link')) {
+      setFormatError('Выделите текст, чтобы добавить ссылку.')
+      return
+    }
+    const url = window.prompt('Адрес ссылки (https://, http:// или mailto:)', editor.getAttributes('link').href ?? '')
+    if (url === null) return
+    const trimmed = url.trim()
+    if (!trimmed) {
+      editor.chain().focus().extendMarkRange('link').unsetLink().run()
+      setFormatError('')
+    } else if (!isSafeNoteLink(trimmed)) {
+      setFormatError('Укажите корректный адрес с протоколом http://, https:// или mailto:.')
+    } else {
+      editor.chain().focus().extendMarkRange('link').setLink({ href: trimmed }).run()
+      setFormatError('')
+    }
+  }
+
   const toolbarButton = (
     label: string,
     active: boolean,
     action: () => void,
+    disabled = false,
+    display: React.ReactNode = label,
   ): React.ReactElement => (
     <button
+      key={label}
       type="button"
       className={active ? 'is-active' : ''}
       aria-label={label}
+      title={label}
       aria-pressed={active}
       onMouseDown={(event) => event.preventDefault()}
       onClick={action}
-      disabled={!editor}
+      disabled={!editor || disabled}
     >
-      {label}
+      {display}
     </button>
   )
 
@@ -781,10 +960,63 @@ function NoteEditor({
       <div className="notes-editor-toolbar">
         {toolbarButton('H1', editor?.isActive('heading', { level: 1 }) ?? false, () => editor?.chain().focus().toggleHeading({ level: 1 }).run())}
         {toolbarButton('H2', editor?.isActive('heading', { level: 2 }) ?? false, () => editor?.chain().focus().toggleHeading({ level: 2 }).run())}
-        {toolbarButton('B', editor?.isActive('bold') ?? false, () => editor?.chain().focus().toggleBold().run())}
-        {toolbarButton('I', editor?.isActive('italic') ?? false, () => editor?.chain().focus().toggleItalic().run())}
-        {toolbarButton('• Список', editor?.isActive('bulletList') ?? false, () => editor?.chain().focus().toggleBulletList().run())}
-        {toolbarButton('1. Список', editor?.isActive('orderedList') ?? false, () => editor?.chain().focus().toggleOrderedList().run())}
+        {toolbarButton('B', editor?.isActive('bold') ?? false, () => editor?.chain().focus().toggleBold().run(), false, <strong>B</strong>)}
+        {toolbarButton('I', editor?.isActive('italic') ?? false, () => editor?.chain().focus().toggleItalic().run(), false, <em>I</em>)}
+        {toolbarButton('Подчёркнутый', editor?.isActive('underline') ?? false, () => editor?.chain().focus().toggleUnderline().run(), false, <u>U</u>)}
+        {toolbarButton('Зачёркнутый', editor?.isActive('strike') ?? false, () => editor?.chain().focus().toggleStrike().run(), false, <s>S</s>)}
+        {toolbarButton('Ссылка', editor?.isActive('link') ?? false, editLink, false, '🔗')}
+        {toolbarButton('Цитата', editor?.isActive('blockquote') ?? false, () => editor?.chain().focus().toggleBlockquote().run(), false, '❝')}
+        {toolbarButton('Код', editor?.isActive('code') ?? false, () => editor?.chain().focus().toggleCode().run(), false, '</>')}
+        {toolbarButton('Блок кода', editor?.isActive('codeBlock') ?? false, () => editor?.chain().focus().toggleCodeBlock().run(), false, '{ }')}
+        {toolbarButton('• Список', editor?.isActive('bulletList') ?? false, () => editor?.chain().focus().toggleBulletList().run(), false, '•☰')}
+        {toolbarButton('1. Список', editor?.isActive('orderedList') ?? false, () => editor?.chain().focus().toggleOrderedList().run(), false, '1.☰')}
+        {toolbarButton('☑ Задачи', editor?.isActive('taskList') ?? false, () => editor?.chain().focus().toggleTaskList().run(), false, '☑')}
+        {(['left', 'center', 'right', 'justify'] as const).map((alignment, index) =>
+          toolbarButton(['По левому краю', 'По центру', 'По правому краю', 'По ширине'][index],
+            editor?.isActive({ textAlign: alignment }) ?? false,
+            () => editor?.chain().focus().setTextAlign(alignment).run(), false,
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M1 3h14M1 8h14M1 13h14" />
+              <path d={alignment === 'left' ? 'M1 5.5h8M1 10.5h8' : alignment === 'center' ? 'M4 5.5h8M4 10.5h8' : alignment === 'right' ? 'M7 5.5h8M7 10.5h8' : 'M1 5.5h14M1 10.5h14'} />
+            </svg>))}
+        <select aria-label="Шрифт" title="Шрифт" value={editor?.getAttributes('textStyle').fontFamily ?? ''} disabled={!editor} onChange={(event) => {
+          const value = event.currentTarget.value
+          if (value) editor?.chain().focus().setFontFamily(value).run()
+          else editor?.chain().focus().unsetFontFamily().run()
+        }}>
+          <option value="">Шрифт</option>
+          <option value="Arial">Arial</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Tahoma">Tahoma</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Verdana">Verdana</option>
+        </select>
+        <select aria-label="Размер текста" title="Размер текста" value={editor?.getAttributes('textStyle').fontSize ?? ''} disabled={!editor} onChange={(event) => {
+          const value = event.currentTarget.value
+          if (value) editor?.chain().focus().setFontSize(value).run()
+          else editor?.chain().focus().unsetFontSize().run()
+        }}>
+          <option value="">Размер</option>
+          {[12, 14, 16, 18, 20, 24, 32, 48].map((size) => <option key={size} value={`${size}px`}>{size} px</option>)}
+        </select>
+        <NoteColorPicker label="Цвет текста" defaultLabel="Цвет по умолчанию" color={editor?.getAttributes('textStyle').color ?? null} disabled={!editor} onChange={(value) => {
+          if (value) editor?.chain().focus().setColor(value).run()
+          else editor?.chain().focus().unsetColor().run()
+        }} />
+        <NoteColorPicker label="Цвет выделения" defaultLabel="Без выделения" color={editor?.getAttributes('highlight').color ?? null} disabled={!editor} onChange={(value) => {
+          if (value) editor?.chain().focus().setHighlight({ color: value }).run()
+          else editor?.chain().focus().unsetHighlight().run()
+        }} />
+        {toolbarButton('Вставить таблицу', false, () => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(), false, '▦')}
+        {editor?.isActive('table') && (
+          <>
+            {toolbarButton('+ Строка', false, () => editor.chain().focus().addRowAfter().run(), false, '+стр')}
+            {toolbarButton('− Строка', false, () => editor.chain().focus().deleteRow().run(), false, '−стр')}
+            {toolbarButton('+ Столбец', false, () => editor.chain().focus().addColumnAfter().run(), false, '+стб')}
+            {toolbarButton('− Столбец', false, () => editor.chain().focus().deleteColumn().run(), false, '−стб')}
+            {toolbarButton('Удалить таблицу', false, () => editor.chain().focus().deleteTable().run(), false, '×▦')}
+          </>
+        )}
         <span className={`notes-save-state${saveState === 'error' ? ' is-error' : ''}`} title={saveError}>
           {saveState === 'saving' ? 'Сохранение…'
             : saveState === 'unsaved' ? 'Есть изменения'
@@ -795,6 +1027,18 @@ function NoteEditor({
         )}
         <button type="button" className="notes-delete-page" onClick={onDelete}>Удалить страницу</button>
       </div>
+      {pasteOptionsVisible && (
+        <div className="notes-paste-options" role="group" aria-label="Варианты вставки">
+          <span>Вставка:</span>
+          <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={dismissPasteOptions}>
+            Оставить форматирование
+          </button>
+          <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={pasteAsPlainText}>
+            Только текст
+          </button>
+        </div>
+      )}
+      {formatError && <p className="notes-save-state is-error" role="alert">{formatError}</p>}
       <input
         className="notes-title-input"
         aria-label="Заголовок страницы"

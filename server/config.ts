@@ -40,7 +40,7 @@ export const GN_TABLE_CONFIGS: Record<string, GnTableConfig> = {
   'budget-items': {
     tableName: 'GN_budget_network_item',
     idColumn: 'GN_b_id',
-    editableColumns: ['GN_budget_network_item'],
+    editableColumns: ['GN_budget_network_item', 'Кратко'],
   },
   'pao-budget-items': {
     tableName: 'PAO__budget_network_item',

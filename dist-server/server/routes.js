@@ -1,8 +1,148 @@
 import { randomUUID } from 'crypto';
 import { createDbClient, toFiniteNumber, buildFallbackCalculationLine } from './db.js';
 import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS } from './config.js';
-// Маршруты backend-сервера.
-// Этот модуль регистрирует HTTP endpoints для сущностей GN и расчета лимитов.
+import { isSafeNoteLink } from '../shared/noteFormatting.js';
+function extractNoteText(content) {
+    if (!content || typeof content !== 'object')
+        return '';
+    const node = content;
+    const ownText = typeof node.text === 'string' ? node.text : '';
+    const children = Array.isArray(node.content) ? node.content : [];
+    return [ownText, ...children.map(extractNoteText)].filter(Boolean).join(' ');
+}
+function parseNotesId(value) {
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+function normalizeNotesTitle(value, allowEmpty = false) {
+    if (typeof value !== 'string')
+        return null;
+    const title = value.trim();
+    if ((!allowEmpty && title.length === 0) || title.length > 200)
+        return null;
+    return title;
+}
+function normalizeNotesTags(value) {
+    if (value === undefined)
+        return [];
+    if (!Array.isArray(value) || value.length > 20)
+        return null;
+    const tags = [];
+    const seen = new Set();
+    for (const item of value) {
+        if (typeof item !== 'string')
+            return null;
+        const tag = item.trim();
+        if (!tag || tag.length > 40)
+            return null;
+        const key = tag.toLocaleLowerCase('ru');
+        if (!seen.has(key)) {
+            seen.add(key);
+            tags.push(tag);
+        }
+    }
+    return tags;
+}
+export function isNotesDocument(value, root = true) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return false;
+    const node = value;
+    if (typeof node.type !== 'string')
+        return false;
+    const allowedKeys = new Set(['type', 'text', 'content', 'attrs', 'marks']);
+    if (Object.keys(node).some((key) => !allowedKeys.has(key)))
+        return false;
+    const allowedTypes = new Set(['doc', 'paragraph', 'text', 'heading', 'bulletList', 'orderedList', 'listItem', 'hardBreak',
+        'blockquote', 'codeBlock', 'table', 'tableRow', 'tableCell', 'tableHeader', 'taskList', 'taskItem']);
+    if (!allowedTypes.has(node.type) || (root && node.type !== 'doc'))
+        return false;
+    if (node.type === 'text') {
+        if (typeof node.text !== 'string' || node.text.length > 1000000 || node.content !== undefined)
+            return false;
+    }
+    else if (node.text !== undefined) {
+        return false;
+    }
+    if (node.attrs !== undefined) {
+        if (!node.attrs || typeof node.attrs !== 'object' || Array.isArray(node.attrs))
+            return false;
+        const attrs = node.attrs;
+        if (node.type === 'heading' || node.type === 'paragraph') {
+            if (Object.keys(attrs).some((key) => !['level', 'textAlign'].includes(key))
+                || (node.type === 'heading' && ![1, 2, 3].includes(Number(attrs.level)))
+                || (node.type === 'paragraph' && attrs.level !== undefined)
+                || (attrs.textAlign != null && !['left', 'center', 'right', 'justify'].includes(String(attrs.textAlign))))
+                return false;
+        }
+        else if (node.type === 'orderedList') {
+            if (Object.keys(attrs).some((key) => !['order', 'start', 'type'].includes(key))
+                || (attrs.order !== undefined && !Number.isInteger(attrs.order))
+                || (attrs.start !== undefined && !Number.isSafeInteger(attrs.start))
+                || (attrs.type !== undefined && attrs.type !== null
+                    && (typeof attrs.type !== 'string' || !['1', 'a', 'A', 'i', 'I'].includes(attrs.type))))
+                return false;
+        }
+        else if (node.type === 'codeBlock') {
+            if (Object.keys(attrs).some((key) => key !== 'language')
+                || (attrs.language != null && (typeof attrs.language !== 'string' || !/^[\w+-]{1,40}$/.test(attrs.language))))
+                return false;
+        }
+        else if (node.type === 'taskItem') {
+            if (Object.keys(attrs).some((key) => key !== 'checked') || typeof attrs.checked !== 'boolean')
+                return false;
+        }
+        else if (node.type === 'tableCell' || node.type === 'tableHeader') {
+            if (Object.keys(attrs).some((key) => !['colspan', 'rowspan', 'colwidth', 'align'].includes(key))
+                || ['colspan', 'rowspan'].some((key) => attrs[key] !== undefined
+                    && (!Number.isSafeInteger(attrs[key]) || Number(attrs[key]) < 1 || Number(attrs[key]) > 100))
+                || (attrs.colwidth != null && (!Array.isArray(attrs.colwidth)
+                    || attrs.colwidth.length > 100 || attrs.colwidth.some((width) => !Number.isSafeInteger(width) || Number(width) < 0 || Number(width) > 10000)))
+                || (attrs.align != null && !['left', 'center', 'right'].includes(String(attrs.align))))
+                return false;
+        }
+        else {
+            return false;
+        }
+    }
+    if (node.marks !== undefined) {
+        if (!Array.isArray(node.marks) || node.marks.some((mark) => {
+            if (!mark || typeof mark !== 'object' || Array.isArray(mark))
+                return true;
+            const markValue = mark;
+            if (Object.keys(mark).some((key) => !['type', 'attrs'].includes(key)))
+                return true;
+            if (['bold', 'italic', 'underline', 'strike', 'code'].includes(String(markValue.type)))
+                return markValue.attrs !== undefined;
+            if (!markValue.attrs || typeof markValue.attrs !== 'object' || Array.isArray(markValue.attrs))
+                return true;
+            const attrs = markValue.attrs;
+            if (markValue.type === 'link') {
+                return Object.keys(attrs).some((key) => !['href', 'target', 'rel', 'class', 'title'].includes(key))
+                    || !isSafeNoteLink(attrs.href)
+                    || (attrs.target != null && attrs.target !== '_blank')
+                    || (attrs.rel != null && attrs.rel !== 'noopener noreferrer nofollow')
+                    || attrs.class != null || (attrs.title != null && (typeof attrs.title !== 'string' || attrs.title.length > 200));
+            }
+            const isColor = (value) => value == null || (typeof value === 'string'
+                && (/^#[0-9a-f]{3,8}$/i.test(value) || /^rgba?\([\d.,% ]+\)$/i.test(value) || /^[a-z]{1,20}$/i.test(value)));
+            if (markValue.type === 'highlight')
+                return Object.keys(attrs).some((key) => key !== 'color') || !isColor(attrs.color);
+            if (markValue.type === 'textStyle') {
+                return Object.keys(attrs).some((key) => !['color', 'fontFamily', 'fontSize'].includes(key))
+                    || !isColor(attrs.color)
+                    || (attrs.fontFamily != null && (typeof attrs.fontFamily !== 'string' || !/^[\w\s,'"-]{1,120}$/.test(attrs.fontFamily)))
+                    || (attrs.fontSize != null && (typeof attrs.fontSize !== 'string' || !/^\d{1,3}(?:\.\d{1,2})?(?:px|pt|em|rem|%)$/.test(attrs.fontSize)));
+            }
+            return true;
+        }))
+            return false;
+    }
+    if (node.content !== undefined) {
+        if (!Array.isArray(node.content) || node.content.some((child) => !isNotesDocument(child, false)))
+            return false;
+    }
+    return true;
+}
 export function setupRoutes(app) {
     const satellitesControlUsers = {
         ADM: process.env.SAT_CTRL_PASS_ADM ?? '',
@@ -12,6 +152,18 @@ export function setupRoutes(app) {
     };
     const satellitesControlSessions = new Map();
     const satellitesSessionTtlMs = 8 * 60 * 60 * 1000;
+    const dashboardTileKeys = [
+        'services',
+        'contracts',
+        'primary',
+        'cellular',
+        'satellites',
+        'purchases',
+        'import-substitution',
+        'equipment-accounting',
+    ];
+    const dashboardTileStatuses = ['red', 'yellow', 'green'];
+    const dashboardBdrFields = ['Лимит', 'БДР25корр', 'БДР26', 'БДР26корр', 'БДР27'];
     function getSatellitesUserByToken(req) {
         const authHeader = String(req.headers.authorization ?? '').trim();
         if (!authHeader.toLowerCase().startsWith('bearer '))
@@ -47,6 +199,675 @@ export function setupRoutes(app) {
     // Простой endpoint для проверки, что сервер доступен.
     app.get('/api/health', (req, res) => {
         res.json({ status: 'ok' });
+    });
+    app.get('/api/notes', async (_req, res) => {
+        const client = await createDbClient();
+        try {
+            const [notebooks, sections, pages] = await Promise.all([
+                client.query(`
+          SELECT "id", "title", "position", "updated_at" AS "updatedAt"
+          FROM "app_notes_notebooks"
+          ORDER BY "position", "id"
+        `),
+                client.query(`
+          SELECT "id", "notebook_id" AS "notebookId", "title", "position"
+          FROM "app_notes_sections"
+          ORDER BY "notebook_id", "position", "id"
+        `),
+                client.query(`
+          SELECT p."id", p."section_id" AS "sectionId", p."title", p."position",
+                 p."updated_at" AS "updatedAt",
+                 COALESCE(ARRAY_AGG(t."name") FILTER (WHERE t."id" IS NOT NULL), ARRAY[]::TEXT[]) AS "tags"
+          FROM "app_notes_pages" p
+          LEFT JOIN "app_notes_page_tags" pt ON pt."page_id" = p."id"
+          LEFT JOIN "app_notes_tags" t ON t."id" = pt."tag_id"
+          GROUP BY p."id"
+          ORDER BY p."section_id", p."position", p."id"
+        `),
+            ]);
+            res.json({ notebooks: notebooks.rows, sections: sections.rows, pages: pages.rows });
+        }
+        catch (err) {
+            console.error('Failed to fetch notes workspace', err);
+            res.status(500).json({ error: 'Failed to fetch notes workspace' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.get('/api/notes/search', async (req, res) => {
+        const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+        if (query.length > 200) {
+            res.status(400).json({ error: 'Search query must be 200 characters or fewer' });
+            return;
+        }
+        if (!query) {
+            res.json([]);
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        SELECT p."id", p."section_id" AS "sectionId", s."notebook_id" AS "notebookId",
+               p."title", p."content_text" AS "contentText", p."updated_at" AS "updatedAt",
+               s."title" AS "sectionTitle", n."title" AS "notebookTitle",
+               COALESCE(ARRAY_AGG(DISTINCT t."name") FILTER (WHERE t."id" IS NOT NULL), ARRAY[]::TEXT[]) AS "tags",
+               TS_RANK(p."search_vector", PLAINTO_TSQUERY('simple', $1::TEXT)) AS "rank"
+        FROM "app_notes_pages" p
+        JOIN "app_notes_sections" s ON s."id" = p."section_id"
+        JOIN "app_notes_notebooks" n ON n."id" = s."notebook_id"
+        LEFT JOIN "app_notes_page_tags" pt ON pt."page_id" = p."id"
+        LEFT JOIN "app_notes_tags" t ON t."id" = pt."tag_id"
+        WHERE p."search_vector" @@ PLAINTO_TSQUERY('simple', $1::TEXT)
+           OR p."title" ILIKE '%' || $1::TEXT || '%'
+           OR p."content_text" ILIKE '%' || $1::TEXT || '%'
+           OR EXISTS (
+             SELECT 1 FROM "app_notes_page_tags" matched_pt
+             JOIN "app_notes_tags" matched_t ON matched_t."id" = matched_pt."tag_id"
+             WHERE matched_pt."page_id" = p."id"
+               AND matched_t."name" ILIKE '%' || $1::TEXT || '%'
+           )
+        GROUP BY p."id", s."id", n."id"
+        ORDER BY "rank" DESC, p."updated_at" DESC
+        LIMIT 100
+      `, [query]);
+            res.json(result.rows);
+        }
+        catch (err) {
+            console.error('Failed to search notes', err);
+            res.status(500).json({ error: 'Failed to search notes' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.post('/api/notes/notebooks', async (req, res) => {
+        const title = normalizeNotesTitle(req.body?.title);
+        if (title === null) {
+            res.status(400).json({ error: 'Notebook title is required and must be 200 characters or fewer' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        INSERT INTO "app_notes_notebooks" ("title", "position")
+        SELECT $1, COALESCE(MAX("position"), -1) + 1 FROM "app_notes_notebooks"
+        RETURNING "id", "title", "position", "updated_at" AS "updatedAt"
+      `, [title]);
+            res.status(201).json(result.rows[0]);
+        }
+        catch (err) {
+            console.error('Failed to create notes notebook', err);
+            res.status(500).json({ error: 'Failed to create notes notebook' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.put('/api/notes/notebooks/:id', async (req, res) => {
+        const id = parseNotesId(req.params.id);
+        const title = normalizeNotesTitle(req.body?.title);
+        if (id === null || title === null) {
+            res.status(400).json({ error: 'Valid notebook ID and title are required' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        UPDATE "app_notes_notebooks"
+        SET "title" = $1, "updated_at" = NOW()
+        WHERE "id" = $2
+        RETURNING "id", "title", "position", "updated_at" AS "updatedAt"
+      `, [title, id]);
+            if (result.rows.length === 0) {
+                res.status(404).json({ error: 'Notebook not found' });
+                return;
+            }
+            res.json(result.rows[0]);
+        }
+        catch (err) {
+            console.error('Failed to update notes notebook', err);
+            res.status(500).json({ error: 'Failed to update notes notebook' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.delete('/api/notes/notebooks/:id', async (req, res) => {
+        const id = parseNotesId(req.params.id);
+        if (id === null) {
+            res.status(400).json({ error: 'Valid notebook ID is required' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const notebookResult = await client.query('SELECT "id" FROM "app_notes_notebooks" WHERE "id" = $1 FOR UPDATE', [id]);
+            if (notebookResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                res.status(404).json({ error: 'Notebook not found' });
+                return;
+            }
+            const sectionsResult = await client.query('SELECT 1 FROM "app_notes_sections" WHERE "notebook_id" = $1 LIMIT 1', [id]);
+            if (sectionsResult.rows.length > 0) {
+                await client.query('ROLLBACK');
+                res.status(409).json({ error: 'Cannot delete a notebook that contains sections' });
+                return;
+            }
+            await client.query('DELETE FROM "app_notes_notebooks" WHERE "id" = $1', [id]);
+            await client.query('COMMIT');
+            res.sendStatus(204);
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to delete notes notebook', err);
+            res.status(500).json({ error: 'Failed to delete notes notebook' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.post('/api/notes/sections', async (req, res) => {
+        const notebookId = parseNotesId(String(req.body?.notebookId ?? ''));
+        const title = normalizeNotesTitle(req.body?.title);
+        if (notebookId === null || title === null) {
+            res.status(400).json({ error: 'Valid notebook ID and section title are required' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        INSERT INTO "app_notes_sections" ("notebook_id", "title", "position")
+        SELECT n."id", $2, COALESCE((
+          SELECT MAX(s."position") + 1
+          FROM "app_notes_sections" s
+          WHERE s."notebook_id" = n."id"
+        ), 0)
+        FROM "app_notes_notebooks" n
+        WHERE n."id" = $1
+        RETURNING "id", "notebook_id" AS "notebookId", "title", "position"
+      `, [notebookId, title]);
+            if (result.rows.length === 0) {
+                res.status(404).json({ error: 'Notebook not found' });
+                return;
+            }
+            res.status(201).json(result.rows[0]);
+        }
+        catch (err) {
+            console.error('Failed to create notes section', err);
+            res.status(500).json({ error: 'Failed to create notes section' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.put('/api/notes/sections/:id', async (req, res) => {
+        const id = parseNotesId(req.params.id);
+        const title = normalizeNotesTitle(req.body?.title);
+        if (id === null || title === null) {
+            res.status(400).json({ error: 'Valid section ID and title are required' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        UPDATE "app_notes_sections"
+        SET "title" = $1, "updated_at" = NOW()
+        WHERE "id" = $2
+        RETURNING "id", "notebook_id" AS "notebookId", "title", "position"
+      `, [title, id]);
+            if (result.rows.length === 0) {
+                res.status(404).json({ error: 'Section not found' });
+                return;
+            }
+            res.json(result.rows[0]);
+        }
+        catch (err) {
+            console.error('Failed to update notes section', err);
+            res.status(500).json({ error: 'Failed to update notes section' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.delete('/api/notes/sections/:id', async (req, res) => {
+        const id = parseNotesId(req.params.id);
+        if (id === null) {
+            res.status(400).json({ error: 'Valid section ID is required' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const sectionResult = await client.query(`
+        SELECT "id", "notebook_id" AS "notebookId", "title", "position"
+        FROM "app_notes_sections"
+        WHERE "id" = $1
+        FOR UPDATE
+      `, [id]);
+            if (sectionResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                res.status(404).json({ error: 'Section not found' });
+                return;
+            }
+            const pagesResult = await client.query(`
+        SELECT p."id", p."section_id" AS "sectionId", p."title", p."content",
+               p."position", p."updated_at" AS "updatedAt",
+               COALESCE((
+                 SELECT ARRAY_AGG(t."name")
+                 FROM "app_notes_page_tags" pt
+                 JOIN "app_notes_tags" t ON t."id" = pt."tag_id"
+                 WHERE pt."page_id" = p."id"
+               ), ARRAY[]::TEXT[]) AS "tags"
+        FROM "app_notes_pages" p
+        WHERE p."section_id" = $1
+        ORDER BY p."position", p."id"
+        FOR UPDATE OF p
+      `, [id]);
+            await client.query('DELETE FROM "app_notes_sections" WHERE "id" = $1', [id]);
+            await client.query('COMMIT');
+            res.json({ section: sectionResult.rows[0], pages: pagesResult.rows });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to delete notes section', err);
+            res.status(500).json({ error: 'Failed to delete notes section' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.post('/api/notes/sections/:id/restore', async (req, res) => {
+        const deletedId = parseNotesId(req.params.id);
+        const snapshot = req.body;
+        const deletedSectionId = parseNotesId(String(snapshot?.section?.id ?? ''));
+        const notebookId = parseNotesId(String(snapshot?.section?.notebookId ?? ''));
+        const title = normalizeNotesTitle(snapshot?.section?.title);
+        const position = Number(snapshot?.section?.position);
+        const pages = snapshot?.pages;
+        if (deletedId === null || deletedSectionId !== deletedId || notebookId === null || title === null
+            || !Number.isSafeInteger(position) || position < 0 || !Array.isArray(pages)
+            || pages.some((page) => {
+                const pageId = parseNotesId(String(page.id ?? ''));
+                const pageSectionId = parseNotesId(String(page.sectionId ?? ''));
+                const pageTitle = normalizeNotesTitle(page.title, true);
+                const pagePosition = Number(page.position);
+                const tags = normalizeNotesTags(page.tags);
+                return pageId === null || pageSectionId !== deletedId || pageTitle === null
+                    || !Number.isSafeInteger(pagePosition) || pagePosition < 0
+                    || !isNotesDocument(page.content) || JSON.stringify(page.content).length > 1000000
+                    || tags === null;
+            })) {
+            res.status(400).json({ error: 'Invalid deleted section snapshot' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const sectionResult = await client.query(`
+        INSERT INTO "app_notes_sections" ("notebook_id", "title", "position")
+        SELECT "id", $2, $3
+        FROM "app_notes_notebooks"
+        WHERE "id" = $1
+        RETURNING "id", "notebook_id" AS "notebookId", "title", "position"
+      `, [notebookId, title, position]);
+            if (sectionResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                res.status(404).json({ error: 'Notebook not found' });
+                return;
+            }
+            const restoredSection = sectionResult.rows[0];
+            const restoredPages = [];
+            for (const page of pages) {
+                const pageTitle = normalizeNotesTitle(page.title, true);
+                const contentText = extractNoteText(page.content).slice(0, 1000000);
+                const pageResult = await client.query(`
+          INSERT INTO "app_notes_pages" ("section_id", "title", "position", "content", "content_text", "search_vector")
+          VALUES ($1, $2, $3, $4::jsonb, $5, TO_TSVECTOR('simple', CONCAT_WS(' ', $2::TEXT, $5::TEXT)))
+          RETURNING "id", "title"
+        `, [restoredSection.id, pageTitle, Number(page.position), JSON.stringify(page.content), contentText]);
+                const restoredPage = pageResult.rows[0];
+                for (const tag of normalizeNotesTags(page.tags)) {
+                    const tagResult = await client.query(`
+            INSERT INTO "app_notes_tags" ("name")
+            VALUES ($1)
+            ON CONFLICT ((LOWER("name"))) DO UPDATE SET "name" = EXCLUDED."name"
+            RETURNING "id"
+          `, [tag]);
+                    await client.query('INSERT INTO "app_notes_page_tags" ("page_id", "tag_id") VALUES ($1, $2)', [restoredPage.id, tagResult.rows[0].id]);
+                }
+                restoredPages.push(restoredPage);
+            }
+            await client.query('COMMIT');
+            res.status(201).json({ section: sectionResult.rows[0], pages: restoredPages });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to restore notes section', err);
+            res.status(500).json({ error: 'Failed to restore notes section' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.get('/api/notes/pages/:id', async (req, res) => {
+        const id = parseNotesId(req.params.id);
+        if (id === null) {
+            res.status(400).json({ error: 'Valid page ID is required' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        SELECT p."id", p."section_id" AS "sectionId", p."title", p."content",
+               p."updated_at" AS "updatedAt",
+               COALESCE(ARRAY_AGG(t."name") FILTER (WHERE t."id" IS NOT NULL), ARRAY[]::TEXT[]) AS "tags"
+        FROM "app_notes_pages" p
+        LEFT JOIN "app_notes_page_tags" pt ON pt."page_id" = p."id"
+        LEFT JOIN "app_notes_tags" t ON t."id" = pt."tag_id"
+        WHERE p."id" = $1
+        GROUP BY p."id"
+      `, [id]);
+            if (result.rows.length === 0) {
+                res.status(404).json({ error: 'Page not found' });
+                return;
+            }
+            res.json(result.rows[0]);
+        }
+        catch (err) {
+            console.error('Failed to fetch notes page', err);
+            res.status(500).json({ error: 'Failed to fetch notes page' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.post('/api/notes/pages', async (req, res) => {
+        const sectionId = parseNotesId(String(req.body?.sectionId ?? ''));
+        const title = normalizeNotesTitle(req.body?.title);
+        if (sectionId === null || title === null) {
+            res.status(400).json({ error: 'Valid section ID and page title are required' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        INSERT INTO "app_notes_pages" ("section_id", "title", "position", "search_vector")
+        SELECT s."id", $2, COALESCE((
+          SELECT MAX(p."position") + 1
+          FROM "app_notes_pages" p
+          WHERE p."section_id" = s."id"
+        ), 0), TO_TSVECTOR('simple', $2::TEXT)
+        FROM "app_notes_sections" s
+        WHERE s."id" = $1
+        RETURNING "id", "section_id" AS "sectionId", "title", "position",
+                  "updated_at" AS "updatedAt", ARRAY[]::TEXT[] AS "tags"
+      `, [sectionId, title]);
+            if (result.rows.length === 0) {
+                res.status(404).json({ error: 'Section not found' });
+                return;
+            }
+            res.status(201).json(result.rows[0]);
+        }
+        catch (err) {
+            console.error('Failed to create notes page', err);
+            res.status(500).json({ error: 'Failed to create notes page' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.put('/api/notes/pages/:id', async (req, res) => {
+        const id = parseNotesId(req.params.id);
+        const title = normalizeNotesTitle(req.body?.title, true);
+        const content = req.body?.content;
+        const tags = normalizeNotesTags(req.body?.tags);
+        if (id === null || title === null || !isNotesDocument(content) || tags === null
+            || JSON.stringify(content).length > 1000000) {
+            res.status(400).json({ error: 'Invalid page content, title, or tags' });
+            return;
+        }
+        const contentText = extractNoteText(content).slice(0, 1000000);
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const pageResult = await client.query(`
+        UPDATE "app_notes_pages"
+        SET "title" = $1,
+            "content" = $2::jsonb,
+            "content_text" = $3,
+            "search_vector" = TO_TSVECTOR('simple', CONCAT_WS(' ', $1::TEXT, $3::TEXT)),
+            "updated_at" = NOW()
+        WHERE "id" = $4
+        RETURNING "id", "section_id" AS "sectionId", "title", "updated_at" AS "updatedAt"
+      `, [title, JSON.stringify(content), contentText, id]);
+            if (pageResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                res.status(404).json({ error: 'Page not found' });
+                return;
+            }
+            await client.query('DELETE FROM "app_notes_page_tags" WHERE "page_id" = $1', [id]);
+            const savedTags = [];
+            for (const tag of tags) {
+                const tagResult = await client.query(`
+          INSERT INTO "app_notes_tags" ("name")
+          VALUES ($1)
+          ON CONFLICT ((LOWER("name"))) DO UPDATE SET "name" = EXCLUDED."name"
+          RETURNING "id", "name"
+        `, [tag]);
+                const tagRow = tagResult.rows[0];
+                await client.query('INSERT INTO "app_notes_page_tags" ("page_id", "tag_id") VALUES ($1, $2)', [id, tagRow.id]);
+                savedTags.push(tagRow.name);
+            }
+            await client.query('COMMIT');
+            res.json({ ...pageResult.rows[0], tags: savedTags });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to save notes page', err);
+            res.status(500).json({ error: 'Failed to save notes page' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.delete('/api/notes/pages/:id', async (req, res) => {
+        const id = parseNotesId(req.params.id);
+        if (id === null) {
+            res.status(400).json({ error: 'Valid page ID is required' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const result = await client.query(`
+        SELECT p."id", p."section_id" AS "sectionId", p."title", p."content",
+               p."position", p."updated_at" AS "updatedAt",
+               COALESCE((
+                 SELECT ARRAY_AGG(t."name")
+                 FROM "app_notes_page_tags" pt
+                 JOIN "app_notes_tags" t ON t."id" = pt."tag_id"
+                 WHERE pt."page_id" = p."id"
+               ), ARRAY[]::TEXT[]) AS "tags"
+        FROM "app_notes_pages" p
+        WHERE p."id" = $1
+        FOR UPDATE OF p
+      `, [id]);
+            if (result.rows.length === 0) {
+                await client.query('ROLLBACK');
+                res.status(404).json({ error: 'Page not found' });
+                return;
+            }
+            await client.query('DELETE FROM "app_notes_pages" WHERE "id" = $1', [id]);
+            await client.query('COMMIT');
+            res.json(result.rows[0]);
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to delete notes page', err);
+            res.status(500).json({ error: 'Failed to delete notes page' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.post('/api/notes/pages/:id/restore', async (req, res) => {
+        const deletedId = parseNotesId(req.params.id);
+        const snapshot = req.body;
+        const snapshotId = parseNotesId(String(snapshot?.id ?? ''));
+        const sectionId = parseNotesId(String(snapshot?.sectionId ?? ''));
+        const title = normalizeNotesTitle(snapshot?.title, true);
+        const position = Number(snapshot?.position);
+        const tags = normalizeNotesTags(snapshot?.tags);
+        if (!snapshot || deletedId === null || snapshotId !== deletedId || sectionId === null || title === null
+            || !Number.isSafeInteger(position) || position < 0 || !isNotesDocument(snapshot?.content)
+            || JSON.stringify(snapshot?.content).length > 1000000 || tags === null) {
+            res.status(400).json({ error: 'Invalid deleted page snapshot' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const contentText = extractNoteText(snapshot.content).slice(0, 1000000);
+            const pageResult = await client.query(`
+        INSERT INTO "app_notes_pages" ("section_id", "title", "position", "content", "content_text", "search_vector")
+        SELECT "id", $2, $3, $4::jsonb, $5, TO_TSVECTOR('simple', CONCAT_WS(' ', $2::TEXT, $5::TEXT))
+        FROM "app_notes_sections"
+        WHERE "id" = $1
+        RETURNING "id", "section_id" AS "sectionId", "title", "position", "updated_at" AS "updatedAt"
+      `, [sectionId, title, position, JSON.stringify(snapshot.content), contentText]);
+            if (pageResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                res.status(404).json({ error: 'Section not found' });
+                return;
+            }
+            const restoredPage = pageResult.rows[0];
+            for (const tag of tags) {
+                const tagResult = await client.query(`
+          INSERT INTO "app_notes_tags" ("name")
+          VALUES ($1)
+          ON CONFLICT ((LOWER("name"))) DO UPDATE SET "name" = EXCLUDED."name"
+          RETURNING "id"
+        `, [tag]);
+                await client.query('INSERT INTO "app_notes_page_tags" ("page_id", "tag_id") VALUES ($1, $2)', [restoredPage.id, tagResult.rows[0].id]);
+            }
+            await client.query('COMMIT');
+            res.status(201).json({ ...pageResult.rows[0], tags });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to restore notes page', err);
+            res.status(500).json({ error: 'Failed to restore notes page' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.get('/api/database/schema', async (_req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        SELECT
+          current_database() AS database,
+          tables.table_schema AS schema_name,
+          tables.table_name,
+          columns.column_name,
+          columns.data_type,
+          columns.udt_name,
+          columns.is_nullable,
+          foreign_keys.foreign_schema,
+          foreign_keys.foreign_table,
+          foreign_keys.foreign_column
+        FROM information_schema.tables AS tables
+        JOIN information_schema.columns AS columns
+          ON columns.table_schema = tables.table_schema
+          AND columns.table_name = tables.table_name
+        LEFT JOIN (
+          SELECT
+            source_namespace.nspname AS table_schema,
+            source_table.relname AS table_name,
+            source_column.attname AS column_name,
+            target_namespace.nspname AS foreign_schema,
+            target_table.relname AS foreign_table,
+            target_column.attname AS foreign_column
+          FROM pg_catalog.pg_constraint AS foreign_key
+          JOIN pg_catalog.pg_class AS source_table
+            ON source_table.oid = foreign_key.conrelid
+          JOIN pg_catalog.pg_namespace AS source_namespace
+            ON source_namespace.oid = source_table.relnamespace
+          JOIN pg_catalog.pg_class AS target_table
+            ON target_table.oid = foreign_key.confrelid
+          JOIN pg_catalog.pg_namespace AS target_namespace
+            ON target_namespace.oid = target_table.relnamespace
+          JOIN LATERAL unnest(foreign_key.conkey, foreign_key.confkey)
+            WITH ORDINALITY AS key_columns(source_column_id, target_column_id, position)
+            ON TRUE
+          JOIN pg_catalog.pg_attribute AS source_column
+            ON source_column.attrelid = source_table.oid
+            AND source_column.attnum = key_columns.source_column_id
+          JOIN pg_catalog.pg_attribute AS target_column
+            ON target_column.attrelid = target_table.oid
+            AND target_column.attnum = key_columns.target_column_id
+          WHERE foreign_key.contype = 'f'
+        ) AS foreign_keys
+          ON foreign_keys.table_schema = columns.table_schema
+          AND foreign_keys.table_name = columns.table_name
+          AND foreign_keys.column_name = columns.column_name
+        WHERE tables.table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN')
+          AND tables.table_schema NOT IN ('information_schema', 'pg_catalog')
+          AND tables.table_schema NOT LIKE 'pg_toast%'
+        ORDER BY tables.table_schema, tables.table_name, columns.ordinal_position
+      `);
+            const tablesByName = new Map();
+            for (const row of result.rows) {
+                const key = `${row.schema_name}.${row.table_name}`;
+                let table = tablesByName.get(key);
+                if (!table) {
+                    table = { schema: row.schema_name, name: row.table_name, columns: [] };
+                    tablesByName.set(key, table);
+                }
+                const type = row.data_type === 'USER-DEFINED' || row.data_type === 'ARRAY'
+                    ? row.udt_name.replace(/^_/, '') + (row.data_type === 'ARRAY' ? '[]' : '')
+                    : row.data_type;
+                let column = table.columns.find((item) => item.name === row.column_name);
+                if (!column) {
+                    column = {
+                        name: row.column_name,
+                        type,
+                        nullable: row.is_nullable === 'YES',
+                        foreignKeys: [],
+                    };
+                    table.columns.push(column);
+                }
+                if (row.foreign_schema && row.foreign_table && row.foreign_column) {
+                    const foreignKey = `${row.foreign_schema}.${row.foreign_table}.${row.foreign_column}`;
+                    if (!column.foreignKeys.includes(foreignKey))
+                        column.foreignKeys.push(foreignKey);
+                }
+            }
+            res.json({
+                database: result.rows[0]?.database ?? '',
+                tables: [...tablesByName.values()],
+            });
+        }
+        catch (err) {
+            console.error('Failed to fetch PostgreSQL schema', err);
+            const errorDetails = err instanceof Error
+                ? err
+                : null;
+            res.status(500).json({
+                error: 'Failed to fetch PostgreSQL schema',
+                details: {
+                    message: errorDetails?.message ?? String(err),
+                    code: typeof errorDetails?.code === 'string' ? errorDetails.code : undefined,
+                    detail: typeof errorDetails?.detail === 'string' ? errorDetails.detail : undefined,
+                    hint: typeof errorDetails?.hint === 'string' ? errorDetails.hint : undefined,
+                },
+            });
+        }
+        finally {
+            await client.end();
+        }
     });
     app.get('/api/satellites/summary', async (req, res) => {
         const client = await createDbClient();
@@ -101,6 +922,126 @@ export function setupRoutes(app) {
             expiresAt: Date.now() + satellitesSessionTtlMs,
         });
         res.json({ ok: true, user: username, token });
+    });
+    app.post('/api/personal-account/auth', (req, res) => {
+        const password = String(req.body?.password ?? '');
+        if (!password) {
+            res.status(400).json({ error: 'Требуется пароль пользователя АДМ' });
+            return;
+        }
+        const expectedPassword = satellitesControlUsers.ADM;
+        if (!expectedPassword) {
+            res.status(503).json({ error: 'Авторизация АДМ не настроена на сервере' });
+            return;
+        }
+        if (password !== expectedPassword) {
+            res.status(401).json({ error: 'Неверный пароль пользователя АДМ' });
+            return;
+        }
+        const token = randomUUID();
+        satellitesControlSessions.set(token, {
+            user: 'ADM',
+            expiresAt: Date.now() + satellitesSessionTtlMs,
+        });
+        res.json({ ok: true, user: 'ADM', token });
+    });
+    app.get('/api/personal-account/session', (req, res) => {
+        const authUser = getSatellitesUserByToken(req);
+        if (authUser !== 'ADM') {
+            res.status(401).json({ error: 'Требуется действующая сессия пользователя АДМ' });
+            return;
+        }
+        res.json({ ok: true, user: authUser });
+    });
+    app.get('/api/dashboard/tile-statuses', async (_req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query('SELECT "tile_key", "status" FROM "app_dashboard_tile_statuses"');
+            res.json(Object.fromEntries(result.rows.map((row) => [row.tile_key, row.status])));
+        }
+        catch (err) {
+            console.error('Failed to fetch dashboard tile statuses', err);
+            res.status(500).json({ error: 'Не удалось загрузить статусы актуальности плиток' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.put('/api/dashboard/tile-statuses/:tileKey', async (req, res) => {
+        if (getSatellitesUserByToken(req) !== 'ADM') {
+            res.status(401).json({ error: 'Изменять статусы может только пользователь АДМ' });
+            return;
+        }
+        const { tileKey } = req.params;
+        const status = String(req.body?.status ?? '');
+        if (!dashboardTileKeys.includes(tileKey)) {
+            res.status(400).json({ error: 'Неизвестная плитка дашборда' });
+            return;
+        }
+        if (!dashboardTileStatuses.includes(status)) {
+            res.status(400).json({ error: 'Статус должен быть red, yellow или green' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`INSERT INTO "app_dashboard_tile_statuses" ("tile_key", "status", "updated_by", "updated_at")
+         VALUES ($1, $2, 'ADM', NOW())
+         ON CONFLICT ("tile_key") DO UPDATE
+         SET "status" = EXCLUDED."status", "updated_by" = EXCLUDED."updated_by", "updated_at" = NOW()
+         RETURNING "tile_key", "status", "updated_by", "updated_at"`, [tileKey, status]);
+            res.json(result.rows[0]);
+        }
+        catch (err) {
+            console.error('Failed to update dashboard tile status', err);
+            res.status(500).json({ error: 'Не удалось сохранить статус плитки' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.get('/api/dashboard/bdr-field', async (_req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query('SELECT "setting_value" FROM "app_dashboard_settings" WHERE "setting_key" = $1', ['bdr_field']);
+            if (!result.rows[0] || !dashboardBdrFields.includes(result.rows[0].setting_value)) {
+                throw new Error('Dashboard BDR field setting is missing or invalid');
+            }
+            res.json({ field: result.rows[0].setting_value });
+        }
+        catch (err) {
+            console.error('Failed to fetch dashboard BDR field', err);
+            res.status(500).json({ error: 'Не удалось загрузить вариант БДР для сводки' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.put('/api/dashboard/bdr-field', async (req, res) => {
+        if (getSatellitesUserByToken(req) !== 'ADM') {
+            res.status(401).json({ error: 'Изменять вариант БДР может только пользователь АДМ' });
+            return;
+        }
+        const field = String(req.body?.field ?? '');
+        if (!dashboardBdrFields.includes(field)) {
+            res.status(400).json({ error: 'Неизвестный вариант БДР' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`INSERT INTO "app_dashboard_settings" ("setting_key", "setting_value", "updated_by", "updated_at")
+         VALUES ('bdr_field', $1, 'ADM', NOW())
+         ON CONFLICT ("setting_key") DO UPDATE
+         SET "setting_value" = EXCLUDED."setting_value", "updated_by" = EXCLUDED."updated_by", "updated_at" = NOW()
+         RETURNING "setting_value"`, [field]);
+            res.json({ field: result.rows[0].setting_value });
+        }
+        catch (err) {
+            console.error('Failed to update dashboard BDR field', err);
+            res.status(500).json({ error: 'Не удалось сохранить вариант БДР для сводки' });
+        }
+        finally {
+            await client.end();
+        }
     });
     // Satellites control route
     // Получение данных о спутниковых услугах с информацией о подразделениях
@@ -421,7 +1362,13 @@ export function setupRoutes(app) {
     app.get('/api/gn/dogovors', async (req, res) => {
         const client = await createDbClient();
         try {
-            const result = await client.query('SELECT * FROM "GN_dogovor" ORDER BY "GN_dgv_id" ASC');
+            const contractor = typeof req.query.contractor === 'string' ? req.query.contractor.trim() : '';
+            const result = await client.query(`SELECT dogovor.*
+         FROM "GN_dogovor" dogovor
+         ${contractor ? `JOIN "GN_contractor" contractor
+           ON contractor."GN_c_id" = dogovor."GN_contarctor_FK"
+           AND contractor."GN_contarctor" = $1` : ''}
+         ORDER BY dogovor."GN_dgv_id" ASC`, contractor ? [contractor] : []);
             res.json(result.rows);
         }
         catch (err) {
@@ -449,19 +1396,68 @@ export function setupRoutes(app) {
     app.get('/api/gn/contracts', async (req, res) => {
         const client = await createDbClient();
         try {
+            const conditions = [];
+            const values = [];
+            if (req.query.archive === 'true') {
+                conditions.push(`COALESCE(c."GN_contract_approval_status", 'действующий') = 'не действующий'`);
+            }
+            else if (req.query.includeArchive === 'false') {
+                conditions.push(`COALESCE(c."GN_contract_approval_status", 'действующий') <> 'не действующий'`);
+            }
+            if (typeof req.query.contractor === 'string' && req.query.contractor.trim()) {
+                values.push(req.query.contractor.trim());
+                conditions.push(`EXISTS (
+          SELECT 1
+          FROM "GN_contractor" contractor
+          WHERE contractor."GN_c_id" = d."GN_contarctor_FK"
+            AND contractor."GN_contarctor" = $${values.length}
+        )`);
+            }
+            const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
             const result = await client.query(`
         SELECT
           c.*,
-          d."GN_dogovor" AS "GN_contract_name"
+          d."GN_dogovor" AS "GN_contract_name",
+          d."GN_dogovor_note" AS "GN_dogovor_note",
+          signer."GN_department" AS "GN_dogovor_signer"
         FROM "GN_contracts" c
         LEFT JOIN "GN_dogovor" d ON c."GN_contract_dogovor_FK" = d."GN_dgv_id"
+        LEFT JOIN "GN_department" signer ON d."GN_dogovor_signer_FK" = signer."GN_Dep_id"
+        ${whereClause}
         ORDER BY c."GN_contract_id" ASC
-      `);
+      `, values);
             res.json(result.rows);
         }
         catch (err) {
             console.error(err);
             res.status(500).json({ error: 'Failed to fetch GN_contracts' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.get('/api/gn/gazprom-telecom', async (req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        SELECT
+          gt.*,
+          d."GN_dogovor" AS "GN_dogovor_name",
+          obj."GN_departament_object" AS "GN_departament_object_name",
+          p."PAO__budget_network_item" AS "PAO_budget_network_item_name",
+          dep."GN_department" AS "GN_department_name"
+        FROM "GN_gazprom_telecom" gt
+        LEFT JOIN "GN_dogovor" d ON gt."GN_dogovor_FK" = d."GN_dgv_id"
+        LEFT JOIN "GN_departament_object" obj ON gt."GN_departament_object_FK" = obj."GN_do_id"
+        LEFT JOIN "PAO__budget_network_item" p ON gt."PAO_budget_network_item_FK" = p."PAO_b_id"
+        LEFT JOIN "GN_department" dep ON gt."GN_department_FK" = dep."GN_Dep_id"
+        ORDER BY gt."GN_gazprom_telecom_id" ASC
+      `);
+            res.json(result.rows);
+        }
+        catch (err) {
+            console.error(err);
+            res.status(500).json({ error: 'Failed to fetch Gazprom Telecom rows' });
         }
         finally {
             await client.end();
@@ -492,7 +1488,12 @@ export function setupRoutes(app) {
            "GN_contract_asez_number"
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          RETURNING *,
-           (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name"`, [
+           (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name",
+           (SELECT "GN_dogovor_note" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_dogovor_note",
+           (SELECT signer."GN_department"
+            FROM "GN_dogovor" dogovor
+            LEFT JOIN "GN_department" signer ON dogovor."GN_dogovor_signer_FK" = signer."GN_Dep_id"
+            WHERE dogovor."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_dogovor_signer"`, [
                 payload.GN_contract_contractor_FK ?? null,
                 payload.GN_contract_dogovor_FK,
                 payload.GN_contract_sed_launch_date || statusUpdatedAt,
@@ -548,7 +1549,12 @@ export function setupRoutes(app) {
            "GN_contract_asez_number" = $12
          WHERE "GN_contract_id" = $13
          RETURNING *,
-           (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name"`, [
+           (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name",
+           (SELECT "GN_dogovor_note" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_dogovor_note",
+           (SELECT signer."GN_department"
+            FROM "GN_dogovor" dogovor
+            LEFT JOIN "GN_department" signer ON dogovor."GN_dogovor_signer_FK" = signer."GN_Dep_id"
+            WHERE dogovor."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_dogovor_signer"`, [
                 payload.GN_contract_contractor_FK,
                 payload.GN_contract_dogovor_FK,
                 payload.GN_contract_sed_launch_date,
@@ -1041,7 +2047,28 @@ export function setupRoutes(app) {
          FROM "GN_cellular_identifier"
          WHERE "is_deleted" = FALSE
          ORDER BY "GN_cellular_identifier_id" ASC`);
-            res.json(result.rows);
+            const costs = await client.query(`SELECT
+           c."GN_cellular_identifier_FK" AS identifier_id,
+           t."GN_cellular_tariff_plan_cost" * 1.22 AS cost_with_vat
+         FROM "GN_cellular" c
+         JOIN "GN_cellular_tariff_plan" t
+           ON t."GN_cellular_tariff_plan_id" = c."GN_cellular_tariff_plan_FK"
+         ORDER BY c."GN_cellular_identifier_FK",
+                  c."GN_cellular_tariff_plan_enabled_date" DESC NULLS LAST,
+                  c."GN_cellular_id" DESC`);
+            const costByIdentifier = new Map();
+            costs.rows.forEach((row) => {
+                const identifierId = Number(row.identifier_id);
+                if (!costByIdentifier.has(identifierId) && row.cost_with_vat != null) {
+                    costByIdentifier.set(identifierId, Number(row.cost_with_vat));
+                }
+            });
+            res.json(result.rows.map((row) => ({
+                ...row,
+                GN_cellular_identifier_tariff_cost_with_vat: String(row.GN_cellular_identifier_fio ?? '').trim()
+                    ? costByIdentifier.get(Number(row.GN_cellular_identifier_id)) ?? null
+                    : null,
+            })));
         }
         catch (err) {
             console.error(err);
@@ -1421,6 +2448,13 @@ export function setupRoutes(app) {
                 }
                 updates.push({ column: 'GN_bdr_bdr25_corr', value });
             }
+            if (payload['Кол-во БДР25корр'] !== undefined) {
+                const value = payload['Кол-во БДР25корр'] === '' ? null : Number(payload['Кол-во БДР25корр']);
+                if (value !== null && !Number.isFinite(value)) {
+                    throw new Error('Invalid Кол-во БДР25корр');
+                }
+                updates.push({ column: 'GN_bdr_bdr25_corr_kol_vo', value });
+            }
             if (payload['БДР26'] !== undefined) {
                 const value = payload['БДР26'] === '' ? null : Number(payload['БДР26']);
                 if (value !== null && Number.isNaN(value)) {
@@ -1428,12 +2462,40 @@ export function setupRoutes(app) {
                 }
                 updates.push({ column: 'GN_bdr_bdr26', value });
             }
+            if (payload['Кол-во БДР26'] !== undefined) {
+                const value = payload['Кол-во БДР26'] === '' ? null : Number(payload['Кол-во БДР26']);
+                if (value !== null && !Number.isFinite(value)) {
+                    throw new Error('Invalid Кол-во БДР26');
+                }
+                updates.push({ column: 'GN_bdr_bdr26_kol_vo', value });
+            }
             if (payload['БДР26корр'] !== undefined) {
                 const value = payload['БДР26корр'] === '' ? null : Number(payload['БДР26корр']);
                 if (value !== null && Number.isNaN(value)) {
                     throw new Error('Invalid БДР26корр');
                 }
                 updates.push({ column: 'GN_bdr_bdr26_corr', value });
+            }
+            if (payload['Кол-во БДР26корр'] !== undefined) {
+                const value = payload['Кол-во БДР26корр'] === '' ? null : Number(payload['Кол-во БДР26корр']);
+                if (value !== null && !Number.isFinite(value)) {
+                    throw new Error('Invalid Кол-во БДР26корр');
+                }
+                updates.push({ column: 'GN_bdr_bdr26_corr_kol_vo', value });
+            }
+            if (payload['Кол-во БДР27'] !== undefined) {
+                const value = payload['Кол-во БДР27'] === '' ? null : Number(payload['Кол-во БДР27']);
+                if (value !== null && !Number.isFinite(value)) {
+                    throw new Error('Invalid Кол-во БДР27');
+                }
+                updates.push({ column: 'GN_bdr_bdr27_kol_vo', value });
+            }
+            if (payload['БДР27'] !== undefined) {
+                const value = payload['БДР27'] === '' ? null : Number(payload['БДР27']);
+                if (value !== null && !Number.isFinite(value)) {
+                    throw new Error('Invalid БДР27');
+                }
+                updates.push({ column: 'GN_bdr_bdr27', value });
             }
             if (payload['Един. лимит'] !== undefined) {
                 const value = Number(payload['Един. лимит']);
@@ -1527,6 +2589,8 @@ export function setupRoutes(app) {
             return;
         }
         const values = fields.map((column) => {
+            if (config.nullableColumns?.includes(column) && req.body[column] === '')
+                return null;
             if (entity === 'objects' && column === 'GN_department_FK' && Array.isArray(req.body.GN_department_FKs)) {
                 const firstDepartmentId = Number(req.body.GN_department_FKs[0]);
                 if (!Number.isInteger(firstDepartmentId))
@@ -1534,7 +2598,8 @@ export function setupRoutes(app) {
                 return firstDepartmentId;
             }
             if (column.endsWith('_FK')) {
-                if (req.body[column] === null)
+                if (req.body[column] === null
+                    || (config.nullableForeignKeyColumns?.includes(column) && req.body[column] === ''))
                     return null;
                 const numericValue = Number(req.body[column]);
                 if (Number.isNaN(numericValue)) {
@@ -1563,15 +2628,43 @@ export function setupRoutes(app) {
         });
         const client = await createDbClient();
         try {
+            if (entity === 'contractors') {
+                await client.query(`
+          CREATE TABLE IF NOT EXISTS "GN_contractor" (
+            "GN_c_id" SERIAL PRIMARY KEY,
+            "GN_contarctor" TEXT NOT NULL
+          )
+        `);
+            }
+            if (entity === 'gazprom-telecom' && req.body.GN_departament_object_FK) {
+                const departmentId = Number(req.body.GN_department_FK);
+                const objectId = Number(req.body.GN_departament_object_FK);
+                if (!Number.isInteger(departmentId) || !Number.isInteger(objectId)) {
+                    res.status(400).json({ error: 'Для объекта требуется корректное подразделение' });
+                    return;
+                }
+                const objectResult = await client.query(`SELECT 1
+           FROM "GN_departament_object"
+           WHERE "GN_do_id" = $1
+             AND (
+               "GN_department_FK" = $2
+               OR $2 = ANY(COALESCE("GN_department_FKs", ARRAY[]::INTEGER[]))
+             )`, [objectId, departmentId]);
+                if (objectResult.rowCount === 0) {
+                    res.status(400).json({ error: 'Выбранный объект не относится к указанному подразделению' });
+                    return;
+                }
+            }
             const sequenceConfig = {
                 objects: { table: 'GN_departament_object', idColumn: 'GN_do_id' },
                 departments: { table: 'GN_department', idColumn: 'GN_Dep_id' },
                 contractors: { table: 'GN_contractor', idColumn: 'GN_c_id' },
+                dogovors: { table: 'GN_dogovor', idColumn: 'GN_dgv_id' },
             };
             const sequence = sequenceConfig[entity];
             if (sequence) {
                 await client.query(`SELECT setval(
-             pg_get_serial_sequence($1, $2),
+             pg_get_serial_sequence(format('%I', $1::text), $2::text),
              COALESCE(MAX("${sequence.idColumn}"), 1),
              COUNT(*) > 0
            )
@@ -1582,7 +2675,19 @@ export function setupRoutes(app) {
         }
         catch (err) {
             console.error(err);
-            res.status(500).json({ error: 'Failed to create GN entity row' });
+            const errorDetails = err instanceof Error
+                ? err
+                : null;
+            res.status(500).json({
+                error: 'Failed to create GN entity row',
+                details: {
+                    message: errorDetails?.message ?? String(err),
+                    code: typeof errorDetails?.code === 'string' ? errorDetails.code : undefined,
+                    detail: typeof errorDetails?.detail === 'string' ? errorDetails.detail : undefined,
+                    hint: typeof errorDetails?.hint === 'string' ? errorDetails.hint : undefined,
+                    constraint: typeof errorDetails?.constraint === 'string' ? errorDetails.constraint : undefined,
+                },
+            });
         }
         finally {
             await client.end();
@@ -1630,6 +2735,25 @@ export function setupRoutes(app) {
         }
         const client = await createDbClient();
         try {
+            if (entity === 'gazprom-telecom' && req.body.GN_departament_object_FK) {
+                const departmentId = Number(req.body.GN_department_FK);
+                const objectId = Number(req.body.GN_departament_object_FK);
+                if (!Number.isInteger(departmentId) || !Number.isInteger(objectId)) {
+                    res.status(400).json({ error: 'Для объекта требуется корректное подразделение' });
+                    return;
+                }
+                const objectResult = await client.query(`SELECT 1
+           FROM "GN_departament_object"
+           WHERE "GN_do_id" = $1
+             AND (
+               "GN_department_FK" = $2
+               OR $2 = ANY(COALESCE("GN_department_FKs", ARRAY[]::INTEGER[]))
+             )`, [objectId, departmentId]);
+                if (objectResult.rowCount === 0) {
+                    res.status(400).json({ error: 'Выбранный объект не относится к указанному подразделению' });
+                    return;
+                }
+            }
             const result = await client.query(`DELETE FROM "${config.tableName}" WHERE "${config.idColumn}" = $1`, [rowId]);
             if (result.rowCount === 0) {
                 res.status(404).json({ error: 'Row not found' });
@@ -1670,6 +2794,8 @@ export function setupRoutes(app) {
             .map((column, index) => `"${column}" = $${index + 1}`)
             .join(', ');
         const values = updates.map((column) => {
+            if (config.nullableColumns?.includes(column) && req.body[column] === '')
+                return null;
             if (entity === 'objects' && column === 'GN_department_FK' && Array.isArray(req.body.GN_department_FKs)) {
                 const firstDepartmentId = Number(req.body.GN_department_FKs[0]);
                 if (!Number.isInteger(firstDepartmentId))
@@ -1677,6 +2803,9 @@ export function setupRoutes(app) {
                 return firstDepartmentId;
             }
             if (column.endsWith('_FK')) {
+                if (req.body[column] === null
+                    || (config.nullableForeignKeyColumns?.includes(column) && req.body[column] === ''))
+                    return null;
                 const numericValue = Number(req.body[column]);
                 if (Number.isNaN(numericValue)) {
                     throw new Error(`Invalid value for ${column}`);
@@ -1743,7 +2872,7 @@ export function setupRoutes(app) {
         }
     });
     app.post('/api/gn/bdr', async (req, res) => {
-        const { pao_budget_item, department, object_name, dogovor, contractor, budget_item, predmet_dogovora, ed_izm, kol_vo, limit, bdr25_corr, bdr26, bdr26_corr, calculation, edin_limit, comments, } = req.body;
+        const { pao_budget_item, department, object_name, dogovor, contractor, budget_item, predmet_dogovora, ed_izm, kol_vo, limit, bdr25_corr, bdr25_corr_kol_vo, bdr26, bdr26_kol_vo, bdr26_corr, bdr26_corr_kol_vo, bdr27, bdr27_kol_vo, calculation, edin_limit, comments, } = req.body;
         if (!pao_budget_item ||
             !department ||
             !object_name ||
@@ -1761,14 +2890,24 @@ export function setupRoutes(app) {
         const kolVoNumber = Number(kol_vo);
         const limitNumber = Number(limit);
         const bdr25CorrNumber = bdr25_corr == null || bdr25_corr === '' ? null : Number(bdr25_corr);
+        const bdr25CorrQuantityNumber = bdr25_corr_kol_vo == null || bdr25_corr_kol_vo === '' ? null : Number(bdr25_corr_kol_vo);
         const bdr26Number = bdr26 == null || bdr26 === '' ? null : Number(bdr26);
+        const bdr26QuantityNumber = bdr26_kol_vo == null || bdr26_kol_vo === '' ? null : Number(bdr26_kol_vo);
         const bdr26CorrNumber = bdr26_corr == null || bdr26_corr === '' ? null : Number(bdr26_corr);
+        const bdr26CorrQuantityNumber = bdr26_corr_kol_vo == null || bdr26_corr_kol_vo === '' ? null : Number(bdr26_corr_kol_vo);
+        const bdr27Number = bdr27 == null || bdr27 === '' ? null : Number(bdr27);
+        const bdr27QuantityNumber = bdr27_kol_vo == null || bdr27_kol_vo === '' ? null : Number(bdr27_kol_vo);
         const edinLimitNumber = Number(edin_limit);
         if (Number.isNaN(kolVoNumber) ||
             Number.isNaN(limitNumber) ||
             (bdr25CorrNumber !== null && Number.isNaN(bdr25CorrNumber)) ||
+            (bdr25CorrQuantityNumber !== null && !Number.isFinite(bdr25CorrQuantityNumber)) ||
             (bdr26Number !== null && Number.isNaN(bdr26Number)) ||
+            (bdr26QuantityNumber !== null && !Number.isFinite(bdr26QuantityNumber)) ||
             (bdr26CorrNumber !== null && Number.isNaN(bdr26CorrNumber)) ||
+            (bdr26CorrQuantityNumber !== null && !Number.isFinite(bdr26CorrQuantityNumber)) ||
+            (bdr27Number !== null && !Number.isFinite(bdr27Number)) ||
+            (bdr27QuantityNumber !== null && !Number.isFinite(bdr27QuantityNumber)) ||
             Number.isNaN(edinLimitNumber)) {
             res.status(400).json({ error: 'Numeric fields are invalid' });
             return;
@@ -1802,11 +2941,16 @@ export function setupRoutes(app) {
            "GN_bdr_limit",
            "GN_bdr_calculation",
            "GN_bdr_bdr25_corr",
+           "GN_bdr_bdr25_corr_kol_vo",
            "GN_bdr_bdr26",
+           "GN_bdr_bdr26_kol_vo",
            "GN_bdr_bdr26_corr",
+           "GN_bdr_bdr26_corr_kol_vo",
+           "GN_bdr_bdr27",
+           "GN_bdr_bdr27_kol_vo",
            "GN_bdr_edin.limit",
            "GN_bdr_comments"
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
          RETURNING "GN_bdr_ID" AS id`, [
                 paoId,
                 departmentId,
@@ -1820,8 +2964,13 @@ export function setupRoutes(app) {
                 limitNumber,
                 calculation ?? '',
                 bdr25CorrNumber,
+                bdr25CorrQuantityNumber,
                 bdr26Number,
+                bdr26QuantityNumber,
                 bdr26CorrNumber,
+                bdr26CorrQuantityNumber,
+                bdr27Number,
+                bdr27QuantityNumber,
                 edinLimitNumber,
                 comments ?? '',
             ]);
@@ -1863,13 +3012,156 @@ export function setupRoutes(app) {
         }
     });
     // Импортозамещение endpoints
+    app.get('/api/import-substitution/history', async (_req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        SELECT "id", "label",
+               EXTRACT(EPOCH FROM "created_at") * 1000 AS "createdAt",
+               "changes"
+        FROM "GN_import_substitution_history"
+        ORDER BY "id" DESC
+        LIMIT 50
+      `);
+            res.json(result.rows);
+        }
+        catch (err) {
+            console.error('Failed to fetch equipment accounting history', err);
+            res.status(500).json({ error: 'Не удалось загрузить журнал изменений оборудования' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    function isValidEquipmentHistoryChange(change) {
+        if (!change || typeof change !== 'object' || Array.isArray(change))
+            return false;
+        const item = change;
+        if (!Number.isSafeInteger(item.rowId) || Number(item.rowId) <= 0)
+            return false;
+        if (item.type === 'create' || item.type === 'delete')
+            return true;
+        return item.type === 'update' && Boolean(item.before)
+            && typeof item.before === 'object' && !Array.isArray(item.before);
+    }
+    app.post('/api/import-substitution/history/migrate', async (req, res) => {
+        const { entries } = req.body;
+        if (!Array.isArray(entries) || entries.length === 0 || entries.length > 50
+            || entries.some((entry) => {
+                if (!entry || typeof entry !== 'object' || Array.isArray(entry))
+                    return true;
+                const item = entry;
+                return typeof item.label !== 'string' || item.label.trim().length === 0 || item.label.length > 500
+                    || typeof item.createdAt !== 'number' || !Number.isFinite(item.createdAt)
+                    || !Array.isArray(item.changes) || item.changes.length === 0 || item.changes.length > 10000
+                    || item.changes.some((change) => !isValidEquipmentHistoryChange(change));
+            })) {
+            res.status(400).json({ error: 'Некорректные данные старого журнала изменений' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            await client.query('LOCK TABLE "GN_import_substitution_history" IN EXCLUSIVE MODE');
+            const count = await client.query('SELECT COUNT(*) AS count FROM "GN_import_substitution_history"');
+            if (Number(count.rows[0].count) === 0) {
+                for (const entry of [...entries].reverse()) {
+                    const item = entry;
+                    await client.query(`
+            INSERT INTO "GN_import_substitution_history" ("label", "created_at", "changes")
+            VALUES ($1, TO_TIMESTAMP($2 / 1000.0), $3::jsonb)
+          `, [item.label.trim(), item.createdAt, JSON.stringify(item.changes)]);
+                }
+            }
+            const result = await client.query(`
+        SELECT "id", "label",
+               (EXTRACT(EPOCH FROM "created_at") * 1000)::double precision AS "createdAt",
+               "changes"
+        FROM "GN_import_substitution_history"
+        ORDER BY "id" DESC
+        LIMIT 50
+      `);
+            await client.query('COMMIT');
+            res.json(result.rows);
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to migrate legacy equipment accounting history', err);
+            res.status(500).json({ error: 'Не удалось перенести старый журнал изменений в базу данных' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.post('/api/import-substitution/history', async (req, res) => {
+        const { label, changes } = req.body;
+        if (typeof label !== 'string' || label.trim().length === 0 || label.length > 500
+            || !Array.isArray(changes) || changes.length === 0 || changes.length > 10000
+            || changes.some((change) => !isValidEquipmentHistoryChange(change))) {
+            res.status(400).json({ error: 'Проверьте описание и данные записи журнала изменений' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            await client.query('LOCK TABLE "GN_import_substitution_history" IN EXCLUSIVE MODE');
+            const result = await client.query(`
+        INSERT INTO "GN_import_substitution_history" ("label", "changes")
+        VALUES ($1, $2::jsonb)
+        RETURNING "id", "label", (EXTRACT(EPOCH FROM "created_at") * 1000)::double precision AS "createdAt", "changes"
+      `, [label.trim(), JSON.stringify(changes)]);
+            await client.query(`
+        DELETE FROM "GN_import_substitution_history"
+        WHERE "id" IN (
+          SELECT "id"
+          FROM "GN_import_substitution_history"
+          ORDER BY "id" DESC
+          OFFSET 50
+        )
+      `);
+            await client.query('COMMIT');
+            res.status(201).json(result.rows[0]);
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to save equipment accounting history', err);
+            res.status(500).json({ error: 'Не удалось сохранить журнал изменений оборудования' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.delete('/api/import-substitution/history/:id', async (req, res) => {
+        const entryId = Number(req.params.id);
+        if (!Number.isSafeInteger(entryId) || entryId <= 0) {
+            res.status(400).json({ error: 'Некорректный номер записи журнала изменений' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query('DELETE FROM "GN_import_substitution_history" WHERE "id" = $1 RETURNING "id"', [entryId]);
+            if (result.rowCount === 0) {
+                res.status(404).json({ error: 'Запись журнала изменений не найдена' });
+                return;
+            }
+            res.json({ success: true });
+        }
+        catch (err) {
+            console.error('Failed to delete equipment accounting history entry', err);
+            res.status(500).json({ error: 'Не удалось удалить запись журнала изменений' });
+        }
+        finally {
+            await client.end();
+        }
+    });
     app.get('/api/import-substitution', async (req, res) => {
         res.setHeader('Cache-Control', 'no-store');
         const client = await createDbClient();
         try {
             const result = await client.query(`SELECT
            "GN_import_substitution_id",
-           "Подразделение",
+          i."updated_at" AS "updatedAt",
+          "Подразделение",
            okdp."GN_invest_okdp_tko_is_prit" AS "Код ТКО",
            i."Наименование ТКО",
            etype."GN_equipment_type" AS "Тип",
@@ -2236,6 +3528,32 @@ export function setupRoutes(app) {
             await client.end();
         }
     });
+    app.post('/api/import-substitution/:id/restore', async (req, res) => {
+        const rowId = Number(req.params.id);
+        if (!Number.isSafeInteger(rowId) || rowId <= 0) {
+            res.status(400).json({ error: 'Invalid row id' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`UPDATE "GN_import_substitution"
+         SET "is_deleted" = FALSE, "deleted_at" = NULL, "updated_at" = NOW()
+         WHERE "GN_import_substitution_id" = $1 AND "is_deleted" = TRUE
+         RETURNING "GN_import_substitution_id"`, [rowId]);
+            if (result.rowCount === 0) {
+                res.status(404).json({ error: 'Deleted row not found' });
+                return;
+            }
+            res.json({ success: true });
+        }
+        catch (err) {
+            console.error('Failed to restore import-substitution row', err);
+            res.status(500).json({ error: 'Failed to restore import-substitution row' });
+        }
+        finally {
+            await client.end();
+        }
+    });
     app.post('/api/import-substitution/mark-missing', async (req, res) => {
         const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
         const client = await createDbClient();
@@ -2249,6 +3567,421 @@ export function setupRoutes(app) {
         catch (err) {
             console.error(err);
             res.status(500).json({ error: 'Failed to mark missing Excel rows' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.get('/api/primary/contract-departments', async (_req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        SELECT "GN_department_FK" AS "departmentId", "GN_dogovor_FK" AS "contractId"
+        FROM "GN_bdr"
+        WHERE "is_deleted" = FALSE AND "GN_department_FK" IS NOT NULL AND "GN_dogovor_FK" IS NOT NULL
+        UNION
+        SELECT "GN_department_FK" AS "departmentId", "GN_dogovor_FK" AS "contractId"
+        FROM "GN_gazprom_telecom"
+        WHERE "GN_department_FK" IS NOT NULL AND "GN_dogovor_FK" IS NOT NULL
+      `);
+            res.json(result.rows);
+        }
+        catch (err) {
+            console.error('Failed to fetch primary contract departments', err);
+            res.status(500).json({ error: 'Не удалось загрузить подразделения договоров' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.get('/api/primary', async (_req, res) => {
+        const client = await createDbClient();
+        try {
+            const result = await client.query(`
+        SELECT
+          primary_document."GN_primary_document_id" AS id,
+          primary_document."GN_department_FK" AS "departmentId",
+          department."GN_department" AS department,
+          primary_document."GN_dogovor_FK" AS "contractId",
+          dogovor."GN_dogovor" AS contract,
+          primary_document."personal_account" AS "personalAccount",
+          primary_document."document_month" AS month,
+          primary_document."details",
+          primary_document."details_enabled" AS "detailsEnabled"
+        FROM "GN_primary_documents" primary_document
+        LEFT JOIN "GN_department" department
+          ON department."GN_Dep_id" = primary_document."GN_department_FK"
+        LEFT JOIN "GN_dogovor" dogovor
+          ON dogovor."GN_dgv_id" = primary_document."GN_dogovor_FK"
+        ORDER BY primary_document."GN_primary_document_id"
+      `);
+            const [objects, budgetItems, expenseDepartments, monthValues] = await Promise.all([
+                client.query(`
+          SELECT relation."primary_document_id" AS id,
+                 object."GN_do_id" AS "itemId",
+                 object."GN_departament_object" AS label
+          FROM "GN_primary_document_objects" relation
+          JOIN "GN_departament_object" object ON object."GN_do_id" = relation."object_id"
+          ORDER BY relation."primary_document_id", object."GN_departament_object"
+        `),
+                client.query(`
+          SELECT relation."primary_document_id" AS id,
+                 item."PAO_b_id" AS "itemId",
+                 item."PAO__budget_network_item" AS label
+          FROM "GN_primary_document_pao_budget_items" relation
+          JOIN "PAO__budget_network_item" item ON item."PAO_b_id" = relation."budget_item_id"
+          ORDER BY relation."primary_document_id", item."PAO__budget_network_item"
+        `),
+                client.query(`
+          SELECT relation."primary_document_id" AS id,
+                 department."GN_Dep_id" AS "itemId",
+                 department."GN_department" AS label
+          FROM "GN_primary_document_expense_departments" relation
+          JOIN "GN_department" department ON department."GN_Dep_id" = relation."department_id"
+          ORDER BY relation."primary_document_id", department."GN_department"
+        `),
+                client.query(`
+          SELECT "primary_document_id" AS id,
+                 "document_month" AS month,
+                 "amount_with_vat" AS "amountWithVat",
+                 "edo_arrival_date" AS "edoArrivalDate",
+                 "sed_launch_date" AS "sedLaunchDate",
+                 "sed_launched" AS "sedLaunched",
+                 "accepted_in_1c" AS "acceptedIn1C",
+                 "note"
+          FROM "GN_primary_document_months"
+          ORDER BY "primary_document_id", "document_month"
+        `),
+            ]);
+            const objectsById = new Map();
+            const itemsById = new Map();
+            const expenseDepartmentsById = new Map();
+            const monthsById = new Map();
+            objects.rows.forEach((row) => {
+                const list = objectsById.get(row.id) ?? [];
+                list.push({ id: row.itemId, label: row.label });
+                objectsById.set(row.id, list);
+            });
+            budgetItems.rows.forEach((row) => {
+                const list = itemsById.get(row.id) ?? [];
+                list.push({ id: row.itemId, label: row.label });
+                itemsById.set(row.id, list);
+            });
+            expenseDepartments.rows.forEach((row) => {
+                const list = expenseDepartmentsById.get(row.id) ?? [];
+                list.push({ id: row.itemId, label: row.label });
+                expenseDepartmentsById.set(row.id, list);
+            });
+            monthValues.rows.forEach((row) => {
+                const values = monthsById.get(row.id) ?? {};
+                const { id, month, ...monthData } = row;
+                values[month] = monthData;
+                monthsById.set(id, values);
+            });
+            res.json(result.rows.map((row) => ({
+                ...row,
+                objects: objectsById.get(Number(row.id)) ?? [],
+                budgetItems: itemsById.get(Number(row.id)) ?? [],
+                expenseDepartments: expenseDepartmentsById.get(Number(row.id)) ?? [],
+                monthData: monthsById.get(Number(row.id)) ?? {},
+            })));
+        }
+        catch (err) {
+            console.error('Failed to fetch primary documents', err);
+            res.status(500).json({ error: 'Не удалось загрузить первичные документы' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    function parsePrimaryIds(value) {
+        if (!Array.isArray(value))
+            return null;
+        const ids = value.map(Number);
+        if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0))
+            return null;
+        return [...new Set(ids)];
+    }
+    function parsePrimaryNullableId(value) {
+        if (value === '' || value === null || value === undefined)
+            return null;
+        const id = Number(value);
+        return Number.isSafeInteger(id) && id > 0 ? id : undefined;
+    }
+    function parsePrimaryDate(value) {
+        if (value === '' || value === null || value === undefined)
+            return null;
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+            return undefined;
+        const date = new Date(`${value}T00:00:00Z`);
+        return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : undefined;
+    }
+    function parsePrimaryMonth(value) {
+        return value === 'october' || value === 'november' || value === 'december' ? value : undefined;
+    }
+    function parsePrimaryPayload(body) {
+        const departmentId = parsePrimaryNullableId(body.departmentId);
+        const contractId = parsePrimaryNullableId(body.contractId);
+        const month = parsePrimaryMonth(body.month);
+        const objectIds = parsePrimaryIds(body.objectIds);
+        const budgetItemIds = parsePrimaryIds(body.budgetItemIds);
+        const expenseDepartmentIds = parsePrimaryIds(body.expenseDepartmentIds);
+        const amountWithVat = Number(String(body.amountWithVat ?? '0').replace(/\s/g, '').replace(',', '.'));
+        const edoArrivalDate = parsePrimaryDate(body.edoArrivalDate);
+        const sedLaunchDate = parsePrimaryDate(body.sedLaunchDate);
+        const sedLaunched = body.sedLaunched;
+        const acceptedIn1C = body.acceptedIn1C;
+        const detailsEnabled = body.detailsEnabled;
+        if (departmentId === undefined || contractId === undefined || !month || !objectIds || !budgetItemIds || !expenseDepartmentIds
+            || !Number.isFinite(amountWithVat) || edoArrivalDate === undefined || sedLaunchDate === undefined
+            || (sedLaunched !== undefined && typeof sedLaunched !== 'boolean')
+            || (acceptedIn1C !== undefined && typeof acceptedIn1C !== 'boolean')
+            || (detailsEnabled !== undefined && typeof detailsEnabled !== 'boolean')) {
+            return null;
+        }
+        return {
+            departmentId,
+            contractId,
+            month,
+            personalAccount: String(body.personalAccount ?? ''),
+            objectIds,
+            budgetItemIds,
+            expenseDepartmentIds,
+            amountWithVat,
+            details: String(body.details ?? ''),
+            detailsEnabled: typeof detailsEnabled === 'boolean' ? detailsEnabled : null,
+            edoArrivalDate,
+            sedLaunchDate,
+            sedLaunched: typeof sedLaunched === 'boolean' ? sedLaunched : null,
+            acceptedIn1C: typeof acceptedIn1C === 'boolean' ? acceptedIn1C : null,
+            note: String(body.note ?? ''),
+        };
+    }
+    async function replacePrimaryLinks(client, documentId, objectIds, budgetItemIds, expenseDepartmentIds) {
+        await client.query('DELETE FROM "GN_primary_document_objects" WHERE "primary_document_id" = $1', [documentId]);
+        await client.query('DELETE FROM "GN_primary_document_pao_budget_items" WHERE "primary_document_id" = $1', [documentId]);
+        await client.query('DELETE FROM "GN_primary_document_expense_departments" WHERE "primary_document_id" = $1', [documentId]);
+        if (objectIds.length > 0) {
+            await client.query(`INSERT INTO "GN_primary_document_objects" ("primary_document_id", "object_id")
+         SELECT $1, unnest($2::integer[])`, [documentId, objectIds]);
+        }
+        if (budgetItemIds.length > 0) {
+            await client.query(`INSERT INTO "GN_primary_document_pao_budget_items" ("primary_document_id", "budget_item_id")
+         SELECT $1, unnest($2::integer[])`, [documentId, budgetItemIds]);
+        }
+        if (expenseDepartmentIds.length > 0) {
+            await client.query(`INSERT INTO "GN_primary_document_expense_departments" ("primary_document_id", "department_id")
+         SELECT $1, unnest($2::integer[])`, [documentId, expenseDepartmentIds]);
+        }
+    }
+    app.post('/api/primary', async (req, res) => {
+        const input = parsePrimaryPayload(req.body);
+        if (!input) {
+            res.status(400).json({ error: 'Проверьте подразделение, договор, статьи, объекты, сумму и даты' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const result = await client.query(`INSERT INTO "GN_primary_documents"
+           ("GN_department_FK", "GN_dogovor_FK", "personal_account", "document_month", "amount_with_vat", "details", "edo_arrival_date", "sed_launch_date", "note", "sed_launched", "details_enabled")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, $8::date IS NOT NULL), COALESCE($11, NULLIF(BTRIM($6), '') IS NOT NULL))
+         RETURNING "GN_primary_document_id" AS id`, [input.departmentId, input.contractId, input.personalAccount, input.month, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note, input.sedLaunched, input.detailsEnabled]);
+            const documentId = Number(result.rows[0].id);
+            await client.query(`INSERT INTO "GN_primary_document_months"
+           ("primary_document_id", "document_month", "amount_with_vat", "edo_arrival_date", "sed_launch_date", "sed_launched", "accepted_in_1c", "note")
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6, $5::date IS NOT NULL), COALESCE($7, FALSE), $8)`, [documentId, input.month, input.amountWithVat, input.edoArrivalDate, input.sedLaunchDate, input.sedLaunched, input.acceptedIn1C, input.note]);
+            await replacePrimaryLinks(client, documentId, input.objectIds, input.budgetItemIds, input.expenseDepartmentIds);
+            await client.query('COMMIT');
+            res.status(201).json({ id: result.rows[0].id });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to create primary document', err);
+            res.status(400).json({ error: 'Не удалось создать первичный документ. Проверьте выбранные значения.' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.put('/api/primary/month/:month', async (req, res) => {
+        const month = parsePrimaryMonth(req.params.month);
+        const body = req.body;
+        if (!month || !Array.isArray(body.documents)) {
+            res.status(400).json({ error: 'Проверьте месяц и список месячных данных' });
+            return;
+        }
+        const documents = [];
+        const documentIds = new Set();
+        for (const value of body.documents) {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                res.status(400).json({ error: 'Некорректные данные месяца' });
+                return;
+            }
+            const item = value;
+            const id = Number(item.id);
+            const rawAmount = typeof item.amountWithVat === 'string' ? item.amountWithVat.trim() : item.amountWithVat;
+            const amountWithVat = rawAmount === null || rawAmount === ''
+                ? null
+                : Number(String(rawAmount).replace(/\s/g, '').replace(',', '.'));
+            if (!Number.isSafeInteger(id) || id <= 0 || documentIds.has(id)
+                || (amountWithVat !== null && !Number.isFinite(amountWithVat))
+                || typeof item.sedLaunched !== 'boolean'
+                || typeof item.acceptedIn1C !== 'boolean'
+                || typeof item.note !== 'string') {
+                res.status(400).json({ error: 'Проверьте сумму, отметки СЭД и 1С и примечание месяца' });
+                return;
+            }
+            documentIds.add(id);
+            documents.push({ id, amountWithVat, sedLaunched: item.sedLaunched, acceptedIn1C: item.acceptedIn1C, note: item.note });
+        }
+        const client = await createDbClient();
+        let transactionStarted = false;
+        try {
+            await client.query('BEGIN');
+            transactionStarted = true;
+            for (const document of documents) {
+                const result = await client.query(`INSERT INTO "GN_primary_document_months"
+             ("primary_document_id", "document_month", "amount_with_vat", "sed_launched", "accepted_in_1c", "note")
+           SELECT "GN_primary_document_id", $2, $3, $4, $5, $6
+           FROM "GN_primary_documents"
+           WHERE "GN_primary_document_id" = $1
+           ON CONFLICT ("primary_document_id", "document_month")
+           DO UPDATE SET "amount_with_vat" = EXCLUDED."amount_with_vat",
+                         "sed_launched" = EXCLUDED."sed_launched",
+                         "accepted_in_1c" = EXCLUDED."accepted_in_1c",
+                         "note" = EXCLUDED."note"`, [document.id, month, document.amountWithVat, document.sedLaunched, document.acceptedIn1C, document.note]);
+                if (result.rowCount === 0) {
+                    await client.query('ROLLBACK');
+                    transactionStarted = false;
+                    res.status(409).json({ error: 'Одна из записей не найдена. Изменения не сохранены.' });
+                    return;
+                }
+            }
+            await client.query('COMMIT');
+            transactionStarted = false;
+            res.json({ updated: documents.length });
+        }
+        catch (err) {
+            if (transactionStarted)
+                await client.query('ROLLBACK');
+            console.error('Failed to update primary month data', err);
+            res.status(500).json({ error: 'Не удалось сохранить данные месяца' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.patch('/api/primary/:id/general', async (req, res) => {
+        const documentId = Number(req.params.id);
+        const body = req.body;
+        const departmentId = parsePrimaryNullableId(body.departmentId);
+        const contractId = parsePrimaryNullableId(body.contractId);
+        const objectIds = parsePrimaryIds(body.objectIds);
+        const budgetItemIds = parsePrimaryIds(body.budgetItemIds);
+        const expenseDepartmentIds = parsePrimaryIds(body.expenseDepartmentIds);
+        if (!Number.isSafeInteger(documentId) || documentId <= 0
+            || departmentId === undefined
+            || contractId === undefined
+            || !objectIds
+            || !budgetItemIds
+            || !expenseDepartmentIds
+            || typeof body.personalAccount !== 'string'
+            || typeof body.details !== 'string'
+            || typeof body.detailsEnabled !== 'boolean') {
+            res.status(400).json({ error: 'Проверьте подразделение, договор, лицевой счет, объекты, статьи бюджета и детализацию' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const result = await client.query(`UPDATE "GN_primary_documents"
+         SET "GN_department_FK" = $2, "GN_dogovor_FK" = $3, "personal_account" = $4,
+             "details" = $5, "details_enabled" = $6
+         WHERE "GN_primary_document_id" = $1
+         RETURNING "GN_primary_document_id"`, [documentId, departmentId, contractId, body.personalAccount, body.details, body.detailsEnabled]);
+            if (result.rowCount === 0) {
+                await client.query('ROLLBACK');
+                res.status(404).json({ error: 'Первичный документ не найден' });
+                return;
+            }
+            await replacePrimaryLinks(client, documentId, objectIds, budgetItemIds, expenseDepartmentIds);
+            await client.query('COMMIT');
+            res.json({ id: documentId });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to update primary document general fields', err);
+            res.status(400).json({ error: 'Не удалось сохранить общие поля первичного документа. Проверьте выбранные значения.' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.put('/api/primary/:id', async (req, res) => {
+        const documentId = Number(req.params.id);
+        const input = parsePrimaryPayload(req.body);
+        if (!Number.isSafeInteger(documentId) || documentId <= 0 || !input) {
+            res.status(400).json({ error: 'Проверьте идентификатор и заполненные поля первичного документа' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            await client.query('BEGIN');
+            const result = await client.query(`UPDATE "GN_primary_documents"
+         SET "GN_department_FK" = $2, "GN_dogovor_FK" = $3, "personal_account" = $4,
+             "document_month" = $5, "amount_with_vat" = $6, "details" = $7,
+             "edo_arrival_date" = $8, "sed_launch_date" = $9, "note" = $10,
+             "sed_launched" = COALESCE($11, "sed_launched"),
+             "details_enabled" = COALESCE($12, NULLIF(BTRIM($7), '') IS NOT NULL)
+         WHERE "GN_primary_document_id" = $1
+         RETURNING "GN_primary_document_id"`, [documentId, input.departmentId, input.contractId, input.personalAccount, input.month, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note, input.sedLaunched, input.detailsEnabled]);
+            if (result.rowCount === 0) {
+                await client.query('ROLLBACK');
+                res.status(404).json({ error: 'Первичный документ не найден' });
+                return;
+            }
+            await replacePrimaryLinks(client, documentId, input.objectIds, input.budgetItemIds, input.expenseDepartmentIds);
+            await client.query(`INSERT INTO "GN_primary_document_months"
+           ("primary_document_id", "document_month", "amount_with_vat", "edo_arrival_date", "sed_launch_date", "sed_launched", "accepted_in_1c", "note")
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6, $5::date IS NOT NULL), COALESCE($7, FALSE), $8)
+         ON CONFLICT ("primary_document_id", "document_month")
+         DO UPDATE SET "amount_with_vat" = EXCLUDED."amount_with_vat",
+                       "edo_arrival_date" = EXCLUDED."edo_arrival_date",
+                       "sed_launch_date" = EXCLUDED."sed_launch_date",
+                       "sed_launched" = EXCLUDED."sed_launched",
+                       "accepted_in_1c" = EXCLUDED."accepted_in_1c",
+                       "note" = EXCLUDED."note"`, [documentId, input.month, input.amountWithVat, input.edoArrivalDate, input.sedLaunchDate, input.sedLaunched, input.acceptedIn1C, input.note]);
+            await client.query('COMMIT');
+            res.json({ id: documentId });
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to update primary document', err);
+            res.status(400).json({ error: 'Не удалось сохранить первичный документ. Проверьте выбранные значения.' });
+        }
+        finally {
+            await client.end();
+        }
+    });
+    app.delete('/api/primary/:id', async (req, res) => {
+        const documentId = Number(req.params.id);
+        if (!Number.isSafeInteger(documentId) || documentId <= 0) {
+            res.status(400).json({ error: 'Некорректный номер первичного документа' });
+            return;
+        }
+        const client = await createDbClient();
+        try {
+            const result = await client.query('DELETE FROM "GN_primary_documents" WHERE "GN_primary_document_id" = $1 RETURNING "GN_primary_document_id"', [documentId]);
+            if (result.rowCount === 0) {
+                res.status(404).json({ error: 'Первичный документ не найден' });
+                return;
+            }
+            res.json({ success: true });
+        }
+        catch (err) {
+            console.error('Failed to delete primary document', err);
+            res.status(500).json({ error: 'Не удалось удалить первичный документ' });
         }
         finally {
             await client.end();

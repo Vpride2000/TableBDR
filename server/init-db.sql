@@ -13,6 +13,7 @@ COMMENT ON TABLE "GN_department" IS 'Подразделения Общества
 CREATE TABLE IF NOT EXISTS "GN_budget_network_item" (
   "GN_b_id" SERIAL NOT NULL UNIQUE,
   "GN_budget_network_item" TEXT NOT NULL,
+  "Кратко" TEXT NOT NULL DEFAULT '',
   PRIMARY KEY("GN_b_id")
 );
 
@@ -60,10 +61,13 @@ CREATE TABLE IF NOT EXISTS "GN_primary_documents" (
   "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
   "GN_dogovor_FK" INTEGER REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
   "personal_account" TEXT NOT NULL DEFAULT '',
+  "document_month" TEXT NOT NULL DEFAULT 'october',
   "amount_with_vat" NUMERIC(15, 2) NOT NULL DEFAULT 0,
   "details" TEXT NOT NULL DEFAULT '',
+  "details_enabled" BOOLEAN NOT NULL DEFAULT FALSE,
   "edo_arrival_date" DATE,
   "sed_launch_date" DATE,
+  "sed_launched" BOOLEAN NOT NULL DEFAULT FALSE,
   "note" TEXT NOT NULL DEFAULT ''
 );
 
@@ -77,6 +81,30 @@ CREATE TABLE IF NOT EXISTS "GN_primary_document_budget_items" (
   "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
   "budget_item_id" INTEGER NOT NULL REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE RESTRICT,
   PRIMARY KEY ("primary_document_id", "budget_item_id")
+);
+
+CREATE TABLE IF NOT EXISTS "GN_primary_document_pao_budget_items" (
+  "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+  "budget_item_id" INTEGER NOT NULL REFERENCES "PAO__budget_network_item"("PAO_b_id") ON DELETE RESTRICT,
+  PRIMARY KEY ("primary_document_id", "budget_item_id")
+);
+
+CREATE TABLE IF NOT EXISTS "GN_primary_document_expense_departments" (
+  "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+  "department_id" INTEGER NOT NULL REFERENCES "GN_department"("GN_Dep_id") ON DELETE RESTRICT,
+  PRIMARY KEY ("primary_document_id", "department_id")
+);
+
+CREATE TABLE IF NOT EXISTS "GN_primary_document_months" (
+  "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+  "document_month" TEXT NOT NULL,
+  "amount_with_vat" NUMERIC(15, 2),
+  "edo_arrival_date" DATE,
+  "sed_launch_date" DATE,
+  "sed_launched" BOOLEAN NOT NULL DEFAULT FALSE,
+  "accepted_in_1c" BOOLEAN NOT NULL DEFAULT FALSE,
+  "note" TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY ("primary_document_id", "document_month")
 );
 
 CREATE TABLE IF NOT EXISTS "GN_invest_okdp_tko_is_prit" (
@@ -116,6 +144,13 @@ CREATE TABLE IF NOT EXISTS "GN_equipment_type" (
 );
 
 COMMENT ON TABLE "GN_equipment_type" IS 'Справочник типов оборудования';
+
+CREATE TABLE IF NOT EXISTS "GN_import_substitution_history" (
+  "id" BIGSERIAL PRIMARY KEY,
+  "label" TEXT NOT NULL,
+  "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  "changes" JSONB NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS "GN_equipment_model" (
   "GN_equipment_model_id" SERIAL NOT NULL UNIQUE,

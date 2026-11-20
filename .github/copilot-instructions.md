@@ -30,3 +30,4 @@
 - Follow development best practices.
 - Do not check or run project builds.
 - Before adding CSS, look for and reuse existing styles; do not create new styles when an existing style can be reused.
+- Before changing CSS, inspect the full cascade affecting the target element, including stylesheet imports and order, selector specificity, and hover/disabled rules; reuse the existing matching styles and verify the rendered element uses them.

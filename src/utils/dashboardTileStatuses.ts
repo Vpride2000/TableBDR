@@ -1,6 +1,7 @@
 export const DASHBOARD_TILES = [
   { key: 'services', label: 'Услуги связи' },
   { key: 'contracts', label: 'Договоры' },
+  { key: 'primary', label: 'Первичные' },
   { key: 'cellular', label: 'Сотовая связь' },
   { key: 'satellites', label: 'Спутники (ГКС)' },
   { key: 'purchases', label: 'Закупки' },
@@ -25,6 +26,7 @@ export const DASHBOARD_TILE_STATUS_OPTIONS: Array<{ value: DashboardTileStatus; 
 export const DEFAULT_DASHBOARD_TILE_STATUSES: DashboardTileStatuses = {
   services: 'red',
   contracts: 'red',
+  primary: 'red',
   cellular: 'red',
   satellites: 'red',
   purchases: 'red',

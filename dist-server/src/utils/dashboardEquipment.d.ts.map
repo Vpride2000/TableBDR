@@ -1,0 +1,1 @@
+{"version":3,"file":"dashboardEquipment.d.ts","sourceRoot":"","sources":["../../../src/utils/dashboardEquipment.ts"],"names":[],"mappings":"AAAA,MAAM,MAAM,6BAA6B,GAAG;IAAE,QAAQ,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,MAAM,CAAA;CAAE,CAAA;AAE9E,wBAAgB,qBAAqB,CACnC,SAAS,EAAE,GAAG,CAAC,MAAM,EAAE,6BAA6B,CAAC,EACrD,IAAI,EAAE,MAAM,EACZ,QAAQ,EAAE,MAAM,EAChB,IAAI,EAAE,MAAM,GACX,IAAI,CAKN"}

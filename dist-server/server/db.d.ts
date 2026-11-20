@@ -1,7 +1,13 @@
 import { Client } from 'pg';
 export declare function createDbClient(): Promise<Client>;
 export declare function ensureDatabaseTables(client: Client): Promise<void>;
+export declare function ensureGazpromTelecomTable(client: Client): Promise<void>;
 export declare function ensureContractColumns(client: Client): Promise<void>;
+export declare function ensureDogovorColumns(client: Client): Promise<void>;
+export declare function ensurePrimaryDocumentsTables(client: Client): Promise<void>;
+export declare function ensureNotesTables(client: Client): Promise<void>;
+export declare function ensureDashboardTileStatusesTable(client: Client): Promise<void>;
+export declare function ensureDashboardSettingsTable(client: Client): Promise<void>;
 export declare function toFiniteNumber(value: unknown, fieldLabel: string): number;
 export declare function buildFallbackCalculationLine(quantity: number, limit: number, unitLimit: number): import('./config.js').LimitCalculationResponseLine;
 export declare function ensureSatellitesXmlTable(client: Client): Promise<void>;

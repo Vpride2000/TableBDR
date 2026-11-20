@@ -37,6 +37,68 @@ export async function ensureDatabaseTables(client) {
         throw new Error(`Required database tables are missing: ${missingTables.join(', ')}`);
     }
 }
+export async function ensureGazpromTelecomTable(client) {
+    await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_gazprom_telecom" (
+      "GN_gazprom_telecom_id" SERIAL PRIMARY KEY,
+      "tariff" TEXT NOT NULL DEFAULT '',
+      "provided_services" TEXT NOT NULL DEFAULT '',
+      "service_identifier" TEXT NOT NULL DEFAULT '',
+      "description" TEXT NOT NULL DEFAULT '',
+      "tariff_groups" TEXT NOT NULL DEFAULT '',
+      "unit" TEXT NOT NULL DEFAULT '',
+      "GN_dogovor_FK" INTEGER REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
+      "quantity" TEXT NOT NULL DEFAULT '',
+      "monthly_tariff" NUMERIC(15, 2),
+      "PAO_budget_network_item_FK" INTEGER REFERENCES "PAO__budget_network_item"("PAO_b_id") ON DELETE SET NULL,
+      "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+      "GN_departament_object_FK" INTEGER REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL,
+      "note" TEXT NOT NULL DEFAULT ''
+    )
+  `);
+    await client.query(`
+    ALTER TABLE "GN_gazprom_telecom"
+      ADD COLUMN IF NOT EXISTS "GN_dogovor_FK" INTEGER
+        REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS "GN_departament_object_FK" INTEGER
+        REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL
+  `);
+    const legacyColumn = await client.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'GN_gazprom_telecom'
+      AND column_name = 'GN_contract_FK'
+  `);
+    await client.query('BEGIN');
+    try {
+        await client.query(`
+      ALTER TABLE "GN_gazprom_telecom"
+        ADD COLUMN IF NOT EXISTS "GN_dogovor_FK" INTEGER
+          REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS "GN_departament_object_FK" INTEGER
+          REFERENCES "GN_departament_object"("GN_do_id") ON DELETE SET NULL
+    `);
+        if (legacyColumn.rows.length > 0) {
+            await client.query(`
+        UPDATE "GN_gazprom_telecom" gt
+        SET "GN_dogovor_FK" = contracts."GN_contract_dogovor_FK"
+        FROM "GN_contracts" contracts
+        WHERE gt."GN_contract_FK" = contracts."GN_contract_id"
+          AND gt."GN_dogovor_FK" IS NULL
+      `);
+            await client.query(`
+        ALTER TABLE "GN_gazprom_telecom"
+          DROP COLUMN "GN_contract_FK"
+      `);
+        }
+        await client.query('COMMIT');
+    }
+    catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    }
+}
 export async function ensureContractColumns(client) {
     const dateColumns = [
         'GN_contract_date',
@@ -64,6 +126,238 @@ export async function ensureContractColumns(client) {
             await client.query(`ALTER TABLE "GN_contracts" ADD COLUMN IF NOT EXISTS "${columnName}" TEXT DEFAULT ''`);
         }
     }
+}
+export async function ensureDogovorColumns(client) {
+    await client.query(`
+    ALTER TABLE "GN_dogovor"
+      ADD COLUMN IF NOT EXISTS "GN_dogovor_date" DATE,
+      ADD COLUMN IF NOT EXISTS "GN_dogovor_signer_FK" INTEGER
+        REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS "GN_dogovor_note" TEXT,
+      ADD COLUMN IF NOT EXISTS "GN_dogovor_personal_account" TEXT NOT NULL DEFAULT ''
+  `);
+}
+export async function ensurePrimaryDocumentsTables(client) {
+    await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_primary_documents" (
+      "GN_primary_document_id" SERIAL PRIMARY KEY,
+      "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
+      "GN_dogovor_FK" INTEGER REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
+      "personal_account" TEXT NOT NULL DEFAULT '',
+      "document_month" TEXT NOT NULL DEFAULT 'october',
+      "amount_with_vat" NUMERIC(15, 2) NOT NULL DEFAULT 0,
+      "details" TEXT NOT NULL DEFAULT '',
+      "details_enabled" BOOLEAN NOT NULL DEFAULT FALSE,
+      "edo_arrival_date" DATE,
+      "sed_launch_date" DATE,
+      "sed_launched" BOOLEAN NOT NULL DEFAULT FALSE,
+      "note" TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_objects" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "object_id" INTEGER NOT NULL REFERENCES "GN_departament_object"("GN_do_id") ON DELETE RESTRICT,
+      PRIMARY KEY ("primary_document_id", "object_id")
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_budget_items" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "budget_item_id" INTEGER NOT NULL REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE RESTRICT,
+      PRIMARY KEY ("primary_document_id", "budget_item_id")
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_pao_budget_items" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "budget_item_id" INTEGER NOT NULL REFERENCES "PAO__budget_network_item"("PAO_b_id") ON DELETE RESTRICT,
+      PRIMARY KEY ("primary_document_id", "budget_item_id")
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_expense_departments" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "department_id" INTEGER NOT NULL REFERENCES "GN_department"("GN_Dep_id") ON DELETE RESTRICT,
+      PRIMARY KEY ("primary_document_id", "department_id")
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_months" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "document_month" TEXT NOT NULL,
+      "amount_with_vat" NUMERIC(15, 2),
+      "edo_arrival_date" DATE,
+      "sed_launch_date" DATE,
+      "sed_launched" BOOLEAN NOT NULL DEFAULT FALSE,
+      "accepted_in_1c" BOOLEAN NOT NULL DEFAULT FALSE,
+      "note" TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY ("primary_document_id", "document_month")
+    )
+  `);
+    await client.query(`
+    ALTER TABLE "GN_primary_document_months"
+      ADD COLUMN IF NOT EXISTS "accepted_in_1c" BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+    await client.query(`
+    ALTER TABLE "GN_primary_documents"
+      ADD COLUMN IF NOT EXISTS "details_enabled" BOOLEAN;
+    UPDATE "GN_primary_documents"
+      SET "details_enabled" = (btrim("details") <> '')
+      WHERE "details_enabled" IS NULL;
+    ALTER TABLE "GN_primary_documents"
+      ALTER COLUMN "details_enabled" SET DEFAULT FALSE,
+      ALTER COLUMN "details_enabled" SET NOT NULL
+  `);
+    await client.query(`
+    ALTER TABLE "GN_primary_documents"
+      ADD COLUMN IF NOT EXISTS "sed_launched" BOOLEAN;
+    UPDATE "GN_primary_documents"
+      SET "sed_launched" = ("sed_launch_date" IS NOT NULL)
+      WHERE "sed_launched" IS NULL;
+    ALTER TABLE "GN_primary_documents"
+      ALTER COLUMN "sed_launched" SET DEFAULT FALSE,
+      ALTER COLUMN "sed_launched" SET NOT NULL
+  `);
+    const accountColumn = await client.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'GN_primary_documents'
+      AND column_name = 'personal_account'
+  `);
+    if (accountColumn.rows.length === 0) {
+        await client.query(`
+      ALTER TABLE "GN_primary_documents"
+        ADD COLUMN "personal_account" TEXT NOT NULL DEFAULT ''
+    `);
+        await client.query(`
+      UPDATE "GN_primary_documents" primary_document
+      SET "personal_account" = btrim(trim(BOTH E'\\r' FROM split_part(dogovor."GN_dogovor_personal_account", E'\\n', 1)))
+      FROM "GN_dogovor" dogovor
+      WHERE dogovor."GN_dgv_id" = primary_document."GN_dogovor_FK"
+        AND dogovor."GN_dogovor_personal_account" <> ''
+    `);
+    }
+    const monthColumn = await client.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'GN_primary_documents'
+      AND column_name = 'document_month'
+  `);
+    if (monthColumn.rows.length === 0) {
+        await client.query(`
+      ALTER TABLE "GN_primary_documents"
+        ADD COLUMN "document_month" TEXT NOT NULL DEFAULT 'october'
+    `);
+        await client.query(`
+      UPDATE "GN_primary_documents"
+      SET "document_month" = CASE EXTRACT(MONTH FROM "edo_arrival_date")
+        WHEN 11 THEN 'november'
+        WHEN 12 THEN 'december'
+        ELSE 'october'
+      END
+      WHERE "document_month" = 'october'
+    `);
+    }
+    await client.query(`
+    INSERT INTO "GN_primary_document_months"
+      ("primary_document_id", "document_month", "amount_with_vat", "edo_arrival_date", "sed_launch_date", "sed_launched", "note")
+    SELECT "GN_primary_document_id", "document_month", "amount_with_vat", "edo_arrival_date", "sed_launch_date", "sed_launched", "note"
+    FROM "GN_primary_documents"
+    ON CONFLICT ("primary_document_id", "document_month") DO NOTHING
+  `);
+    await client.query(`
+    INSERT INTO "GN_primary_document_pao_budget_items" ("primary_document_id", "budget_item_id")
+    SELECT legacy_relation."primary_document_id", pao_item."PAO_b_id"
+    FROM "GN_primary_document_budget_items" legacy_relation
+    JOIN "GN_budget_network_item" legacy_item
+      ON legacy_item."GN_b_id" = legacy_relation."budget_item_id"
+    JOIN (
+      SELECT "PAO__budget_network_item", MIN("PAO_b_id") AS "PAO_b_id"
+      FROM "PAO__budget_network_item"
+      GROUP BY "PAO__budget_network_item"
+      HAVING COUNT(*) = 1
+    ) pao_item
+      ON pao_item."PAO__budget_network_item" = legacy_item."GN_budget_network_item"
+    ON CONFLICT ("primary_document_id", "budget_item_id") DO NOTHING
+  `);
+}
+export async function ensureNotesTables(client) {
+    await client.query(`
+    CREATE TABLE IF NOT EXISTS "app_notes_notebooks" (
+      "id" BIGSERIAL PRIMARY KEY,
+      "title" TEXT NOT NULL,
+      "position" INTEGER NOT NULL DEFAULT 0,
+      "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS "app_notes_sections" (
+      "id" BIGSERIAL PRIMARY KEY,
+      "notebook_id" BIGINT NOT NULL REFERENCES "app_notes_notebooks"("id") ON DELETE CASCADE,
+      "title" TEXT NOT NULL,
+      "position" INTEGER NOT NULL DEFAULT 0,
+      "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS "app_notes_pages" (
+      "id" BIGSERIAL PRIMARY KEY,
+      "section_id" BIGINT NOT NULL REFERENCES "app_notes_sections"("id") ON DELETE CASCADE,
+      "title" TEXT NOT NULL DEFAULT '',
+      "content" JSONB NOT NULL DEFAULT '{"type":"doc","content":[{"type":"paragraph"}]}'::jsonb,
+      "content_text" TEXT NOT NULL DEFAULT '',
+      "search_vector" TSVECTOR NOT NULL DEFAULT ''::tsvector,
+      "position" INTEGER NOT NULL DEFAULT 0,
+      "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS "app_notes_tags" (
+      "id" BIGSERIAL PRIMARY KEY,
+      "name" TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS "app_notes_page_tags" (
+      "page_id" BIGINT NOT NULL REFERENCES "app_notes_pages"("id") ON DELETE CASCADE,
+      "tag_id" BIGINT NOT NULL REFERENCES "app_notes_tags"("id") ON DELETE CASCADE,
+      PRIMARY KEY ("page_id", "tag_id")
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS "app_notes_tags_name_lower_uq"
+      ON "app_notes_tags" (LOWER("name"));
+    CREATE INDEX IF NOT EXISTS "app_notes_sections_notebook_position_idx"
+      ON "app_notes_sections" ("notebook_id", "position", "id");
+    CREATE INDEX IF NOT EXISTS "app_notes_pages_section_position_idx"
+      ON "app_notes_pages" ("section_id", "position", "id");
+    CREATE INDEX IF NOT EXISTS "app_notes_pages_search_idx"
+      ON "app_notes_pages" USING GIN ("search_vector");
+
+    UPDATE "app_notes_pages"
+    SET "search_vector" = TO_TSVECTOR('simple', CONCAT_WS(' ', "title", "content_text"))
+    WHERE "search_vector" = ''::tsvector;
+  `);
+}
+export async function ensureDashboardTileStatusesTable(client) {
+    await client.query(`
+    CREATE TABLE IF NOT EXISTS "app_dashboard_tile_statuses" (
+      "tile_key" TEXT PRIMARY KEY,
+      "status" TEXT NOT NULL CHECK ("status" IN ('red', 'yellow', 'green')),
+      "updated_by" TEXT NOT NULL,
+      "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+export async function ensureDashboardSettingsTable(client) {
+    await client.query(`
+    CREATE TABLE IF NOT EXISTS "app_dashboard_settings" (
+      "setting_key" TEXT PRIMARY KEY,
+      "setting_value" TEXT NOT NULL,
+      "updated_by" TEXT NOT NULL,
+      "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    INSERT INTO "app_dashboard_settings" ("setting_key", "setting_value", "updated_by")
+    VALUES ('bdr_field', 'БДР26корр', 'system')
+    ON CONFLICT ("setting_key") DO NOTHING;
+  `);
 }
 // Приводит входное значение к конечному числу или выбрасывает ошибку для некорректных полей.
 export function toFiniteNumber(value, fieldLabel) {
@@ -373,6 +667,14 @@ export async function ensureImportSubstitutionTable(client) {
            ELSE ROUND("Выведен из эксплуатации"::NUMERIC)
          END,
        ALTER COLUMN "Выведен из эксплуатации" SET DEFAULT 0`);
+    await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_import_substitution_history" (
+          "id" BIGSERIAL PRIMARY KEY,
+          "label" TEXT NOT NULL,
+          "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "changes" JSONB NOT NULL
+    )
+  `);
 }
 export async function ensureOgruzReferenceColumns(client) {
     await client.query(`ALTER TABLE "GN_invest_ogruz_rekvizit"
@@ -406,6 +708,13 @@ export async function ensureReferenceTables(client) {
        "GN_c_id" SERIAL PRIMARY KEY,
        "GN_contarctor" TEXT NOT NULL
      )`);
+    await client.query(`CREATE TABLE IF NOT EXISTS "GN_budget_network_item" (
+       "GN_b_id" SERIAL PRIMARY KEY,
+       "GN_budget_network_item" TEXT NOT NULL,
+       "Кратко" TEXT NOT NULL DEFAULT ''
+     )`);
+    await client.query(`ALTER TABLE "GN_budget_network_item"
+       ADD COLUMN IF NOT EXISTS "Кратко" TEXT NOT NULL DEFAULT ''`);
     await client.query(`CREATE TABLE IF NOT EXISTS "GN_equipment_manufacturer" (
        "GN_equipment_manufacturer_id" SERIAL PRIMARY KEY,
        "GN_equipment_manufacturer" TEXT NOT NULL,
@@ -429,13 +738,14 @@ export async function ensureReferenceSequences(client) {
         ['GN_departament_object', 'GN_do_id'],
         ['GN_department', 'GN_Dep_id'],
         ['GN_contractor', 'GN_c_id'],
+        ['GN_dogovor', 'GN_dgv_id'],
     ];
     for (const [tableName, idColumn] of sequences) {
         const tableExists = await client.query('SELECT to_regclass($1) IS NOT NULL AS exists', [`public.${tableName}`]);
         if (!tableExists.rows[0]?.exists)
             continue;
         await client.query(`SELECT setval(
-         pg_get_serial_sequence($1, $2),
+         pg_get_serial_sequence(format('%I', $1::text), $2::text),
          COALESCE(MAX("${idColumn}"), 1),
          COUNT(*) > 0
        )
@@ -456,5 +766,10 @@ export async function ensureExcelImportDeletionColumns(client) {
         await client.query(`ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMPTZ`);
     }
     await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_calculation" TEXT NOT NULL DEFAULT ''`);
+    await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr25_corr_kol_vo" NUMERIC`);
+    await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr26_kol_vo" NUMERIC`);
+    await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr26_corr_kol_vo" NUMERIC`);
+    await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr27_kol_vo" NUMERIC`);
+    await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr27" NUMERIC`);
 }
 //# sourceMappingURL=db.js.map

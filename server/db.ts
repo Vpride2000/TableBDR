@@ -168,10 +168,13 @@ export async function ensurePrimaryDocumentsTables(client: Client): Promise<void
       "GN_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
       "GN_dogovor_FK" INTEGER REFERENCES "GN_dogovor"("GN_dgv_id") ON DELETE SET NULL,
       "personal_account" TEXT NOT NULL DEFAULT '',
+      "document_month" TEXT NOT NULL DEFAULT 'october',
       "amount_with_vat" NUMERIC(15, 2) NOT NULL DEFAULT 0,
       "details" TEXT NOT NULL DEFAULT '',
+      "details_enabled" BOOLEAN NOT NULL DEFAULT FALSE,
       "edo_arrival_date" DATE,
       "sed_launch_date" DATE,
+      "sed_launched" BOOLEAN NOT NULL DEFAULT FALSE,
       "note" TEXT NOT NULL DEFAULT ''
     );
 
@@ -185,7 +188,58 @@ export async function ensurePrimaryDocumentsTables(client: Client): Promise<void
       "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
       "budget_item_id" INTEGER NOT NULL REFERENCES "GN_budget_network_item"("GN_b_id") ON DELETE RESTRICT,
       PRIMARY KEY ("primary_document_id", "budget_item_id")
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_pao_budget_items" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "budget_item_id" INTEGER NOT NULL REFERENCES "PAO__budget_network_item"("PAO_b_id") ON DELETE RESTRICT,
+      PRIMARY KEY ("primary_document_id", "budget_item_id")
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_expense_departments" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "department_id" INTEGER NOT NULL REFERENCES "GN_department"("GN_Dep_id") ON DELETE RESTRICT,
+      PRIMARY KEY ("primary_document_id", "department_id")
+    );
+
+    CREATE TABLE IF NOT EXISTS "GN_primary_document_months" (
+      "primary_document_id" INTEGER NOT NULL REFERENCES "GN_primary_documents"("GN_primary_document_id") ON DELETE CASCADE,
+      "document_month" TEXT NOT NULL,
+      "amount_with_vat" NUMERIC(15, 2),
+      "edo_arrival_date" DATE,
+      "sed_launch_date" DATE,
+      "sed_launched" BOOLEAN NOT NULL DEFAULT FALSE,
+      "accepted_in_1c" BOOLEAN NOT NULL DEFAULT FALSE,
+      "note" TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY ("primary_document_id", "document_month")
     )
+  `);
+
+  await client.query(`
+    ALTER TABLE "GN_primary_document_months"
+      ADD COLUMN IF NOT EXISTS "accepted_in_1c" BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await client.query(`
+    ALTER TABLE "GN_primary_documents"
+      ADD COLUMN IF NOT EXISTS "details_enabled" BOOLEAN;
+    UPDATE "GN_primary_documents"
+      SET "details_enabled" = (btrim("details") <> '')
+      WHERE "details_enabled" IS NULL;
+    ALTER TABLE "GN_primary_documents"
+      ALTER COLUMN "details_enabled" SET DEFAULT FALSE,
+      ALTER COLUMN "details_enabled" SET NOT NULL
+  `);
+
+  await client.query(`
+    ALTER TABLE "GN_primary_documents"
+      ADD COLUMN IF NOT EXISTS "sed_launched" BOOLEAN;
+    UPDATE "GN_primary_documents"
+      SET "sed_launched" = ("sed_launch_date" IS NOT NULL)
+      WHERE "sed_launched" IS NULL;
+    ALTER TABLE "GN_primary_documents"
+      ALTER COLUMN "sed_launched" SET DEFAULT FALSE,
+      ALTER COLUMN "sed_launched" SET NOT NULL
   `);
 
   const accountColumn = await client.query<{ column_name: string }>(`
@@ -208,6 +262,53 @@ export async function ensurePrimaryDocumentsTables(client: Client): Promise<void
         AND dogovor."GN_dogovor_personal_account" <> ''
     `);
   }
+
+  const monthColumn = await client.query<{ column_name: string }>(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'GN_primary_documents'
+      AND column_name = 'document_month'
+  `);
+  if (monthColumn.rows.length === 0) {
+    await client.query(`
+      ALTER TABLE "GN_primary_documents"
+        ADD COLUMN "document_month" TEXT NOT NULL DEFAULT 'october'
+    `);
+    await client.query(`
+      UPDATE "GN_primary_documents"
+      SET "document_month" = CASE EXTRACT(MONTH FROM "edo_arrival_date")
+        WHEN 11 THEN 'november'
+        WHEN 12 THEN 'december'
+        ELSE 'october'
+      END
+      WHERE "document_month" = 'october'
+    `);
+  }
+
+  await client.query(`
+    INSERT INTO "GN_primary_document_months"
+      ("primary_document_id", "document_month", "amount_with_vat", "edo_arrival_date", "sed_launch_date", "sed_launched", "note")
+    SELECT "GN_primary_document_id", "document_month", "amount_with_vat", "edo_arrival_date", "sed_launch_date", "sed_launched", "note"
+    FROM "GN_primary_documents"
+    ON CONFLICT ("primary_document_id", "document_month") DO NOTHING
+  `);
+
+  await client.query(`
+    INSERT INTO "GN_primary_document_pao_budget_items" ("primary_document_id", "budget_item_id")
+    SELECT legacy_relation."primary_document_id", pao_item."PAO_b_id"
+    FROM "GN_primary_document_budget_items" legacy_relation
+    JOIN "GN_budget_network_item" legacy_item
+      ON legacy_item."GN_b_id" = legacy_relation."budget_item_id"
+    JOIN (
+      SELECT "PAO__budget_network_item", MIN("PAO_b_id") AS "PAO_b_id"
+      FROM "PAO__budget_network_item"
+      GROUP BY "PAO__budget_network_item"
+      HAVING COUNT(*) = 1
+    ) pao_item
+      ON pao_item."PAO__budget_network_item" = legacy_item."GN_budget_network_item"
+    ON CONFLICT ("primary_document_id", "budget_item_id") DO NOTHING
+  `);
 }
 
 export async function ensureNotesTables(client: Client): Promise<void> {
@@ -712,6 +813,15 @@ export async function ensureImportSubstitutionTable(client: Client): Promise<voi
          END,
        ALTER COLUMN "Выведен из эксплуатации" SET DEFAULT 0`
   );
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_import_substitution_history" (
+          "id" BIGSERIAL PRIMARY KEY,
+          "label" TEXT NOT NULL,
+          "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "changes" JSONB NOT NULL
+    )
+  `);
 }
 
 export async function ensureOgruzReferenceColumns(client: Client): Promise<void> {
@@ -763,6 +873,17 @@ export async function ensureReferenceTables(client: Client): Promise<void> {
        "GN_c_id" SERIAL PRIMARY KEY,
        "GN_contarctor" TEXT NOT NULL
      )`
+  );
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS "GN_budget_network_item" (
+       "GN_b_id" SERIAL PRIMARY KEY,
+       "GN_budget_network_item" TEXT NOT NULL,
+       "Кратко" TEXT NOT NULL DEFAULT ''
+     )`
+  );
+  await client.query(
+    `ALTER TABLE "GN_budget_network_item"
+       ADD COLUMN IF NOT EXISTS "Кратко" TEXT NOT NULL DEFAULT ''`
   );
   await client.query(
     `CREATE TABLE IF NOT EXISTS "GN_equipment_manufacturer" (

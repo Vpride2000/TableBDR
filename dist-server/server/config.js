@@ -7,7 +7,7 @@ export const GN_TABLE_CONFIGS = {
     'budget-items': {
         tableName: 'GN_budget_network_item',
         idColumn: 'GN_b_id',
-        editableColumns: ['GN_budget_network_item'],
+        editableColumns: ['GN_budget_network_item', 'Кратко'],
     },
     'pao-budget-items': {
         tableName: 'PAO__budget_network_item',
@@ -22,7 +22,9 @@ export const GN_TABLE_CONFIGS = {
     dogovors: {
         tableName: 'GN_dogovor',
         idColumn: 'GN_dgv_id',
-        editableColumns: ['GN_dogovor', 'GN_contarctor_FK'],
+        editableColumns: ['GN_dogovor', 'GN_contarctor_FK', 'GN_dogovor_date', 'GN_dogovor_signer_FK', 'GN_dogovor_personal_account', 'GN_dogovor_note'],
+        nullableColumns: ['GN_dogovor_date'],
+        nullableForeignKeyColumns: ['GN_dogovor_signer_FK'],
     },
     objects: {
         tableName: 'GN_departament_object',
@@ -103,6 +105,27 @@ export const GN_TABLE_CONFIGS = {
         idColumn: 'GN_cellular_account_id',
         editableColumns: ['GN_cellular_account', 'GN_department_FK', 'GN_cellular_account_note'],
     },
+    'gazprom-telecom': {
+        tableName: 'GN_gazprom_telecom',
+        idColumn: 'GN_gazprom_telecom_id',
+        editableColumns: [
+            'tariff',
+            'provided_services',
+            'service_identifier',
+            'description',
+            'tariff_groups',
+            'unit',
+            'GN_dogovor_FK',
+            'quantity',
+            'monthly_tariff',
+            'PAO_budget_network_item_FK',
+            'GN_department_FK',
+            'GN_departament_object_FK',
+            'note',
+        ],
+        numericColumns: ['monthly_tariff'],
+        nullableForeignKeyColumns: ['GN_dogovor_FK', 'GN_department_FK', 'GN_departament_object_FK'],
+    },
     'invest-program': {
         tableName: 'GN_invest_program',
         idColumn: 'GN_invest_program_id',
@@ -163,8 +186,13 @@ export const BDR_SELECT_FIELDS = `SELECT
   b."GN_bdr_kol-vo"                 AS "Кол-во",
   b."GN_bdr_limit"                  AS "Лимит",
   b."GN_bdr_bdr25_corr"             AS "БДР25корр",
+  b."GN_bdr_bdr25_corr_kol_vo"      AS "Кол-во БДР25корр",
   b."GN_bdr_bdr26"                  AS "БДР26",
+  b."GN_bdr_bdr26_kol_vo"           AS "Кол-во БДР26",
   b."GN_bdr_bdr26_corr"             AS "БДР26корр",
+  b."GN_bdr_bdr26_corr_kol_vo"      AS "Кол-во БДР26корр",
+  b."GN_bdr_bdr27_kol_vo"           AS "Кол-во БДР27",
+  b."GN_bdr_bdr27"                  AS "БДР27",
   b."GN_bdr_edin.limit"             AS "Един. лимит",
   b."GN_bdr_comments"               AS "Примечания"
 FROM "GN_bdr" b

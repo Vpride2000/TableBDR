@@ -33,7 +33,7 @@ type GuideProps = {
 
 const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: string; columns?: string[] }[] = [
   { title: 'Подразделения', endpoint: '/api/gn/departments', entity: 'departments', idColumn: 'GN_Dep_id' },
-  { title: 'Статьи бюджета', endpoint: '/api/gn/budget-items', entity: 'budget-items', idColumn: 'GN_b_id' },
+  { title: 'Статьи бюджета', endpoint: '/api/gn/budget-items', entity: 'budget-items', idColumn: 'GN_b_id', columns: ['GN_budget_network_item', 'Кратко'] },
   { title: 'Статьи бюджета УС', endpoint: '/api/gn/pao-budget-items', entity: 'pao-budget-items', idColumn: 'PAO_b_id' },
   { title: 'Контрагенты', endpoint: '/api/gn/contractors', entity: 'contractors', idColumn: 'GN_c_id' },
   {
@@ -55,7 +55,7 @@ const TABLE_DEFS: { title: string; endpoint: string; entity: string; idColumn: s
     endpoint: '/api/gn/cellular-identifiers',
     entity: 'cellular-identifiers',
     idColumn: 'GN_cellular_identifier_id',
-    columns: ['GN_cellular_identifier', 'GN_cellular_identifier_fio'],
+    columns: ['GN_cellular_identifier', 'GN_cellular_identifier_fio', 'GN_cellular_identifier_tariff_cost_with_vat'],
   },
   {
     title: 'Справочник: Тарифный план',
@@ -149,6 +149,7 @@ const GUIDE_COLUMN_LABELS: Record<string, Record<string, string>> = {
   'budget-items': {
     GN_b_id: '№',
     GN_budget_network_item: 'Статья бюджета',
+    'Кратко': 'Кратко',
   },
   'pao-budget-items': {
     PAO_b_id: '№',
@@ -222,12 +223,13 @@ const GUIDE_COLUMN_LABELS: Record<string, Record<string, string>> = {
     GN_cellular_identifier_id: '№',
     GN_cellular_identifier: 'Номер',
     GN_cellular_identifier_fio: 'ФИО',
+    GN_cellular_identifier_tariff_cost_with_vat: 'Стоимость (с НДС)',
   },
   'cellular-tariff-plans': {
     GN_cellular_tariff_plan_id: '№',
     GN_cellular_tariff_plan: 'Тариф',
     GN_cellular_tariff_plan_details: 'Состав тарифа',
-    GN_cellular_tariff_plan_cost: 'Стоимость',
+    GN_cellular_tariff_plan_cost: 'Стоимость (без НДС)',
   },
 };
 
@@ -254,6 +256,7 @@ function collectObjectNames(rows: Row[], column: string): Set<string> {
 const GUIDE_READONLY_COLUMNS: Record<string, string[]> = {
   objects: ['УСЛУГИ СВЯЗИ', 'УЧЕТ ОБОРУДОВАНИЯ'],
   'cellular-accounts': ['GN_cellular_account_numbers_count', 'GN_cellular_account_active_numbers_count', 'GN_cellular_account_total_cost'],
+  'cellular-identifiers': ['GN_cellular_identifier_tariff_cost_with_vat'],
 };
 
 const GUIDE_DATE_COLUMNS: Record<string, string[]> = {
@@ -320,6 +323,7 @@ function DataTable({
     ? Object.keys(section.data[0])
     : [section.idColumn]);
   const isCellularAccounts = section.entity === 'cellular-accounts';
+  const isCellularIdentifiers = section.entity === 'cellular-identifiers';
   const isDogovors = section.entity === 'dogovors';
   const supportsExcelImportExport = EXCEL_IMPORT_EXPORT_ENTITIES.has(section.entity);
   const accountDepartmentOptions = fkOptions.GN_department_FK ?? [];
@@ -355,6 +359,14 @@ function DataTable({
       return comparison * order;
     });
   }, [accountDepartmentFilter, activeSort, columnSearch, columns, dateColumns, isCellularAccounts, rowFilter, section.data, fkOptions]);
+
+  const cellularIdentifiersTotal = isCellularIdentifiers
+    ? displayRows.reduce((total, row) => (
+      String(row.GN_cellular_identifier_fio ?? '').trim()
+        ? total + Number(row.GN_cellular_identifier_tariff_cost_with_vat ?? 0)
+        : total
+    ), 0)
+    : 0;
 
   function toggleAccountSort(column: string): void {
     setAccountSort((previous) => (
@@ -576,6 +588,11 @@ function DataTable({
       const total = Number(row.GN_cellular_account_numbers_count ?? 0);
       const percent = total > 0 ? Math.round((active / total) * 100) : 0;
       return `${active} (${percent}%)`;
+    }
+    if (isCellularIdentifiers && col === 'GN_cellular_identifier_tariff_cost_with_vat') {
+      if (!String(row.GN_cellular_identifier_fio ?? '').trim()) return '';
+      const cost = Number(row[col]);
+      return Number.isFinite(cost) ? cost.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
     }
     return resolveFkLabel(col, row[col]);
   }
@@ -864,8 +881,12 @@ function DataTable({
         )}
         <thead>
           <tr>
+            {isCellularIdentifiers && <th>№</th>}
             {columns.map((col) => {
               const sortMarker = activeSort?.column === col ? (activeSort.direction === 'asc' ? ' ▲' : ' ▼') : '';
+              const columnLabel = isCellularIdentifiers && col === 'GN_cellular_identifier_tariff_cost_with_vat'
+                ? `Стоимость (с НДС), итого: ${cellularIdentifiersTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : getGuideColumnLabel(section.entity, col);
 
               return (
                 <th key={col} className={isDogovors ? 'guide-resizable-header' : undefined}>
@@ -874,14 +895,14 @@ function DataTable({
                     className="guide-sort-button"
                     onClick={() => isCellularAccounts ? toggleAccountSort(col) : toggleGuideSort(col)}
                   >
-                    {getGuideColumnLabel(section.entity, col)}{sortMarker}
+                    {columnLabel}{sortMarker}
                   </button>
                   {isDogovors && (
                     <span
                       className="guide-column-resizer"
                       role="separator"
                       aria-orientation="vertical"
-                      aria-label={`Изменить ширину столбца ${getGuideColumnLabel(section.entity, col)}`}
+                      aria-label={`Изменить ширину столбца ${columnLabel}`}
                       onPointerDown={(event) => startDogovorColumnResize(event, col)}
                     />
                   )}
@@ -902,6 +923,7 @@ function DataTable({
             </th>
           </tr>
           <tr className="guide-search-row">
+            {isCellularIdentifiers && <th />}
             {columns.map((column) => (
               <th key={column}>
                 {column === section.idColumn ? null : (
@@ -928,6 +950,7 @@ function DataTable({
                 key={i}
                 className={isEditing ? 'editing' : ''}
               >
+                {isCellularIdentifiers && <td>{i + 1}</td>}
                 {columns.map((col) => (
                   <td key={col}>
                     {isEditing && col !== section.idColumn && !readonlyColumns.includes(col) && fkOptions[col] ? (
