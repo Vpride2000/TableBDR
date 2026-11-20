@@ -1423,7 +1423,7 @@ export default function App() {
   if (isContractPopup && contractPopupId) {
     return (
       <main>
-        <ContractDetailsPage contractId={contractPopupId} onBack={() => window.close()} />
+        <ContractDetailsPage contractId={contractPopupId} />
       </main>
     )
   }

@@ -447,10 +447,6 @@ p {
   background: #e5e7eb;
 }
 
-.contract-details-table {
-  width: 100%;
-}
-
 .contract-details-count {
   margin-top: 12px;
   font-size: 0.95rem;
@@ -2954,7 +2950,8 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
 .guide-table.cellular-main-table,
 .invest-program-table-wrap--narrow .guide-table,
-.equipment-accounting-table {
+.equipment-accounting-table,
+.contract-details > .guide-table-wrap > .guide-table {
   width: max-content;
   min-width: 0;
 }
@@ -3951,12 +3948,31 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
   gap: 8px;
 }
 
-.invest-popup-field {
+.invest-popup-field,
+.contract-details-edit-form > .form-field {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   font-size: 0.78rem;
+}
+
+.contract-details-edit-form {
+  max-width: 440px;
+}
+
+.contract-details-edit-form > .form-field {
+  grid-template-columns: minmax(0, 190px) minmax(120px, 1fr);
+}
+
+.contract-details-edit-form .form-field-label {
+  white-space: normal;
+}
+
+.contract-details-edit-form input,
+.contract-details-edit-form select {
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .contracts-agreements-row td {

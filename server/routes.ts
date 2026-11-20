@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { createDbClient, toFiniteNumber, buildFallbackCalculationLine } from './db.js';
 import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS, LimitCalculationLineInput, LimitCalculationLineRow, LimitCalculationResponseLine } from './config.js';
 import { isSafeNoteLink } from '../shared/noteFormatting.js';
+import { personalAccountOptions } from '../shared/personalAccounts.js';
 
 // Маршруты backend-сервера.
 // Этот модуль регистрирует HTTP endpoints для сущностей GN и расчета лимитов.
@@ -2683,6 +2684,58 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.put('/api/gn/bdr/:id/personal-account', async (req: Request, res: Response): Promise<void> => {
+    const rowId = Number(req.params.id);
+    const payload = req.body as { contractId?: unknown; personalAccount?: unknown } | undefined;
+    const contractId = payload?.contractId;
+    const personalAccount = payload?.personalAccount;
+    if (!Number.isSafeInteger(rowId) || rowId <= 0 ||
+        typeof contractId !== 'number' || !Number.isSafeInteger(contractId) || contractId <= 0 ||
+        typeof personalAccount !== 'string' || personalAccount !== personalAccount.trim()) {
+      res.status(400).json({ error: 'Некорректный лицевой счёт или договор' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+      const current = await client.query<{ contract_id: number; accounts: string }>(
+        `SELECT b."GN_dogovor_FK" AS contract_id, d."GN_dogovor_personal_account" AS accounts
+         FROM "GN_bdr" b
+         JOIN "GN_dogovor" d ON d."GN_dgv_id" = b."GN_dogovor_FK"
+         WHERE b."GN_bdr_ID" = $1 AND b."is_deleted" = FALSE
+         FOR UPDATE OF b, d`,
+        [rowId]
+      );
+      if (current.rows.length === 0) {
+        await client.query('ROLLBACK');
+        res.status(404).json({ error: 'Строка БДР не найдена' });
+        return;
+      }
+      if (current.rows[0].contract_id !== contractId) {
+        await client.query('ROLLBACK');
+        res.status(409).json({ error: 'Договор строки изменился. Обновите страницу.' });
+        return;
+      }
+      if (personalAccount !== '' && !personalAccountOptions(current.rows[0].accounts).includes(personalAccount)) {
+        await client.query('ROLLBACK');
+        res.status(400).json({ error: 'Лицевой счёт отсутствует в договоре' });
+        return;
+      }
+
+      await client.query('UPDATE "GN_bdr" SET "GN_bdr_personal_account" = $1 WHERE "GN_bdr_ID" = $2', [personalAccount, rowId]);
+      const result = await client.query(`${BDR_SELECT_FIELDS} WHERE b."GN_bdr_ID" = $1`, [rowId]);
+      await client.query('COMMIT');
+      res.json(result.rows[0]);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to update BDR personal account', err);
+      res.status(500).json({ error: 'Не удалось сохранить лицевой счёт' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.put('/api/gn/bdr/:id', async (req: Request, res: Response): Promise<void> => {
     const rowId = Number(req.params.id);
     if (Number.isNaN(rowId)) {
@@ -2873,9 +2926,13 @@ export function setupRoutes(app: Express): void {
         return;
       }
 
-      const setClause = updates
+      let setClause = updates
         .map((entry, index) => `"${entry.column}" = $${index + 1}`)
         .join(', ');
+      const dogovorUpdateIndex = updates.findIndex((entry) => entry.column === 'GN_dogovor_FK');
+      if (dogovorUpdateIndex !== -1) {
+        setClause += `, "GN_bdr_personal_account" = CASE WHEN "GN_dogovor_FK" IS DISTINCT FROM $${dogovorUpdateIndex + 1} THEN '' ELSE "GN_bdr_personal_account" END`;
+      }
       const values = updates.map((entry) => entry.value);
 
       const updateResult = await client.query(
@@ -3257,11 +3314,17 @@ export function setupRoutes(app: Express): void {
   });
 
   app.get('/api/gn/bdr', async (req: Request, res: Response): Promise<void> => {
+    const dogovorId = req.query.dogovorId === undefined ? null : Number(req.query.dogovorId);
+    if (dogovorId !== null && (!Number.isSafeInteger(dogovorId) || dogovorId <= 0)) {
+      res.status(400).json({ error: 'Некорректный идентификатор договора' });
+      return;
+    }
     const client = await createDbClient();
     try {
       const result = await client.query(`${BDR_SELECT_FIELDS}
         WHERE b."is_deleted" = FALSE
-        ORDER BY b."GN_bdr_ID" ASC`);
+          ${dogovorId === null ? '' : 'AND b."GN_dogovor_FK" = $1'}
+        ORDER BY b."GN_bdr_ID" ASC`, dogovorId === null ? [] : [dogovorId]);
       res.json(result.rows);
     } catch (err) {
       console.error(err);

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
 import { formatHttpError, formatErrorMessage } from '../utils/httpUtils';
@@ -35,7 +35,7 @@ const BDR_SELECT_CONFIG: Record<string, { endpoint: string; labelKey: string }> 
   'Статья бюджета': { endpoint: '/api/gn/budget-items', labelKey: 'GN_budget_network_item' },
 };
 
-const LOCKED_EDIT_COLUMNS = new Set(['Ед. изм.', 'Един. лимит']);
+const LOCKED_EDIT_COLUMNS = new Set(['Ед. изм.', 'Един. лимит', 'Лицевой счет']);
 const EXTRA_NUMERIC_COLUMNS = new Set(['БДР25корр', 'БДР26', 'БДР26корр', 'БДР27']);
 const QUANTITY_COLUMNS = new Set(['Кол-во БДР25корр', 'Кол-во БДР26', 'Кол-во БДР26корр', 'Кол-во БДР27']);
 const FINANCIAL_EXPORT_COLUMNS = new Set(['Лимит', 'БДР25корр', 'БДР26', 'БДР26корр', 'БДР27', 'Един. лимит']);
@@ -266,6 +266,13 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
       next.splice(adjustedBudgetItemIndex, 0, 'Статья бюджета УС');
     }
 
+    const personalAccountIndex = next.indexOf('Лицевой счет');
+    const contractIndex = next.indexOf('Договор');
+    if (personalAccountIndex !== -1 && contractIndex !== -1) {
+      next.splice(personalAccountIndex, 1);
+      next.splice(next.indexOf('Договор') + 1, 0, 'Лицевой счет');
+    }
+
     return next;
   }, [columns]);
 
@@ -382,7 +389,13 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
       }
 
       if (column === 'Контрагент') {
-        return { ...prev, Контрагент: value, Договор: '' };
+        return { ...prev, Контрагент: value, Договор: '', 'Лицевой счет': '' };
+      }
+
+      if (column === 'Договор') {
+        const original = data.find((row) => Number(row.GN_bdr_ID) === editingRowId);
+        const account = value === original?.['Договор'] ? String(original['Лицевой счет'] ?? '') : '';
+        return { ...prev, Договор: value, 'Лицевой счет': account };
       }
 
       return { ...prev, [column]: value };

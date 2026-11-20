@@ -244,6 +244,7 @@ CREATE TABLE IF NOT EXISTS "GN_bdr" (
   "GN_department_FK" INTEGER NOT NULL,
   "GN_departament_object_FK" INTEGER NOT NULL,
   "GN_dogovor_FK" INTEGER NOT NULL,
+  "GN_bdr_personal_account" TEXT NOT NULL DEFAULT '',
   "GN_contracor_FK" INTEGER NOT NULL,
   "GN_budget_network_item_FK" INTEGER NOT NULL,
   "GN_bdr_predmet_dogovora" TEXT NOT NULL,

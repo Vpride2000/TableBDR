@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { formatHttpError } from '../utils/httpUtils';
 import type { ContractAdditionalAgreement } from '../types/types';
+import { personalAccountOptions } from '../../shared/personalAccounts';
 
 // Страница просмотра деталей по конкретному договору.
-// Загружает все строки BDR и фильтрует их по названию договора.
 type Row = Record<string, unknown>;
 type LookupOption = { value: string; label: string }
-type DogovorMetadata = { dogovorId: number | null; date: string; signer: string; personalAccount: string }
+type DogovorMetadata = { date: string; signer: string; personalAccount: string }
 const CONTRACT_CONTROL_UPDATED_KEY = 'contracts-control-updated'
+const BDR_UPDATED_EVENT_KEY = 'bdr:last-update'
 const BDR_CURRENCY_FORMATTER = new Intl.NumberFormat('ru-RU', {
   style: 'currency',
   currency: 'RUB',
@@ -40,10 +41,9 @@ type ContractInfo = {
 
 interface ContractDetailsPageProps {
   contractId: number;
-  onBack: () => void;
 }
 
-export default function ContractDetailsPage({ contractId, onBack }: ContractDetailsPageProps) {
+export default function ContractDetailsPage({ contractId }: ContractDetailsPageProps) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,11 +54,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
   const [contractLoading, setContractLoading] = useState(true);
   const [contractError, setContractError] = useState<string | null>(null);
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([]);
-  const [dogovorMetadata, setDogovorMetadata] = useState<DogovorMetadata>({ dogovorId: null, date: '', signer: '', personalAccount: '' });
-  const [personalAccountDraft, setPersonalAccountDraft] = useState('')
-  const [isEditingPersonalAccount, setIsEditingPersonalAccount] = useState(false)
-  const [personalAccountSaving, setPersonalAccountSaving] = useState(false)
-  const [personalAccountError, setPersonalAccountError] = useState<string | null>(null)
+  const [dogovorMetadata, setDogovorMetadata] = useState<DogovorMetadata>({ date: '', signer: '', personalAccount: '' });
   const [contractDraft, setContractDraft] = useState<ContractInfo | null>(null);
   const [isEditingContract, setIsEditingContract] = useState(false);
   const [contractSaveLoading, setContractSaveLoading] = useState(false);
@@ -81,32 +77,43 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
   const [editError, setEditError] = useState<string | null>(null);
   const [isAddingAgreement, setIsAddingAgreement] = useState(false);
   const [isDeleteAgreement, setIsDeleteAgreement] = useState(false);
+  const [accountSavingId, setAccountSavingId] = useState<number | null>(null);
+  const [accountSaveError, setAccountSaveError] = useState<string | null>(null);
+  const dogovorId = contractInfo?.GN_contract_dogovor_FK;
 
   useEffect(() => {
+    if (!dogovorId) return;
+    let active = true;
     async function loadContractRows(): Promise<void> {
       setLoading(true);
       setError(null);
 
       try {
-        const response = await fetch('/api/gn/bdr');
+        const response = await fetch(`/api/gn/bdr?dogovorId=${dogovorId}`);
         if (!response.ok) {
           const payload = (await response.json().catch(() => ({}))) as { error?: string };
           throw new Error(payload.error || formatHttpError(response.status));
         }
 
-        const allRows = (await response.json()) as Row[];
-        
-        // Rows are loaded but filtered by contract name from contractInfo later
-        setRows(allRows);
+        const contractRows = (await response.json()) as Row[];
+        if (active) setRows(contractRows);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Ошибка при загрузке данных');
+        if (active) setError(err instanceof Error ? err.message : 'Ошибка при загрузке данных');
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     }
 
     void loadContractRows();
-  }, []);
+    function onStorage(event: StorageEvent): void {
+      if (event.key === BDR_UPDATED_EVENT_KEY) void loadContractRows();
+    }
+    window.addEventListener('storage', onStorage);
+    return () => {
+      active = false;
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [dogovorId]);
 
   useEffect(() => {
     async function loadContractMetadata(): Promise<void> {
@@ -114,7 +121,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
       setAgreementsError(null);
       setContractLoading(true);
       setContractError(null);
-      setDogovorMetadata({ dogovorId: null, date: '', signer: '', personalAccount: '' });
+      setDogovorMetadata({ date: '', signer: '', personalAccount: '' });
 
       try {
         const [contractsResponse, contractorsResponse, dogovorsResponse, departmentsResponse, agreementsResponse] = await Promise.all([
@@ -149,12 +156,10 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
         const dogovor = dogovors.find((row) => Number(row.GN_dgv_id) === contract.GN_contract_dogovor_FK);
         const signer = departments.find((row) => Number(row.GN_Dep_id) === Number(dogovor?.GN_dogovor_signer_FK));
         setDogovorMetadata({
-          dogovorId: Number(dogovor?.GN_dgv_id) || null,
           date: String(dogovor?.GN_dogovor_date ?? ''),
           signer: String(signer?.GN_department ?? ''),
           personalAccount: String(dogovor?.GN_dogovor_personal_account ?? ''),
         });
-        setPersonalAccountDraft(String(dogovor?.GN_dogovor_personal_account ?? ''));
         const contractAgreements = allAgreements.filter(a => a.GN_contract_id_FK === contract.GN_contract_id);
         setAgreements(contractAgreements);
       } catch (err) {
@@ -191,32 +196,6 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
     const normalizedValue = String(value ?? '')
     if (normalizedValue === '') return ''
     return normalizedValue.length >= 10 ? normalizedValue.slice(0, 10) : normalizedValue
-  }
-
-  async function savePersonalAccount(): Promise<void> {
-    if (!dogovorMetadata.dogovorId) {
-      setPersonalAccountError('Не удалось определить договор для сохранения лицевого счета.')
-      return
-    }
-    setPersonalAccountSaving(true)
-    setPersonalAccountError(null)
-    try {
-      const response = await fetch(`/api/gn/dogovors/${dogovorMetadata.dogovorId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ GN_dogovor_personal_account: personalAccountDraft }),
-      })
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({})) as { error?: string }
-        throw new Error(payload.error || formatHttpError(response.status))
-      }
-      setDogovorMetadata((previous) => ({ ...previous, personalAccount: personalAccountDraft }))
-      setIsEditingPersonalAccount(false)
-    } catch (saveError) {
-      setPersonalAccountError(saveError instanceof Error ? saveError.message : 'Не удалось сохранить лицевой счет')
-    } finally {
-      setPersonalAccountSaving(false)
-    }
   }
 
   function normalizeDateValueWithFallback(value: unknown): string {
@@ -544,16 +523,34 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
     }
   }
 
-    const columns = ['Подразделение', 'Объект', 'Статья бюджета УС', 'Статья бюджета', 'Количество', 'БДР25'];
-    const getCellValue = (row: Row, column: string): unknown => {
-      if (column === 'Количество') return row['Кол-во'];
-      if (column === 'БДР25') return row['Лимит'];
-      return row[column];
-    };
-    const contractRows = rows.filter((row) => (
-      !contractInfo?.GN_contract_name || String(row['Договор'] ?? '') === contractInfo.GN_contract_name
-    ));
-    const totalBdr25 = contractRows.reduce((total, row) => total + parseBudgetAmount(row['Лимит']), 0);
+  async function savePersonalAccount(rowId: number, personalAccount: string): Promise<void> {
+    if (!dogovorId) return;
+    setAccountSavingId(rowId);
+    setAccountSaveError(null);
+    try {
+      const response = await fetch(`/api/gn/bdr/${rowId}/personal-account`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contractId: dogovorId, personalAccount }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || formatHttpError(response.status));
+      }
+      const updatedRow = (await response.json()) as Row;
+      setRows((previous) => previous.map((row) => Number(row.GN_bdr_ID) === rowId ? updatedRow : row));
+      localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()));
+    } catch (err) {
+      setAccountSaveError(err instanceof Error ? err.message : 'Не удалось сохранить лицевой счёт');
+    } finally {
+      setAccountSavingId(null);
+    }
+  }
+
+    const columns = ['Подразделение', 'Объект', 'Лицевой счет', 'Статья бюджета УС', 'Статья бюджета', 'БДР26корр'];
+    const contractRows = rows;
+    const accountOptions = personalAccountOptions(dogovorMetadata.personalAccount);
+    const totalBdr26Corr = contractRows.reduce((total, row) => total + parseBudgetAmount(row['БДР26корр']), 0);
 
   return (
     <section className="contract-details">
@@ -573,86 +570,12 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
               </div>
               <div className="contract-details-meta-row">
                 <strong>Лицевой счет:</strong>
-                {isEditingPersonalAccount ? (
-                  <>
-                    <textarea
-                      value={personalAccountDraft}
-                      onChange={(event) => setPersonalAccountDraft(event.target.value)}
-                      aria-label="Лицевой счет договора"
-                      placeholder="Укажите каждый лицевой счет с новой строки"
-                      rows={3}
-                    />
-                    <button type="button" className="page-action-btn page-action-btn--success" onClick={() => void savePersonalAccount()} disabled={personalAccountSaving}>
-                      {personalAccountSaving ? 'Сохранение...' : 'Сохранить'}
-                    </button>
-                    <button
-                      type="button"
-                      className="page-action-btn page-action-btn--secondary"
-                      onClick={() => {
-                        setPersonalAccountDraft(dogovorMetadata.personalAccount)
-                        setIsEditingPersonalAccount(false)
-                        setPersonalAccountError(null)
-                      }}
-                      disabled={personalAccountSaving}
-                    >
-                      Отмена
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <span>{dogovorMetadata.personalAccount.split(/\r?\n/).filter(Boolean).join(', ')}</span>
-                    <button type="button" className="page-action-btn page-action-btn--secondary" onClick={() => setIsEditingPersonalAccount(true)}>
-                      Изменить
-                    </button>
-                  </>
-                )}
+                <span>{dogovorMetadata.personalAccount.split(/\r?\n/).filter(Boolean).join(', ')}</span>
               </div>
-              {personalAccountError && <p className="hint hint--error" role="alert">{personalAccountError}</p>}
             </>
           )}
         </div>
-        <button type="button" className="contract-close-btn" onClick={onBack}>
-          Закрыть
-        </button>
       </div>
-
-      {loading && <p className="hint">Загрузка данных...</p>}
-      {error && <p className="hint hint--error">Ошибка: {error}</p>}
-      {!loading && !error && contractRows.length === 0 && <p className="hint">Нет строк для этого договора.</p>}
-
-      {!loading && !error && contractRows.length > 0 && (
-        <div className="guide-table-wrap">
-          <table className="guide-table table-compact contract-details-table">
-            <thead>
-              <tr>
-                {columns.map((col) => (
-                  <th key={col}>{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {contractRows.map((row, i) => (
-                  <tr key={i}>
-                    {columns.map((col) => (
-                      <td key={col}>
-                        {col === 'БДР25'
-                          ? BDR_CURRENCY_FORMATTER.format(parseBudgetAmount(getCellValue(row, col)))
-                          : String(getCellValue(row, col) ?? '')}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={columns.length - 1}>Итого БДР25</td>
-                <td>{BDR_CURRENCY_FORMATTER.format(totalBdr25)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          <p className="contract-details-count">Всего строк: {contractRows.length}</p>
-        </div>
-      )}
 
       {contractLoading && <p className="hint">Загрузка параметров договора...</p>}
       {contractError && <p className="hint hint--error">Ошибка: {contractError}</p>}
@@ -699,7 +622,7 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
               {contractSaveError && <p className="hint hint--error">{contractSaveError}</p>}
             </div>
           ) : (
-            <div className="form-fields-compact">
+            <div className="form-fields-vertical contract-details-edit-form">
               <div className="form-field form-field-compact">
                 <label className="form-field-label" htmlFor="contract-status">Статус</label>
                 <select
@@ -770,6 +693,58 @@ export default function ContractDetailsPage({ contractId, onBack }: ContractDeta
               {contractSaveError && <p className="hint hint--error">Ошибка: {contractSaveError}</p>}
             </div>
           )}
+        </div>
+      )}
+
+      {loading && !contractError && <p className="hint">Загрузка данных...</p>}
+      {error && <p className="hint hint--error">Ошибка: {error}</p>}
+      {!loading && !error && contractRows.length === 0 && <p className="hint">Нет строк для этого договора.</p>}
+
+      {!loading && !error && contractRows.length > 0 && (
+        <div className="guide-table-wrap">
+          <table className="guide-table table-compact contract-details-table">
+            <thead>
+              <tr>
+                {columns.map((col) => (
+                  <th key={col}>{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {contractRows.map((row) => (
+                  <tr key={Number(row.GN_bdr_ID)}>
+                    {columns.map((col) => (
+                      <td key={col}>
+                        {col === 'Лицевой счет' ? (
+                          <select
+                            aria-label={`Лицевой счет строки ${row.GN_bdr_ID}`}
+                            value={String(row[col] ?? '')}
+                            disabled={accountSavingId !== null}
+                            onChange={(event) => void savePersonalAccount(Number(row.GN_bdr_ID), event.target.value)}
+                          >
+                            <option value="">Не выбран</option>
+                            {String(row[col] ?? '') && !accountOptions.includes(String(row[col])) && (
+                              <option value={String(row[col])}>{String(row[col])} (нет в договоре)</option>
+                            )}
+                            {accountOptions.map((account) => <option key={account} value={account}>{account}</option>)}
+                          </select>
+                        ) : col === 'БДР26корр'
+                          ? BDR_CURRENCY_FORMATTER.format(parseBudgetAmount(row[col]))
+                          : String(row[col] ?? '')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={columns.length - 1}>Итого БДР26корр</td>
+                <td>{BDR_CURRENCY_FORMATTER.format(totalBdr26Corr)}</td>
+              </tr>
+            </tfoot>
+          </table>
+          {accountSaveError && <p className="hint hint--error">Ошибка сохранения лицевого счёта: {accountSaveError}</p>}
+          <p className="contract-details-count">Всего строк: {contractRows.length}</p>
         </div>
       )}
 

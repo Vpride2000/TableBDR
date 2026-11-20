@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { formatHttpError } from './utils/httpUtils'
+import { personalAccountOptions } from '../shared/personalAccounts'
 
 type Lookup = {
   id: number
@@ -138,10 +139,6 @@ function labelList(values: Lookup[]): string {
 
 function budgetItemList(values: Lookup[]): string {
   return values.map(({ label }) => label.match(/^\s*(\d+)\s*\./)?.[1] ?? label).join('; ')
-}
-
-function personalAccountOptions(value: string | undefined): string[] {
-  return [...new Set((value ?? '').split(/\r?\n/).map((account) => account.trim()).filter(Boolean))]
 }
 
 function SearchableSelect({

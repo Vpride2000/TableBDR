@@ -161,6 +161,34 @@ export async function ensureDogovorColumns(client: Client): Promise<void> {
   `);
 }
 
+export async function ensureBdrPersonalAccountColumn(client: Client): Promise<void> {
+  await client.query(`
+    DO $$
+    BEGIN
+      LOCK TABLE "GN_bdr" IN ACCESS EXCLUSIVE MODE;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = '"GN_bdr"'::regclass
+          AND attname = 'GN_bdr_personal_account'
+          AND NOT attisdropped
+      ) THEN
+        ALTER TABLE "GN_bdr" ADD COLUMN "GN_bdr_personal_account" TEXT NOT NULL DEFAULT '';
+        UPDATE "GN_bdr" b
+        SET "GN_bdr_personal_account" = COALESCE((
+          SELECT CASE WHEN COUNT(DISTINCT account) = 1 THEN MIN(account) ELSE '' END
+          FROM (
+            SELECT btrim(value, E' \\t\\r\\n') AS account
+            FROM regexp_split_to_table(d."GN_dogovor_personal_account", E'\\r?\\n') AS value
+          ) accounts
+          WHERE account <> ''
+        ), '')
+        FROM "GN_dogovor" d
+        WHERE d."GN_dgv_id" = b."GN_dogovor_FK";
+      END IF;
+    END $$;
+  `);
+}
+
 export async function ensurePrimaryDocumentsTables(client: Client): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS "GN_primary_documents" (
