@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import * as XLSX from 'xlsx'
+import ExcelActionToolbar from './components/ExcelActionToolbar'
+import PrimaryExcelImport from './PrimaryExcelImport'
 import { formatHttpError } from './utils/httpUtils'
+import { buildBdr26CorrIndex, buildBdrExpenseDepartmentIndex, completePrimarySelection, getBdr26Corr, getBdrContractorIds, getBdrExpenseDepartments, type BdrExpenseOption } from './utils/primaryBdr'
+import { primaryContractLabel as contractLabel } from './utils/primaryExcel'
 import { personalAccountOptions } from '../shared/personalAccounts'
 
 type Lookup = {
@@ -58,20 +63,24 @@ type Draft = {
   note: string
 }
 type MonthDraft = Pick<Draft, 'amountWithVat' | 'sedLaunched' | 'acceptedIn1C' | 'note'>
-type ColumnKey = 'department' | 'objects' | 'expenseDepartments' | 'contractor' | 'budgetItems' | 'contract' | 'personalAccount' | 'amountWithVat' | 'details' | 'sedLaunched' | 'acceptedIn1C' | 'note'
+type ColumnKey = 'department' | 'objects' | 'contractor' | 'contract' | 'expenseDepartment' | 'bdr26Corr' | 'personalAccount' | 'amountWithVat' | 'sedLaunched' | 'acceptedIn1C' | 'note'
 type ColumnWidthKey = ColumnKey | `${PrimaryMonth}:${ColumnKey}`
 type Column = { key: ColumnKey; label: string }
 type SelectOption = { value: string; label: string }
 
+export function primaryMonthStatusClass(status?: { sedLaunched: boolean; acceptedIn1C: boolean }): string {
+  if (!status?.sedLaunched) return status?.acceptedIn1C ? '' : 'status-cell--inactive'
+  return status.acceptedIn1C ? 'status-cell--active' : 'status-cell--pending'
+}
+
 const BASE_COLUMNS: Column[] = [
   { key: 'department', label: 'Подразделение записи' },
   { key: 'objects', label: 'Объект' },
-  { key: 'expenseDepartments', label: 'На какие филиалы расходы' },
   { key: 'contractor', label: 'Контрагенты' },
   { key: 'contract', label: 'Договор' },
-  { key: 'budgetItems', label: 'Статьи бюджета' },
+  { key: 'expenseDepartment', label: 'На кого расходы' },
+  { key: 'bdr26Corr', label: 'БДР26корр' },
   { key: 'personalAccount', label: 'Лицевой счет' },
-  { key: 'details', label: 'Детализация' },
 ]
 const MONTH_COLUMNS: Column[] = [
   { key: 'amountWithVat', label: 'Сумма с НДС' },
@@ -88,14 +97,13 @@ const MONTH_COLUMN_KEYS = new Set<ColumnKey>(MONTH_COLUMNS.map(({ key }) => key)
 const WIDTHS_STORAGE_KEY = 'primary-table-column-widths-compact-v2'
 const COLUMN_WIDTHS: Record<ColumnKey, number> = {
   department: 110,
-  expenseDepartments: 110,
   contractor: 90,
   objects: 80,
-  budgetItems: 72,
   contract: 90,
+  expenseDepartment: 110,
+  bdr26Corr: 100,
   personalAccount: 75,
   amountWithVat: 100,
-  details: 60,
   sedLaunched: 80,
   acceptedIn1C: 100,
   note: 80,
@@ -137,8 +145,33 @@ function labelList(values: Lookup[]): string {
   return values.map(({ label }) => label).join('; ')
 }
 
-function budgetItemList(values: Lookup[]): string {
-  return values.map(({ label }) => label.match(/^\s*(\d+)\s*\./)?.[1] ?? label).join('; ')
+function formatBdr26Corr(amount: number | null): string {
+  return amount === null ? '' : amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function parseBdrOptions(rows: Record<string, unknown>[]): BdrExpenseOption[] {
+  return rows.map((row) => {
+    const parseId = (value: unknown): number | null => {
+      if (value === null) return null
+      const id = Number(value)
+      if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Некорректные данные БДР')
+      return id
+    }
+    if (row.expenseDepartment !== null && typeof row.expenseDepartment !== 'string') {
+      throw new Error('Некорректное подразделение расходов в БДР')
+    }
+    if (row.bdr26Corr !== null && (typeof row.bdr26Corr !== 'string' || row.bdr26Corr.trim() === '' || !Number.isFinite(Number(row.bdr26Corr)))) {
+      throw new Error('Некорректное значение БДР26корр')
+    }
+    return {
+      departmentId: parseId(row.departmentId),
+      objectId: parseId(row.objectId),
+      contractorId: parseId(row.contractorId),
+      contractId: parseId(row.contractId),
+      expenseDepartment: row.expenseDepartment,
+      bdr26Corr: row.bdr26Corr === null ? null : Number(row.bdr26Corr),
+    }
+  })
 }
 
 function SearchableSelect({
@@ -203,20 +236,13 @@ function monthLabel(month: PrimaryMonth): string {
   return MONTHS.find((item) => item.key === month)?.label ?? month
 }
 
-function contractLabel(contract: Lookup): string {
-  if (!contract.date) return contract.label
-  const date = contract.date.slice(0, 10).split('-').reverse().join('.')
-  return `${contract.label} от ${date}`
-}
-
 export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contractId: number) => void }): React.ReactElement {
   const [rows, setRows] = useState<PrimaryDocument[]>([])
   const [departments, setDepartments] = useState<Lookup[]>([])
   const [contractors, setContractors] = useState<Lookup[]>([])
   const [objects, setObjects] = useState<Lookup[]>([])
-  const [budgetItems, setBudgetItems] = useState<Lookup[]>([])
   const [contracts, setContracts] = useState<Lookup[]>([])
-  const [contractDepartments, setContractDepartments] = useState<Array<{ departmentId: number; contractId: number }>>([])
+  const [bdrOptions, setBdrOptions] = useState<BdrExpenseOption[]>([])
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [monthDrafts, setMonthDrafts] = useState<Record<number, MonthDraft>>({})
   const [monthEdit, setMonthEdit] = useState<PrimaryMonth | null>(null)
@@ -231,35 +257,43 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [bdrRefreshError, setBdrRefreshError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importMessage, setImportMessage] = useState<string | null>(null)
   const [expandedMonths, setExpandedMonths] = useState<Record<PrimaryMonth, boolean>>({
     october: false,
     november: false,
     december: false,
   })
   const resizeRef = useRef<{ key: ColumnWidthKey; startX: number; startWidth: number } | null>(null)
+  const bdrRequestRef = useRef(0)
 
   async function loadData(): Promise<void> {
     setLoading(true)
     setError(null)
     setActionError(null)
+    const bdrRequest = ++bdrRequestRef.current
     try {
       const responses = await Promise.all([
         fetch('/api/primary', { cache: 'no-store' }),
         fetch('/api/gn/departments'),
         fetch('/api/gn/objects'),
-        fetch('/api/gn/pao-budget-items'),
         fetch('/api/gn/dogovors'),
         fetch('/api/gn/contractors'),
-        fetch('/api/primary/contract-departments'),
+        fetch('/api/primary/bdr-options'),
         fetch('/api/gn/contracts'),
       ])
       const failed = responses.find((response) => !response.ok)
       if (failed) throw new Error(formatHttpError(failed.status))
-      const [primaryRows, departmentRows, objectRows, budgetRows, contractRows, contractorRows, contractDepartmentRows, contractRegistryRows] = await Promise.all(
+      const [primaryRows, departmentRows, objectRows, contractRows, contractorRows, bdrRows, contractRegistryRows] = await Promise.all(
         responses.map((response) => response.json() as Promise<Record<string, unknown>[]>),
       )
-      setRows(primaryRows as PrimaryDocument[])
+      const nextRows = primaryRows as PrimaryDocument[]
+      setRows(nextRows)
+      setDepartmentFilter((current) => (
+        current && !nextRows.some((row) => String(row.departmentId) === current) ? '' : current
+      ))
       setDepartments(departmentRows.map((row) => ({ id: Number(row.GN_Dep_id), label: String(row.GN_department ?? '') })))
       setContractors(contractorRows.map((row) => ({ id: Number(row.GN_c_id), label: String(row.GN_contarctor ?? '') })))
       setObjects(objectRows.map((row) => ({
@@ -268,10 +302,6 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
         departmentIds: Array.isArray(row.GN_department_FKs) && row.GN_department_FKs.length > 0
           ? row.GN_department_FKs.map(Number)
           : [Number(row.GN_department_FK)].filter(Number.isSafeInteger),
-      })))
-      setBudgetItems(budgetRows.map((row) => ({
-        id: Number(row.PAO_b_id),
-        label: String(row.PAO__budget_network_item ?? ''),
       })))
       const contractorNames = new Map(contractorRows.map((row) => [Number(row.GN_c_id), String(row.GN_contarctor ?? '')]))
       const contractWindowIds = new Map<number, number>()
@@ -291,14 +321,11 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
         contractWindowId: contractWindowIds.get(Number(row.GN_dgv_id)),
         date: row.GN_dogovor_date ? String(row.GN_dogovor_date) : '',
       })))
-      setContractDepartments(contractDepartmentRows.map((row) => {
-        const departmentId = Number(row.departmentId)
-        const contractId = Number(row.contractId)
-        if (!Number.isSafeInteger(departmentId) || departmentId <= 0 || !Number.isSafeInteger(contractId) || contractId <= 0) {
-          throw new Error('Некорректная связь подразделения и договора')
-        }
-        return { departmentId, contractId }
-      }))
+      const options = parseBdrOptions(bdrRows)
+      if (bdrRequest === bdrRequestRef.current) {
+        setBdrOptions(options)
+        setBdrRefreshError(null)
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить данные')
     } finally {
@@ -308,15 +335,56 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
 
   useEffect(() => {
     void loadData()
+    let active = true
+    async function refreshBdrOptions(): Promise<void> {
+      const request = ++bdrRequestRef.current
+      try {
+        const response = await fetch('/api/primary/bdr-options', { cache: 'no-store' })
+        if (!response.ok) throw new Error(formatHttpError(response.status))
+        const options = parseBdrOptions(await response.json() as Record<string, unknown>[])
+        if (active && request === bdrRequestRef.current) {
+          setBdrOptions(options)
+          setBdrRefreshError(null)
+        }
+      } catch (refreshError) {
+        if (active && request === bdrRequestRef.current) {
+          setBdrRefreshError(refreshError instanceof Error ? refreshError.message : 'Не удалось обновить данные БДР')
+        }
+      }
+    }
+    function onStorage(event: StorageEvent): void {
+      if (event.key === 'bdr:last-update') void refreshBdrOptions()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      active = false
+      window.removeEventListener('storage', onStorage)
+    }
   }, [])
+
+  const expenseDepartmentIndex = useMemo(() => buildBdrExpenseDepartmentIndex(bdrOptions), [bdrOptions])
+  const bdr26CorrIndex = useMemo(() => buildBdr26CorrIndex(bdrOptions), [bdrOptions])
+  const bdrIds = useMemo(() => ({
+    departments: new Set(bdrOptions.map((row) => row.departmentId)),
+    objects: new Set(bdrOptions.map((row) => row.objectId)),
+    contracts: new Set(bdrOptions.map((row) => row.contractId)),
+  }), [bdrOptions])
+
+  const departmentFilterOptions = useMemo(() => {
+    const options = new Map<number, string>()
+    rows.forEach((row) => {
+      if (row.departmentId !== null && row.department !== null) options.set(row.departmentId, row.department)
+    })
+    return [...options].map(([id, label]) => ({ value: String(id), label }))
+  }, [rows])
 
   const visibleRows = useMemo(() => {
     const valueFor = (row: PrimaryDocument, key: ColumnKey): string | number => {
       if (key === 'department') return row.department ?? ''
-      if (key === 'expenseDepartments') return labelList(row.expenseDepartments)
       if (key === 'contractor') return contracts.find((contract) => contract.id === row.contractId)?.contractor ?? ''
       if (key === 'objects') return labelList(row.objects)
-      if (key === 'budgetItems') return budgetItemList(row.budgetItems)
+      if (key === 'expenseDepartment') return getBdrExpenseDepartments(expenseDepartmentIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? ''))
+      if (key === 'bdr26Corr') return getBdr26Corr(bdr26CorrIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? '')) ?? ''
       if (key === 'contract') {
         const contract = contracts.find((item) => item.id === row.contractId)
         return contract ? contractLabel(contract) : row.contract ?? ''
@@ -326,7 +394,6 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
         return row.personalAccount || (contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
       }
       if (key === 'amountWithVat') return Number(row.monthData[row.month]?.amountWithVat ?? 0)
-      if (key === 'details') return row.details ?? (row.detailsEnabled ? 'Да' : 'Нет')
       if (key === 'sedLaunched') return Number(row.monthData[row.month]?.sedLaunched ?? false)
       if (key === 'acceptedIn1C') return Number(row.monthData[row.month]?.acceptedIn1C ?? false)
       if (key === 'note') return row.monthData[row.month]?.note ?? ''
@@ -336,7 +403,9 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
       if (departmentFilter && String(row.departmentId) !== departmentFilter) return false
       return BASE_COLUMNS.every(({ key }) => {
         const filter = columnFilters[key]?.trim()
-        return !filter || String(valueFor(row, key)).toLocaleLowerCase('ru').includes(filter.toLocaleLowerCase('ru'))
+        const value = valueFor(row, key)
+        const text = key === 'bdr26Corr' && typeof value === 'number' ? formatBdr26Corr(value) : String(value)
+        return !filter || text.toLocaleLowerCase('ru').includes(filter.toLocaleLowerCase('ru'))
       })
     }).sort((left, right) => {
       const leftValue = valueFor(left, sort.key)
@@ -346,12 +415,58 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
         : String(leftValue).localeCompare(String(rightValue), 'ru', { numeric: true, sensitivity: 'base' })
       return sort.direction === 'asc' ? compare : -compare
     })
-  }, [columnFilters, contracts, departmentFilter, rows, sort])
+  }, [bdr26CorrIndex, columnFilters, contracts, departmentFilter, expenseDepartmentIndex, rows, sort])
 
   function toggleSort(key: ColumnKey): void {
     setSort((current) => current.key === key
       ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
       : { key, direction: 'asc' })
+  }
+
+  function resetFilters(): void {
+    if (monthEdit !== null || formOpen) {
+      setActionError('Завершите редактирование перед сбросом фильтров.')
+      return
+    }
+    setDepartmentFilter('')
+    setColumnFilters({})
+    setActionError(null)
+  }
+
+  function exportToExcel(): void {
+    if (monthEdit !== null || formOpen) {
+      setActionError('Завершите редактирование перед выгрузкой.')
+      return
+    }
+    try {
+      setActionError(null)
+      const header = ['ID', ...BASE_COLUMNS.map((column) => column.label),
+        ...MONTHS.flatMap((month) => MONTH_COLUMNS.map((column) => `${month.label}: ${column.label}`))]
+      const values = visibleRows.map((row) => {
+        const contract = contracts.find((item) => item.id === row.contractId)
+        const departmentId = String(row.departmentId ?? '')
+        const objectIds = row.objects.map((object) => String(object.id))
+        const contractId = String(row.contractId ?? '')
+        return [
+          row.id, row.department ?? '', labelList(row.objects), contract?.contractor ?? '',
+          contract ? contractLabel(contract) : row.contract ?? '',
+          getBdrExpenseDepartments(expenseDepartmentIndex, departmentId, objectIds, contractId),
+          getBdr26Corr(bdr26CorrIndex, departmentId, objectIds, contractId),
+          row.personalAccount ?? '',
+          ...MONTHS.flatMap((month) => {
+            const data = row.monthData[month.key]
+            return data ? [data.amountWithVat, data.sedLaunched, data.acceptedIn1C, data.note] : ['', '', '', '']
+          }),
+        ]
+      })
+      const worksheet = XLSX.utils.aoa_to_sheet([header, ...values])
+      worksheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: values.length, c: header.length - 1 } }) }
+      const workbook = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Первичные')
+      XLSX.writeFile(workbook, 'Первичные.xlsx')
+    } catch (exportError) {
+      setActionError(exportError instanceof Error ? exportError.message : 'Не удалось выгрузить Excel')
+    }
   }
 
   function toggleMonthExpanded(month: PrimaryMonth): void {
@@ -436,7 +551,8 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
 
   function startCreate(): void {
     setEditingId(null)
-    setDraft({ ...EMPTY_DRAFT, departmentId: departmentFilter })
+    const initial = { ...EMPTY_DRAFT, departmentId: departmentFilter }
+    setDraft({ ...initial, ...completePrimarySelection(initial, { bdr: bdrOptions, objects, contractors, contracts }, 'department') })
     setFormError(null)
     setFormOpen(true)
   }
@@ -478,33 +594,48 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
   }
 
   function renderEditorCell(key: ColumnKey): React.ReactElement {
+    if (key === 'expenseDepartment') {
+      return <span>{getBdrExpenseDepartments(expenseDepartmentIndex, draft.departmentId, draft.objectIds, draft.contractId)}</span>
+    }
+    if (key === 'bdr26Corr') {
+      const amount = getBdr26Corr(bdr26CorrIndex, draft.departmentId, draft.objectIds, draft.contractId)
+      return <span>{formatBdr26Corr(amount)}</span>
+    }
     if (key === 'department') {
+      const selectedDepartment = editingId === null ? null : rows.find((row) => row.id === editingId)?.departmentId
       return (
         <SearchableSelect
           label="Подразделение записи"
           value={draft.departmentId}
-          options={departments.map((item) => ({ value: String(item.id), label: item.label }))}
+          options={departments.filter((item) => item.id === selectedDepartment || bdrIds.departments.has(item.id))
+            .map((item) => ({ value: String(item.id), label: item.label }))}
           placeholder="Не выбрано"
           onChange={(value) => {
-            updateDraft('departmentId', String(value))
-            updateDraft('objectIds', [])
-            updateDraft('contractId', '')
-            updateDraft('personalAccount', '')
+            setDraft((current) => {
+              const next = { ...current, departmentId: String(value) }
+              return { ...next, ...completePrimarySelection(next, { bdr: bdrOptions, objects, contractors, contracts }, 'department') }
+            })
           }}
         />
       )
     }
     if (key === 'contractor') {
+      const selectedContract = editingId === null ? null : contracts.find((item) => item.id === rows.find((row) => row.id === editingId)?.contractId)
+      const contractorIds = getBdrContractorIds(bdrOptions, draft.departmentId, draft.objectIds)
       return (
         <SearchableSelect
           label="Контрагент"
           value={draft.contractorId}
-          options={contractors.map((item) => ({ value: String(item.id), label: item.label }))}
+          options={contractors.filter((item) => contractorIds.has(item.id)
+            || (item.id === selectedContract?.contractorId && String(item.id) === draft.contractorId))
+            .map((item) => ({ value: String(item.id), label: item.label }))}
           placeholder="Выберите контрагента"
+          disabled={!draft.departmentId || draft.objectIds.length === 0}
           onChange={(value) => {
-            updateDraft('contractorId', String(value))
-            updateDraft('contractId', '')
-            updateDraft('personalAccount', '')
+            setDraft((current) => {
+              const next = { ...current, contractorId: String(value), contractId: '', personalAccount: '' }
+              return { ...next, ...completePrimarySelection(next, { bdr: bdrOptions, objects, contractors, contracts }, 'contractor') }
+            })
           }}
         />
       )
@@ -512,8 +643,12 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     if (key === 'objects') {
       const selectedObjects = editingId === null ? [] : rows.find((row) => row.id === editingId)?.objects ?? []
       const departmentId = Number(draft.departmentId)
-      const matchingObjects = objects.filter((item) => item.departmentIds?.includes(departmentId))
-      const options = [...matchingObjects, ...selectedObjects.filter((item) => !matchingObjects.some((option) => option.id === item.id))]
+      const matchingObjects = objects.filter((item) => (
+        item.departmentIds?.includes(departmentId) && bdrIds.objects.has(item.id)
+      ))
+      const options = [...matchingObjects, ...selectedObjects.filter((item) => (
+        draft.objectIds.includes(String(item.id)) && !matchingObjects.some((option) => option.id === item.id)
+      ))]
       return (
         <SearchableSelect
           label="Объект"
@@ -522,24 +657,11 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           options={options.map((item) => ({ value: String(item.id), label: item.label }))}
           disabled={!draft.departmentId}
           onChange={(value) => {
-            updateDraft('objectIds', Array.isArray(value) ? value : [])
-          }}
-        />
-      )
-    }
-    if (key === 'expenseDepartments' || key === 'budgetItems') {
-      const isExpenseDepartment = key === 'expenseDepartments'
-      const options = isExpenseDepartment ? departments : budgetItems
-      return (
-        <SearchableSelect
-          label={isExpenseDepartment ? 'На какие филиалы расходы' : 'Статьи бюджета УС'}
-          multiple
-          value={isExpenseDepartment ? draft.expenseDepartmentIds : draft.budgetItemIds}
-          options={options.map((item) => ({ value: String(item.id), label: item.label }))}
-          onChange={(value) => {
-            if (!Array.isArray(value)) return
-            if (isExpenseDepartment) updateDraft('expenseDepartmentIds', value)
-            else updateDraft('budgetItemIds', value)
+            const objectIds = Array.isArray(value) ? value : []
+            setDraft((current) => {
+              const next = { ...current, objectIds }
+              return { ...next, ...completePrimarySelection(next, { bdr: bdrOptions, objects, contractors, contracts }, 'objects') }
+            })
           }}
         />
       )
@@ -547,7 +669,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     if (key === 'contract') {
       const contractOptions: Lookup[] = contracts.filter((item) => (
         item.contractorId === Number(draft.contractorId)
-        && contractDepartments.some((link) => link.departmentId === Number(draft.departmentId) && link.contractId === item.id)
+        && bdrIds.contracts.has(item.id)
       ))
       const selectedContract = contracts.find((item) => String(item.id) === draft.contractId)
       if (selectedContract && !contractOptions.some((item) => item.id === selectedContract.id)) contractOptions.push(selectedContract)
@@ -556,12 +678,13 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           label="Договор"
           value={draft.contractId}
           options={contractOptions.map((item) => ({ value: String(item.id), label: contractLabel(item) }))}
-          disabled={!draft.contractorId || !draft.departmentId}
+          disabled={!draft.contractorId}
           onChange={(value) => {
             const contract = contracts.find((item) => String(item.id) === String(value))
-            updateDraft('contractId', String(value))
-            updateDraft('contractorId', String(contract?.contractorId ?? draft.contractorId))
-            updateDraft('personalAccount', contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
+            setDraft((current) => {
+              const next = { ...current, contractId: String(value), contractorId: String(contract?.contractorId ?? current.contractorId), personalAccount: '' }
+              return { ...next, ...completePrimarySelection(next, { bdr: bdrOptions, objects, contractors, contracts }, 'contract') }
+            })
           }}
         />
       )
@@ -584,14 +707,11 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     if (key === 'amountWithVat') {
       return <input type="number" step="0.01" value={draft.amountWithVat} onChange={(event) => updateDraft('amountWithVat', event.target.value)} />
     }
-    if (key === 'details') {
-      return <input type="checkbox" aria-label="Детализация" checked={draft.detailsEnabled} onChange={(event) => updateDraft('detailsEnabled', event.target.checked)} />
-    }
     if (key === 'sedLaunched') {
       return <input type="checkbox" aria-label="Запущен в СЭД" checked={draft.sedLaunched} onChange={(event) => updateDraft('sedLaunched', event.target.checked)} />
     }
     if (key === 'acceptedIn1C') {
-      return <input type="checkbox" aria-label="Принято на учет в 1С" checked={draft.acceptedIn1C} onChange={(event) => updateDraft('acceptedIn1C', event.target.checked)} />
+      return <input type="checkbox" aria-label="Принято на учет в 1С" checked={draft.acceptedIn1C} disabled={!draft.sedLaunched} onChange={(event) => updateDraft('acceptedIn1C', event.target.checked)} />
     }
     return <textarea value={draft.note} onChange={(event) => updateDraft('note', event.target.value)} />
   }
@@ -659,6 +779,11 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
         throw new Error(payload.error || formatHttpError(response.status))
       }
       setRows((current) => current.filter((item) => item.id !== row.id))
+      setDepartmentFilter((current) => (
+        current === String(row.departmentId) && !rows.some((item) => item.id !== row.id && String(item.departmentId) === current)
+          ? ''
+          : current
+      ))
       cancelEdit()
     } catch (deleteError) {
       setActionError(deleteError instanceof Error ? deleteError.message : 'Не удалось удалить запись')
@@ -718,9 +843,12 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     }
     if (key === 'department') return row.department ?? ''
     if (key === 'objects') return labelList(row.objects)
-    if (key === 'expenseDepartments') return labelList(row.expenseDepartments)
+    if (key === 'expenseDepartment') return getBdrExpenseDepartments(expenseDepartmentIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? ''))
+    if (key === 'bdr26Corr') {
+      const amount = getBdr26Corr(bdr26CorrIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? ''))
+      return formatBdr26Corr(amount)
+    }
     if (key === 'contractor') return contracts.find((item) => item.id === row.contractId)?.contractor ?? ''
-    if (key === 'budgetItems') return budgetItemList(row.budgetItems)
     if (key === 'contract') {
       const contract = contracts.find((item) => item.id === row.contractId)
       const label = contract ? contractLabel(contract) : row.contract ?? ''
@@ -734,9 +862,28 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     }
     if (key === 'personalAccount') {
       const contract = contracts.find((item) => item.id === row.contractId)
-      return row.personalAccount || (contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
+      const account = row.personalAccount || (contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
+      if (!account) return ''
+      return (
+        <button
+          type="button"
+          className="contract-cell-button"
+          aria-label={`Расчёт детализации лицевого счёта ${account}, запись ${row.id}`}
+          onClick={() => {
+            setActionError(null)
+            const popup = window.open(
+              `${window.location.pathname}#primary-account-window-${row.id}`,
+              `primary-account-window-${row.id}`,
+              'popup=yes,width=900,height=700,resizable=yes,scrollbars=yes',
+            )
+            if (popup) popup.focus()
+            else setActionError('Не удалось открыть окно детализации. Проверьте настройки всплывающих окон браузера.')
+          }}
+        >
+          {account}
+        </button>
+      )
     }
-    if (key === 'details') return <input type="checkbox" aria-label="Детализация" checked={row.detailsEnabled} disabled />
     return ''
   }
 
@@ -766,7 +913,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
       return <input type="checkbox" aria-label="Запущен в СЭД" checked={monthDraft.sedLaunched} onChange={(event) => updateMonthDraft(row.id, 'sedLaunched', event.target.checked)} />
     }
     if (key === 'acceptedIn1C') {
-      return <input type="checkbox" aria-label="Принято на учет в 1С" checked={monthDraft.acceptedIn1C} onChange={(event) => updateMonthDraft(row.id, 'acceptedIn1C', event.target.checked)} />
+      return <input type="checkbox" aria-label="Принято на учет в 1С" checked={monthDraft.acceptedIn1C} disabled={!monthDraft.sedLaunched} onChange={(event) => updateMonthDraft(row.id, 'acceptedIn1C', event.target.checked)} />
     }
     return <textarea value={monthDraft.note} onChange={(event) => updateMonthDraft(row.id, 'note', event.target.value)} />
   }
@@ -785,8 +932,43 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
         <div className="page-header">
           <h2>Первичные</h2>
         </div>
+        {!error && (
+          <ExcelActionToolbar
+            className="excel-action-toolbar--equipment"
+            onReset={resetFilters}
+            onExport={exportToExcel}
+            onUpload={(file) => {
+              if (monthEdit !== null || formOpen || importFile) {
+                setActionError('Завершите редактирование или текущую загрузку Excel.')
+                return
+              }
+              setActionError(null)
+              setImportMessage(null)
+              setImportFile(file)
+            }}
+          />
+        )}
         {error && <p className="hint hint--error" role="alert">{error}</p>}
         {actionError && <p className="hint hint--error" role="alert">{actionError}</p>}
+        {bdrRefreshError && <p className="hint hint--error" role="alert">Не удалось обновить данные БДР: {bdrRefreshError}</p>}
+        {importMessage && <p className="hint">{importMessage}</p>}
+        {importFile && (
+          <PrimaryExcelImport
+            file={importFile}
+            rows={rows}
+            departments={departments}
+            objects={objects}
+            contractors={contractors}
+            contracts={contracts}
+            bdr={bdrOptions}
+            onCancel={() => setImportFile(null)}
+            onComplete={(created, updated) => {
+              setImportFile(null)
+              setImportMessage(`Загрузка завершена. Добавлено: ${created}, обновлено: ${updated}.`)
+              void loadData()
+            }}
+          />
+        )}
         {!error && (
           <div className="form-fields-compact">
             <label className="form-field-compact">
@@ -794,7 +976,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
               <SearchableSelect
                 label="Фильтр по подразделению"
                 value={departmentFilter}
-                options={departments.map((item) => ({ value: String(item.id), label: item.label }))}
+                options={departmentFilterOptions}
                 placeholder="Все подразделения"
                 disabled={monthEdit !== null || savingMonth}
                 onChange={(value) => setDepartmentFilter(String(value))}
@@ -822,7 +1004,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                         type="button"
                         className="primary-table__icon-button primary-table__add-button"
                         onClick={startCreate}
-                        disabled={formOpen || monthEdit !== null}
+                        disabled={formOpen || monthEdit !== null || importFile !== null}
                         aria-label="Добавить запись"
                         title="Добавить запись"
                       >+</button>
@@ -859,7 +1041,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                             type="button"
                             className="page-action-btn page-action-btn--secondary primary-table__month-edit-icon"
                             onClick={() => void toggleMonthEdit(month.key)}
-                            disabled={savingMonth || (monthEdit !== null && monthEdit !== month.key) || (monthEdit === null && (formOpen || editingId !== null))}
+                            disabled={savingMonth || importFile !== null || (monthEdit !== null && monthEdit !== month.key) || (monthEdit === null && (formOpen || editingId !== null))}
                             aria-label={monthEdit === month.key ? `Сохранить ${month.label}` : `Редактировать ${month.label}`}
                             title={monthEdit === month.key ? `Сохранить все изменения ${month.label}` : 'Редактировать данные месяца'}
                           >
@@ -898,7 +1080,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                       </td>
                     ))}
                     {visibleMonthColumns.map(({ key, month }) => (
-                      <td key={`${month}-${key}`} className="primary-table__resizable-cell">
+                      <td key={`${month}-${key}`} className={`primary-table__resizable-cell ${draft.month === month ? primaryMonthStatusClass(draft) : ''}`}>
                         {renderMonthEditorCell(month, key)}
                         {renderResizeHandle(key, `${month}:${key}`, `${monthLabel(month)}: ${MONTH_COLUMNS.find((column) => column.key === key)?.label ?? ''}`)}
                       </td>
@@ -921,7 +1103,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                             type="button"
                             className="page-action-btn primary-table__icon-button"
                             onClick={() => startEdit(row)}
-                            disabled={formOpen || monthEdit !== null}
+                            disabled={formOpen || monthEdit !== null || importFile !== null}
                             aria-label={`Редактировать запись №${row.id}`}
                             title="Редактировать"
                           >
@@ -937,7 +1119,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                       </td>
                     ))}
                     {visibleMonthColumns.map(({ key, month }) => (
-                      <td key={`${month}-${key}`} className="primary-table__resizable-cell">
+                      <td key={`${month}-${key}`} className={`primary-table__resizable-cell ${primaryMonthStatusClass(monthEdit === month ? monthDrafts[row.id] : row.monthData[month])}`}>
                         {monthEdit === month
                           ? renderMonthlyEditCell(row, key)
                           : renderPrimaryValue(row, key, month)}

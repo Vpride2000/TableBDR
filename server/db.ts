@@ -189,6 +189,14 @@ export async function ensureBdrPersonalAccountColumn(client: Client): Promise<vo
   `);
 }
 
+export async function ensureBdrExpenseDepartmentColumn(client: Client): Promise<void> {
+  await client.query(`
+    ALTER TABLE "GN_bdr"
+      ADD COLUMN IF NOT EXISTS "GN_bdr_expense_department_FK" INTEGER
+        REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL
+  `);
+}
+
 export async function ensurePrimaryDocumentsTables(client: Client): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS "GN_primary_documents" (

@@ -267,15 +267,18 @@ p {
   padding: 0.5rem 0.75rem;
 }
 
-.status-cell--active {
+.status-cell--active,
+.primary-table__editing-row > td.status-cell--active {
   background-color: #dcfce7;
 }
 
-.status-cell--pending {
+.status-cell--pending,
+.primary-table__editing-row > td.status-cell--pending {
   background-color: #fef3c7;
 }
 
-.status-cell--inactive {
+.status-cell--inactive,
+.primary-table__editing-row > td.status-cell--inactive {
   background-color: #f3e8e8;
 }
 

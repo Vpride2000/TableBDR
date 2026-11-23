@@ -245,6 +245,7 @@ CREATE TABLE IF NOT EXISTS "GN_bdr" (
   "GN_departament_object_FK" INTEGER NOT NULL,
   "GN_dogovor_FK" INTEGER NOT NULL,
   "GN_bdr_personal_account" TEXT NOT NULL DEFAULT '',
+  "GN_bdr_expense_department_FK" INTEGER REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL,
   "GN_contracor_FK" INTEGER NOT NULL,
   "GN_budget_network_item_FK" INTEGER NOT NULL,
   "GN_bdr_predmet_dogovora" TEXT NOT NULL,

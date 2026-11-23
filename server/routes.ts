@@ -4,6 +4,7 @@ import { createDbClient, toFiniteNumber, buildFallbackCalculationLine } from './
 import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS, LimitCalculationLineInput, LimitCalculationLineRow, LimitCalculationResponseLine } from './config.js';
 import { isSafeNoteLink } from '../shared/noteFormatting.js';
 import { personalAccountOptions } from '../shared/personalAccounts.js';
+import type { PrimaryImportFields, PrimaryImportRecord } from '../shared/primaryExcel.js';
 
 // Маршруты backend-сервера.
 // Этот модуль регистрирует HTTP endpoints для сущностей GN и расчета лимитов.
@@ -2736,6 +2737,66 @@ export function setupRoutes(app: Express): void {
     }
   });
 
+  app.put('/api/gn/bdr/:id/expense-department', async (req: Request, res: Response): Promise<void> => {
+    const rowId = Number(req.params.id);
+    const payload = req.body as { contractId?: unknown; departmentId?: unknown } | undefined;
+    const contractId = payload?.contractId;
+    const departmentId = payload?.departmentId;
+    if (!Number.isSafeInteger(rowId) || rowId <= 0 ||
+        typeof contractId !== 'number' || !Number.isSafeInteger(contractId) || contractId <= 0 ||
+        (departmentId !== null && (typeof departmentId !== 'number' || !Number.isSafeInteger(departmentId) || departmentId <= 0))) {
+      res.status(400).json({ error: 'Некорректное подразделение или договор' });
+      return;
+    }
+
+    const client = await createDbClient();
+    try {
+      await client.query('BEGIN');
+      const current = await client.query<{ contract_id: number }>(
+        `SELECT "GN_dogovor_FK" AS contract_id
+         FROM "GN_bdr"
+         WHERE "GN_bdr_ID" = $1 AND "is_deleted" = FALSE
+         FOR UPDATE`,
+        [rowId]
+      );
+      if (current.rows.length === 0) {
+        await client.query('ROLLBACK');
+        res.status(404).json({ error: 'Строка БДР не найдена' });
+        return;
+      }
+      if (current.rows[0].contract_id !== contractId) {
+        await client.query('ROLLBACK');
+        res.status(409).json({ error: 'Договор строки изменился. Обновите страницу.' });
+        return;
+      }
+      if (departmentId !== null) {
+        const department = await client.query(
+          'SELECT 1 FROM "GN_department" WHERE "GN_Dep_id" = $1',
+          [departmentId]
+        );
+        if (department.rows.length === 0) {
+          await client.query('ROLLBACK');
+          res.status(400).json({ error: 'Подразделение не найдено' });
+          return;
+        }
+      }
+
+      await client.query(
+        'UPDATE "GN_bdr" SET "GN_bdr_expense_department_FK" = $1 WHERE "GN_bdr_ID" = $2',
+        [departmentId, rowId]
+      );
+      const result = await client.query(`${BDR_SELECT_FIELDS} WHERE b."GN_bdr_ID" = $1`, [rowId]);
+      await client.query('COMMIT');
+      res.json(result.rows[0]);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to update BDR expense department', err);
+      res.status(500).json({ error: 'Не удалось сохранить подразделение расходов' });
+    } finally {
+      await client.end();
+    }
+  });
+
   app.put('/api/gn/bdr/:id', async (req: Request, res: Response): Promise<void> => {
     const rowId = Number(req.params.id);
     if (Number.isNaN(rowId)) {
@@ -4211,22 +4272,27 @@ export function setupRoutes(app: Express): void {
     }
   });
 
-  app.get('/api/primary/contract-departments', async (_req: Request, res: Response): Promise<void> => {
+  app.get('/api/primary/bdr-options', async (_req: Request, res: Response): Promise<void> => {
     const client = await createDbClient();
     try {
       const result = await client.query(`
-        SELECT "GN_department_FK" AS "departmentId", "GN_dogovor_FK" AS "contractId"
-        FROM "GN_bdr"
-        WHERE "is_deleted" = FALSE AND "GN_department_FK" IS NOT NULL AND "GN_dogovor_FK" IS NOT NULL
-        UNION
-        SELECT "GN_department_FK" AS "departmentId", "GN_dogovor_FK" AS "contractId"
-        FROM "GN_gazprom_telecom"
-        WHERE "GN_department_FK" IS NOT NULL AND "GN_dogovor_FK" IS NOT NULL
+        SELECT DISTINCT b."GN_department_FK" AS "departmentId",
+               b."GN_departament_object_FK" AS "objectId",
+               b."GN_contracor_FK" AS "contractorId",
+               b."GN_dogovor_FK" AS "contractId",
+               expense_department."GN_department" AS "expenseDepartment",
+               SUM(b."GN_bdr_bdr26_corr") OVER (
+                 PARTITION BY b."GN_department_FK", b."GN_departament_object_FK", b."GN_dogovor_FK"
+               ) AS "bdr26Corr"
+        FROM "GN_bdr" b
+        LEFT JOIN "GN_department" expense_department
+          ON expense_department."GN_Dep_id" = b."GN_bdr_expense_department_FK"
+        WHERE b."is_deleted" = FALSE
       `);
       res.json(result.rows);
     } catch (err) {
-      console.error('Failed to fetch primary contract departments', err);
-      res.status(500).json({ error: 'Не удалось загрузить подразделения договоров' });
+      console.error('Failed to fetch primary BDR options', err);
+      res.status(500).json({ error: 'Не удалось загрузить данные БДР для первичных документов' });
     } finally {
       await client.end();
     }
@@ -4426,6 +4492,137 @@ export function setupRoutes(app: Express): void {
       );
     }
   }
+
+  app.post('/api/primary/import', async (req: Request, res: Response): Promise<void> => {
+    const body = req.body as { month?: unknown; records?: unknown } | undefined;
+    const month = parsePrimaryMonth(body?.month);
+    if (!month || !Array.isArray(body?.records) || body.records.length === 0) {
+      res.status(400).json({ error: 'Выберите месяц и строки для загрузки' });
+      return;
+    }
+
+    const records: PrimaryImportRecord[] = [];
+    const ids = new Set<number>();
+    const allowed = new Set(['departmentId', 'objectIds', 'contractId', 'personalAccount', 'amountWithVat', 'sedLaunched', 'acceptedIn1C', 'note']);
+    for (const value of body.records) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        res.status(400).json({ error: 'Некорректная строка импорта' });
+        return;
+      }
+      const record = value as Record<string, unknown>;
+      const rowNumber = record.rowNumber;
+      const id = record.id;
+      const fields = record.fields;
+      const positiveId = (item: unknown): item is number => typeof item === 'number' && Number.isSafeInteger(item) && item > 0;
+      if (!positiveId(rowNumber)) {
+        res.status(400).json({ error: 'Некорректный номер строки импорта' });
+        return;
+      }
+      if ((id !== undefined && (!positiveId(id) || ids.has(id)))
+        || !fields || typeof fields !== 'object' || Array.isArray(fields)
+        || Object.keys(fields).some((key) => !allowed.has(key))) {
+        res.status(400).json({ error: `Строка ${rowNumber}: некорректные данные или повторяющийся ID` });
+        return;
+      }
+      const data = fields as Record<string, unknown>;
+      if (Object.keys(data).length === 0
+        || ('departmentId' in data && data.departmentId !== null && !positiveId(data.departmentId))
+        || ('contractId' in data && data.contractId !== null && !positiveId(data.contractId))
+        || ('objectIds' in data && (!Array.isArray(data.objectIds) || data.objectIds.some((item: unknown) => !positiveId(item)) || new Set(data.objectIds).size !== data.objectIds.length))
+        || ('personalAccount' in data && typeof data.personalAccount !== 'string')
+        || ('amountWithVat' in data && data.amountWithVat !== null && (typeof data.amountWithVat !== 'number' || !Number.isFinite(data.amountWithVat)))
+        || ('sedLaunched' in data && typeof data.sedLaunched !== 'boolean')
+        || ('acceptedIn1C' in data && typeof data.acceptedIn1C !== 'boolean')
+        || ('note' in data && typeof data.note !== 'string')) {
+        res.status(400).json({ error: `Строка ${rowNumber}: некорректные данные` });
+        return;
+      }
+      if (id !== undefined) ids.add(id as number);
+      records.push({ rowNumber, ...(id === undefined ? {} : { id: id as number }), fields: data as PrimaryImportFields });
+    }
+
+    const client = await createDbClient();
+    let currentRow = 0;
+    try {
+      await client.query('BEGIN');
+      let created = 0;
+      let updated = 0;
+      for (const record of records) {
+        currentRow = record.rowNumber;
+        const fields = record.fields;
+        let documentId = record.id;
+        if (documentId === undefined) {
+          const result = await client.query<{ id: number }>(
+            `INSERT INTO "GN_primary_documents" ("GN_department_FK", "GN_dogovor_FK", "personal_account", "document_month")
+             VALUES ($1, $2, $3, $4) RETURNING "GN_primary_document_id" AS id`,
+            [fields.departmentId ?? null, fields.contractId ?? null, fields.personalAccount ?? '', month],
+          );
+          documentId = result.rows[0].id;
+          created += 1;
+        } else {
+          const existing = await client.query(
+            'SELECT 1 FROM "GN_primary_documents" WHERE "GN_primary_document_id" = $1 FOR UPDATE',
+            [documentId],
+          );
+          if (existing.rowCount === 0) {
+            await client.query('ROLLBACK');
+            res.status(409).json({ error: `Строка ${currentRow}: запись с ID ${documentId} не найдена. Изменения не сохранены.` });
+            return;
+          }
+          const changes: string[] = [];
+          const values: unknown[] = [];
+          const add = (column: string, value: unknown): void => {
+            values.push(value);
+            changes.push(`"${column}" = $${values.length}`);
+          };
+          if ('departmentId' in fields) add('GN_department_FK', fields.departmentId);
+          if ('contractId' in fields) add('GN_dogovor_FK', fields.contractId);
+          if ('personalAccount' in fields) add('personal_account', fields.personalAccount);
+          if (changes.length) {
+            values.push(documentId);
+            await client.query(`UPDATE "GN_primary_documents" SET ${changes.join(', ')} WHERE "GN_primary_document_id" = $${values.length}`, values);
+          }
+          updated += 1;
+        }
+        if ('objectIds' in fields) {
+          await client.query('DELETE FROM "GN_primary_document_objects" WHERE "primary_document_id" = $1', [documentId]);
+          if (fields.objectIds?.length) {
+            await client.query(
+              'INSERT INTO "GN_primary_document_objects" ("primary_document_id", "object_id") SELECT $1, unnest($2::integer[])',
+              [documentId, fields.objectIds],
+            );
+          }
+        }
+        const monthlyColumns: Array<{ key: keyof PrimaryImportFields; column: string }> = [
+          { key: 'amountWithVat', column: 'amount_with_vat' },
+          { key: 'sedLaunched', column: 'sed_launched' },
+          { key: 'acceptedIn1C', column: 'accepted_in_1c' },
+          { key: 'note', column: 'note' },
+        ];
+        const selected = monthlyColumns.filter(({ key }) => key in fields);
+        if (selected.length || record.id === undefined) {
+          const names = selected.map(({ column }) => `"${column}"`);
+          const values = selected.map(({ key }) => fields[key]);
+          const placeholders = values.map((_, index) => `$${index + 3}`);
+          const update = names.length ? `DO UPDATE SET ${names.map((name) => `${name} = EXCLUDED.${name}`).join(', ')}` : 'DO NOTHING';
+          await client.query(
+            `INSERT INTO "GN_primary_document_months" ("primary_document_id", "document_month"${names.length ? `, ${names.join(', ')}` : ''})
+             VALUES ($1, $2${placeholders.length ? `, ${placeholders.join(', ')}` : ''})
+             ON CONFLICT ("primary_document_id", "document_month") ${update}`,
+            [documentId, month, ...values],
+          );
+        }
+      }
+      await client.query('COMMIT');
+      res.json({ created, updated });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Failed to import primary documents', err);
+      res.status(400).json({ error: `Строка ${currentRow}: не удалось загрузить данные. Изменения не сохранены.` });
+    } finally {
+      await client.end();
+    }
+  });
 
   app.post('/api/primary', async (req: Request, res: Response): Promise<void> => {
     const input = parsePrimaryPayload(req.body as Record<string, unknown>);

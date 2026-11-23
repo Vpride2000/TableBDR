@@ -213,6 +213,8 @@ export const BDR_SELECT_FIELDS = `SELECT
   obj."GN_departament_object"       AS "Объект",
   dgv."GN_dogovor"                  AS "Договор",
   b."GN_bdr_personal_account"      AS "Лицевой счет",
+  b."GN_bdr_expense_department_FK" AS "На кого расходы ID",
+  expense_dep."GN_department"      AS "На кого расходы",
   b."GN_bdr_calculation"            AS "РАСЧЕТ",
   cnt."GN_contarctor"               AS "Контрагент",
   bni."GN_budget_network_item"      AS "Статья бюджета",
@@ -235,5 +237,6 @@ JOIN "PAO__budget_network_item" pao ON b."PAO_budget_network_item_FK" = pao."PAO
 JOIN "GN_department"            dep ON b."GN_department_FK"           = dep."GN_Dep_id"
 JOIN "GN_departament_object"    obj ON b."GN_departament_object_FK"   = obj."GN_do_id"
 JOIN "GN_dogovor"               dgv ON b."GN_dogovor_FK"              = dgv."GN_dgv_id"
+LEFT JOIN "GN_department"       expense_dep ON b."GN_bdr_expense_department_FK" = expense_dep."GN_Dep_id"
 JOIN "GN_contractor"            cnt ON b."GN_contracor_FK"            = cnt."GN_c_id"
 JOIN "GN_budget_network_item"   bni ON b."GN_budget_network_item_FK"  = bni."GN_b_id"`;

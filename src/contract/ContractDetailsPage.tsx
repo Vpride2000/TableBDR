@@ -54,6 +54,7 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
   const [contractLoading, setContractLoading] = useState(true);
   const [contractError, setContractError] = useState<string | null>(null);
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([]);
+  const [departmentOptions, setDepartmentOptions] = useState<LookupOption[]>([]);
   const [dogovorMetadata, setDogovorMetadata] = useState<DogovorMetadata>({ date: '', signer: '', personalAccount: '' });
   const [contractDraft, setContractDraft] = useState<ContractInfo | null>(null);
   const [isEditingContract, setIsEditingContract] = useState(false);
@@ -77,8 +78,9 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
   const [editError, setEditError] = useState<string | null>(null);
   const [isAddingAgreement, setIsAddingAgreement] = useState(false);
   const [isDeleteAgreement, setIsDeleteAgreement] = useState(false);
-  const [accountSavingId, setAccountSavingId] = useState<number | null>(null);
+  const [bdrSavingId, setBdrSavingId] = useState<number | null>(null);
   const [accountSaveError, setAccountSaveError] = useState<string | null>(null);
+  const [expenseDepartmentSaveError, setExpenseDepartmentSaveError] = useState<string | null>(null);
   const dogovorId = contractInfo?.GN_contract_dogovor_FK;
 
   useEffect(() => {
@@ -153,6 +155,7 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
         setContractInfo(contract);
         setContractDraft(contract);
         setContractorOptions(mapLookupOptions(contractors, 'GN_c_id', 'GN_contarctor'));
+        setDepartmentOptions(mapLookupOptions(departments, 'GN_Dep_id', 'GN_department'));
         const dogovor = dogovors.find((row) => Number(row.GN_dgv_id) === contract.GN_contract_dogovor_FK);
         const signer = departments.find((row) => Number(row.GN_Dep_id) === Number(dogovor?.GN_dogovor_signer_FK));
         setDogovorMetadata({
@@ -525,7 +528,7 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
 
   async function savePersonalAccount(rowId: number, personalAccount: string): Promise<void> {
     if (!dogovorId) return;
-    setAccountSavingId(rowId);
+    setBdrSavingId(rowId);
     setAccountSaveError(null);
     try {
       const response = await fetch(`/api/gn/bdr/${rowId}/personal-account`, {
@@ -543,14 +546,38 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
     } catch (err) {
       setAccountSaveError(err instanceof Error ? err.message : 'Не удалось сохранить лицевой счёт');
     } finally {
-      setAccountSavingId(null);
+      setBdrSavingId(null);
     }
   }
 
-    const columns = ['Подразделение', 'Объект', 'Лицевой счет', 'Статья бюджета УС', 'Статья бюджета', 'БДР26корр'];
-    const contractRows = rows;
-    const accountOptions = personalAccountOptions(dogovorMetadata.personalAccount);
-    const totalBdr26Corr = contractRows.reduce((total, row) => total + parseBudgetAmount(row['БДР26корр']), 0);
+  async function saveExpenseDepartment(rowId: number, departmentId: string): Promise<void> {
+    if (!dogovorId) return;
+    setBdrSavingId(rowId);
+    setExpenseDepartmentSaveError(null);
+    try {
+      const response = await fetch(`/api/gn/bdr/${rowId}/expense-department`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contractId: dogovorId, departmentId: departmentId ? Number(departmentId) : null }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || formatHttpError(response.status));
+      }
+      const updatedRow = (await response.json()) as Row;
+      setRows((previous) => previous.map((row) => Number(row.GN_bdr_ID) === rowId ? updatedRow : row));
+      localStorage.setItem(BDR_UPDATED_EVENT_KEY, String(Date.now()));
+    } catch (err) {
+      setExpenseDepartmentSaveError(err instanceof Error ? err.message : 'Не удалось сохранить подразделение расходов');
+    } finally {
+      setBdrSavingId(null);
+    }
+  }
+
+  const columns = ['Подразделение', 'Объект', 'Лицевой счет', 'На кого расходы', 'Статья бюджета УС', 'Статья бюджета', 'БДР26корр'];
+  const contractRows = rows;
+  const accountOptions = personalAccountOptions(dogovorMetadata.personalAccount);
+  const totalBdr26Corr = contractRows.reduce((total, row) => total + parseBudgetAmount(row['БДР26корр']), 0);
 
   return (
     <section className="contract-details">
@@ -672,12 +699,13 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
                   onChange={(event) => updateContractDraft('GN_contract_asez_number', event.target.value)}
                 />
               </div>
+              <p className="hint">Лицевой счет и подразделение расходов сохраняются сразу при выборе; отмена редактирования договора их не отменяет.</p>
               <div className="form-actions-row-compact">
                 <button
                   type="button"
                   className="form-submit-btn"
                   onClick={() => void saveContractEdit()}
-                  disabled={contractSaveLoading}
+                  disabled={contractSaveLoading || bdrSavingId !== null}
                 >
                   {contractSaveLoading ? 'Сохранение...' : 'Сохранить'}
                 </button>
@@ -685,7 +713,7 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
                   type="button"
                   className="page-action-btn page-action-btn--secondary"
                   onClick={cancelContractEdit}
-                  disabled={contractSaveLoading}
+                  disabled={contractSaveLoading || bdrSavingId !== null}
                 >
                   Отмена
                 </button>
@@ -715,11 +743,11 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
                   <tr key={Number(row.GN_bdr_ID)}>
                     {columns.map((col) => (
                       <td key={col}>
-                        {col === 'Лицевой счет' ? (
+                        {isEditingContract && col === 'Лицевой счет' ? (
                           <select
                             aria-label={`Лицевой счет строки ${row.GN_bdr_ID}`}
                             value={String(row[col] ?? '')}
-                            disabled={accountSavingId !== null}
+                            disabled={bdrSavingId !== null || contractSaveLoading}
                             onChange={(event) => void savePersonalAccount(Number(row.GN_bdr_ID), event.target.value)}
                           >
                             <option value="">Не выбран</option>
@@ -727,6 +755,18 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
                               <option value={String(row[col])}>{String(row[col])} (нет в договоре)</option>
                             )}
                             {accountOptions.map((account) => <option key={account} value={account}>{account}</option>)}
+                          </select>
+                        ) : isEditingContract && col === 'На кого расходы' ? (
+                          <select
+                            aria-label={`На кого расходы строки ${row.GN_bdr_ID}`}
+                            value={String(row['На кого расходы ID'] ?? '')}
+                            disabled={bdrSavingId !== null || contractSaveLoading}
+                            onChange={(event) => void saveExpenseDepartment(Number(row.GN_bdr_ID), event.target.value)}
+                          >
+                            <option value="">Не выбрано</option>
+                            {departmentOptions.map((department) => (
+                              <option key={department.value} value={department.value}>{department.label}</option>
+                            ))}
                           </select>
                         ) : col === 'БДР26корр'
                           ? BDR_CURRENCY_FORMATTER.format(parseBudgetAmount(row[col]))
@@ -744,6 +784,7 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
             </tfoot>
           </table>
           {accountSaveError && <p className="hint hint--error">Ошибка сохранения лицевого счёта: {accountSaveError}</p>}
+          {expenseDepartmentSaveError && <p className="hint hint--error">Ошибка сохранения подразделения расходов: {expenseDepartmentSaveError}</p>}
           <p className="contract-details-count">Всего строк: {contractRows.length}</p>
         </div>
       )}

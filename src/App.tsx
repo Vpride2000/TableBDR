@@ -26,6 +26,7 @@ import PostgresSchemaPopup from './components/PostgresSchemaPopup'
 import PersonalAccountPage from './components/PersonalAccountPage'
 import NotesPage from './notes/NotesPage'
 import PrimaryPage from './PrimaryPage'
+import PrimaryAccountDetailsPage from './PrimaryAccountDetailsPage'
 import {
   DEFAULT_DASHBOARD_TILE_STATUSES,
   isDashboardTileStatus,
@@ -1118,6 +1119,8 @@ export default function App() {
   const contractPopupMatch = window.location.hash.match(/^#contract-window-(\d+)$/)
   const contractPopupId = contractPopupMatch ? Number(contractPopupMatch[1]) : null
   const isContractPopup = contractPopupId != null && !Number.isNaN(contractPopupId)
+  const primaryAccountPopupMatch = window.location.hash.match(/^#primary-account-window-(\d+)$/)
+  const primaryAccountPopupRowId = primaryAccountPopupMatch ? Number(primaryAccountPopupMatch[1]) : null
   const objectPopupMatch = window.location.hash.match(/^#object-window-(\d+)$/)
   const objectPopupRowId = objectPopupMatch ? Number(objectPopupMatch[1]) : null
   const isObjectPopup = objectPopupRowId != null && !Number.isNaN(objectPopupRowId)
@@ -1145,6 +1148,7 @@ export default function App() {
       if (/^#guide-window-[a-z-]+$/.test(window.location.hash)) return
       if (/^#limit-window-\d+$/.test(window.location.hash)) return
       if (/^#contract-window-.+$/.test(window.location.hash)) return
+      if (/^#primary-account-window-\d+$/.test(window.location.hash)) return
       if (/^#object-window-\d+$/.test(window.location.hash)) return
       if (/^#department-window-\d+$/.test(window.location.hash)) return
       if (/^#contractor-window-\d+$/.test(window.location.hash)) return
@@ -1426,6 +1430,10 @@ export default function App() {
         <ContractDetailsPage contractId={contractPopupId} />
       </main>
     )
+  }
+
+  if (primaryAccountPopupRowId != null) {
+    return <PrimaryAccountDetailsPage rowId={primaryAccountPopupRowId} />
   }
 
   if (isObjectPopup && objectPopupRowId != null) {

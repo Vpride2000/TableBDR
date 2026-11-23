@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import express from 'express';
-import { createDbClient, ensureBdrPersonalAccountColumn } from '../server/db.js';
+import { createDbClient, ensureBdrPersonalAccountColumn, ensureBdrExpenseDepartmentColumn } from '../server/db.js';
 import { setupRoutes } from '../server/routes.js';
 
 test('BDR account migration assigns only a single distinct account and runs once', async () => {
@@ -12,6 +12,7 @@ test('BDR account migration assigns only a single distinct account and runs once
     await client.query('BEGIN');
     await client.query(`
       CREATE TEMP TABLE "GN_dogovor" ("GN_dgv_id" INTEGER PRIMARY KEY, "GN_dogovor_personal_account" TEXT);
+      CREATE TEMP TABLE "GN_department" ("GN_Dep_id" INTEGER PRIMARY KEY);
       CREATE TEMP TABLE "GN_bdr" ("GN_bdr_ID" INTEGER PRIMARY KEY, "GN_dogovor_FK" INTEGER);
       SET LOCAL search_path TO pg_temp;
       INSERT INTO "GN_dogovor" VALUES
@@ -19,6 +20,15 @@ test('BDR account migration assigns only a single distinct account and runs once
       INSERT INTO "GN_bdr" VALUES (1, 1), (2, 2), (3, 3), (4, 4)
     `);
     await ensureBdrPersonalAccountColumn(client);
+    await ensureBdrExpenseDepartmentColumn(client);
+    const expenseDepartmentColumn = await client.query(`
+      SELECT 1
+      FROM pg_attribute
+      WHERE attrelid = '"GN_bdr"'::regclass
+        AND attname = 'GN_bdr_expense_department_FK'
+        AND NOT attisdropped
+    `);
+    assert.equal(expenseDepartmentColumn.rowCount, 1);
     const result = await client.query('SELECT "GN_bdr_personal_account" AS account FROM "GN_bdr" ORDER BY "GN_bdr_ID"');
     assert.deepEqual(result.rows.map((row) => row.account), ['only', '', '', '']);
     await client.query(`UPDATE "GN_bdr" SET "GN_bdr_personal_account" = '' WHERE "GN_bdr_ID" = 1`);
@@ -48,6 +58,7 @@ test('BDR account API saves per row, validates the contract and clears on contra
       CREATE TABLE "PAO__budget_network_item" ("PAO_b_id" INTEGER PRIMARY KEY, "PAO__budget_network_item" TEXT);
       CREATE TABLE "GN_bdr" (
         "GN_bdr_ID" INTEGER PRIMARY KEY, "GN_dogovor_FK" INTEGER, "GN_bdr_personal_account" TEXT NOT NULL DEFAULT '',
+        "GN_bdr_expense_department_FK" INTEGER,
         "PAO_budget_network_item_FK" INTEGER, "GN_department_FK" INTEGER, "GN_departament_object_FK" INTEGER,
         "GN_contracor_FK" INTEGER, "GN_budget_network_item_FK" INTEGER, "is_deleted" BOOLEAN DEFAULT FALSE,
         "GN_bdr_calculation" TEXT, "GN_bdr_predmet_dogovora" TEXT, "GN_bdr_ed.izm" TEXT, "GN_bdr_kol-vo" NUMERIC,
@@ -98,6 +109,17 @@ test('BDR account API saves per row, validates the contract and clears on contra
     assert.equal(response.status, 200);
     response = await request('/1/personal-account', 'PUT', { contractId: 2, personalAccount: '' });
     assert.equal(((await response.json()) as Record<string, unknown>)['Лицевой счет'], '');
+    response = await request('/1/expense-department', 'PUT', { contractId: 2, departmentId: 1 });
+    assert.equal(response.status, 200);
+    let updatedRow = await response.json() as Record<string, unknown>;
+    assert.equal(updatedRow['На кого расходы'], 'department');
+    assert.equal(updatedRow['На кого расходы ID'], 1);
+    response = await request('/1/expense-department', 'PUT', { contractId: 2, departmentId: 999 });
+    assert.equal(response.status, 400);
+    response = await request('/1/expense-department', 'PUT', { contractId: 2, departmentId: null });
+    updatedRow = await response.json() as Record<string, unknown>;
+    assert.equal(updatedRow['На кого расходы'], null);
+    assert.equal(updatedRow['На кого расходы ID'], null);
   } finally {
     if (server) await new Promise<void>((resolve, reject) => server!.close((error) => error ? reject(error) : resolve()));
     if (previousOptions === undefined) delete process.env.PGOPTIONS;
