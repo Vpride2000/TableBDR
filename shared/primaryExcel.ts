@@ -1,4 +1,6 @@
-export type PrimaryImportMonth = 'october' | 'november' | 'december'
+import type { PrimaryMonth } from './primaryMonths.js'
+
+export type PrimaryImportMonth = PrimaryMonth
 
 export type PrimaryImportFields = {
   departmentId?: number | null

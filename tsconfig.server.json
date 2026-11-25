@@ -5,6 +5,7 @@
     "module": "ES2020",
     "moduleResolution": "bundler",
     "types": ["node"],
+    "jsx": "react-jsx",
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,

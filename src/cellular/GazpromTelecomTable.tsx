@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } 
 import * as XLSX from 'xlsx'
 import ExcelActionToolbar from '../components/ExcelActionToolbar'
 import { formatErrorMessage, formatHttpError } from '../utils/httpUtils'
+import { fetchReference } from '../utils/referenceRequests'
+import { startColumnResize } from '../utils/columnResize'
+import { parseFiniteNumericValue as parseNumber } from '../utils/numericValues'
 
 type Row = Record<string, unknown>
 type LookupOption = { value: string; label: string }
@@ -62,12 +65,6 @@ function readSavedRecord(key: string, validate: (value: unknown) => boolean): Re
   } catch {
     return {}
   }
-}
-
-function parseNumber(value: unknown): number {
-  const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
-  const parsed = Number(normalized)
-  return Number.isFinite(parsed) ? parsed : 0
 }
 
 function rowTotal(row: Row): number {
@@ -137,8 +134,8 @@ export default function GazpromTelecomTable(): React.ReactElement {
             `/api/gn/dogovors?contractor=${encodeURIComponent('Газпром телеком ООО')}`,
           )),
           readResponse<Row[]>(await fetch('/api/gn/pao-budget-items')),
-          readResponse<Row[]>(await fetch('/api/gn/departments')),
-          readResponse<Row[]>(await fetch('/api/gn/objects')),
+          readResponse<Row[]>(await fetchReference('departments')),
+          readResponse<Row[]>(await fetchReference('objects')),
         ])
         setObjects(objectRows)
         setLookups({
@@ -201,21 +198,9 @@ export default function GazpromTelecomTable(): React.ReactElement {
   })), [sortedRows, filters])
 
   function startResize(event: ReactPointerEvent<HTMLSpanElement>, key: string): void {
-    event.preventDefault()
-    event.stopPropagation()
-    const header = event.currentTarget.closest('th')
-    if (!header) return
-    const startX = event.clientX
-    const startWidth = header.getBoundingClientRect().width
-    const move = (moveEvent: PointerEvent): void => {
-      setColumnWidths((previous) => ({ ...previous, [key]: Math.max(70, startWidth + moveEvent.clientX - startX) }))
-    }
-    const stop = (): void => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', stop)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', stop)
+    startColumnResize(event, 70, (width) => {
+      setColumnWidths((previous) => ({ ...previous, [key]: width }))
+    })
   }
 
   function startCreate(): void {

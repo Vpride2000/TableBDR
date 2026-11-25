@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
+import * as XLSXStyle from 'xlsx-js-style'
 import ExcelActionToolbar from './components/ExcelActionToolbar'
+import SearchableSelect from './components/PrimarySearchableSelect'
+import PrimaryPaymentPlan, { formatBdr26Corr, PAYMENT_PLAN_HEADERS, type PaymentPlanRow } from './components/PrimaryPaymentPlan'
 import PrimaryExcelImport from './PrimaryExcelImport'
 import { formatHttpError } from './utils/httpUtils'
-import { buildBdr26CorrIndex, buildBdrExpenseDepartmentIndex, completePrimarySelection, getBdr26Corr, getBdrContractorIds, getBdrExpenseDepartments, type BdrExpenseOption } from './utils/primaryBdr'
+import { fetchReferences } from './utils/referenceRequests'
+import { buildBdr26CorrIndex, buildBdrBudgetItemIndex, buildBdrExpenseDepartmentIndex, completePrimarySelection, getBdr26Corr, getBdr26Summary, getBdrBudgetItemCodes, getBdrBudgetItems, getBdrContractorIds, getBdrExpenseDepartments, getBdrPaymentDetails, parseBdrOptions, primaryBdrProgress, primaryBdrSearchText, sumBdr26Corr, type BdrExpenseOption } from './utils/primaryBdr'
 import { primaryContractLabel as contractLabel } from './utils/primaryExcel'
+import { formatBudgetDepartment } from './budget/budgetDepartment'
 import { personalAccountOptions } from '../shared/personalAccounts'
+import { PRIMARY_MONTHS, PRIMARY_QUARTERS, primaryMonthStatusClass, type PrimaryMonth } from '../shared/primaryMonths'
 
 type Lookup = {
   id: number
@@ -17,10 +24,8 @@ type Lookup = {
   date?: string
   departmentIds?: number[]
 }
-type PrimaryMonth = 'october' | 'november' | 'december'
-type MonthDefinition = { key: PrimaryMonth; label: string }
 type PrimaryMonthData = {
-  amountWithVat: number | null
+  amountWithVat: number | string | null
   edoArrivalDate: string | null
   sedLaunchDate: string | null
   sedLaunched: boolean
@@ -42,6 +47,7 @@ type PrimaryDocument = {
   month: PrimaryMonth
   details: string
   detailsEnabled: boolean
+  generalNote: string
   monthData: Partial<Record<PrimaryMonth, PrimaryMonthData>>
 }
 type Draft = {
@@ -56,6 +62,7 @@ type Draft = {
   amountWithVat: string
   details: string
   detailsEnabled: boolean
+  generalNote: string
   edoArrivalDate: string
   sedLaunchDate: string
   sedLaunched: boolean
@@ -63,46 +70,41 @@ type Draft = {
   note: string
 }
 type MonthDraft = Pick<Draft, 'amountWithVat' | 'sedLaunched' | 'acceptedIn1C' | 'note'>
-type ColumnKey = 'department' | 'objects' | 'contractor' | 'contract' | 'expenseDepartment' | 'bdr26Corr' | 'personalAccount' | 'amountWithVat' | 'sedLaunched' | 'acceptedIn1C' | 'note'
+type ColumnKey = 'department' | 'objects' | 'contractor' | 'contract' | 'expenseDepartment' | 'budgetItem' | 'bdr26Corr' | 'personalAccount' | 'generalNote' | 'amountWithVat' | 'sedLaunched' | 'acceptedIn1C' | 'note'
 type ColumnWidthKey = ColumnKey | `${PrimaryMonth}:${ColumnKey}`
 type Column = { key: ColumnKey; label: string }
-type SelectOption = { value: string; label: string }
 
-export function primaryMonthStatusClass(status?: { sedLaunched: boolean; acceptedIn1C: boolean }): string {
-  if (!status?.sedLaunched) return status?.acceptedIn1C ? '' : 'status-cell--inactive'
-  return status.acceptedIn1C ? 'status-cell--active' : 'status-cell--pending'
-}
-
+const BDR_COLUMN: Column = { key: 'bdr26Corr', label: 'БДР26корр' }
+const GENERAL_NOTE_COLUMN: Column = { key: 'generalNote', label: 'Общее примечания' }
 const BASE_COLUMNS: Column[] = [
-  { key: 'department', label: 'Подразделение записи' },
+  { key: 'department', label: 'Подписант (расходы)' },
   { key: 'objects', label: 'Объект' },
   { key: 'contractor', label: 'Контрагенты' },
-  { key: 'contract', label: 'Договор' },
-  { key: 'expenseDepartment', label: 'На кого расходы' },
-  { key: 'bdr26Corr', label: 'БДР26корр' },
-  { key: 'personalAccount', label: 'Лицевой счет' },
+  { key: 'contract', label: 'Договора (лицевой счет)' },
+  { key: 'budgetItem', label: 'Статья бюджета' },
+  BDR_COLUMN,
+  GENERAL_NOTE_COLUMN,
 ]
+const LEADING_COLUMNS = BASE_COLUMNS.filter(({ key }) => key !== BDR_COLUMN.key && key !== GENERAL_NOTE_COLUMN.key)
+const EXPORT_LEADING_HEADERS = ['Подразделение записи', 'Объект', 'Контрагенты', 'Договор', 'На кого расходы', 'Статья бюджета', 'Лицевой счет']
 const MONTH_COLUMNS: Column[] = [
   { key: 'amountWithVat', label: 'Сумма с НДС' },
   { key: 'sedLaunched', label: 'Запущен в СЭД' },
   { key: 'acceptedIn1C', label: 'Принято на учет в 1С' },
   { key: 'note', label: 'Примечание' },
 ]
-const MONTHS: MonthDefinition[] = [
-  { key: 'october', label: 'Октябрь' },
-  { key: 'november', label: 'Ноябрь' },
-  { key: 'december', label: 'Декабрь' },
-]
 const MONTH_COLUMN_KEYS = new Set<ColumnKey>(MONTH_COLUMNS.map(({ key }) => key))
 const WIDTHS_STORAGE_KEY = 'primary-table-column-widths-compact-v2'
 const COLUMN_WIDTHS: Record<ColumnKey, number> = {
-  department: 110,
+  department: 150,
   contractor: 90,
   objects: 80,
-  contract: 90,
+  contract: 140,
   expenseDepartment: 110,
+  budgetItem: 110,
   bdr26Corr: 100,
   personalAccount: 75,
+  generalNote: 120,
   amountWithVat: 100,
   sedLaunched: 80,
   acceptedIn1C: 100,
@@ -120,6 +122,7 @@ const EMPTY_DRAFT: Draft = {
   amountWithVat: '0',
   details: '',
   detailsEnabled: false,
+  generalNote: '',
   edoArrivalDate: '',
   sedLaunchDate: '',
   sedLaunched: false,
@@ -145,95 +148,36 @@ function labelList(values: Lookup[]): string {
   return values.map(({ label }) => label).join('; ')
 }
 
-function formatBdr26Corr(amount: number | null): string {
-  return amount === null ? '' : amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-function parseBdrOptions(rows: Record<string, unknown>[]): BdrExpenseOption[] {
-  return rows.map((row) => {
-    const parseId = (value: unknown): number | null => {
-      if (value === null) return null
-      const id = Number(value)
-      if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Некорректные данные БДР')
-      return id
-    }
-    if (row.expenseDepartment !== null && typeof row.expenseDepartment !== 'string') {
-      throw new Error('Некорректное подразделение расходов в БДР')
-    }
-    if (row.bdr26Corr !== null && (typeof row.bdr26Corr !== 'string' || row.bdr26Corr.trim() === '' || !Number.isFinite(Number(row.bdr26Corr)))) {
-      throw new Error('Некорректное значение БДР26корр')
-    }
-    return {
-      departmentId: parseId(row.departmentId),
-      objectId: parseId(row.objectId),
-      contractorId: parseId(row.contractorId),
-      contractId: parseId(row.contractId),
-      expenseDepartment: row.expenseDepartment,
-      bdr26Corr: row.bdr26Corr === null ? null : Number(row.bdr26Corr),
-    }
-  })
-}
-
-function SearchableSelect({
-  label,
-  value,
-  options,
-  onChange,
-  multiple = false,
-  disabled = false,
-  placeholder = 'Выберите значение',
-}: {
-  label: string
-  value: string | string[]
-  options: SelectOption[]
-  onChange: (value: string | string[]) => void
-  multiple?: boolean
-  disabled?: boolean
-  placeholder?: string
-}): React.ReactElement {
-  const [search, setSearch] = useState('')
-  const sortedOptions = [...options].sort((left, right) => left.label.localeCompare(right.label, 'ru', { numeric: true, sensitivity: 'base' }))
-  const filteredOptions = sortedOptions.filter((option) => option.label.toLocaleLowerCase('ru').includes(search.trim().toLocaleLowerCase('ru')))
-  const selectedValues = Array.isArray(value) ? value : [value]
-  const selectedOptions = sortedOptions.filter((option) => selectedValues.includes(option.value) && !filteredOptions.includes(option))
-
+function renderBdrProgress(summary: { amount: number; count: number } | null, amounts: Array<number | string | null | undefined>): React.ReactElement {
+  const budget = summary?.amount ?? null
+  const { total, percent } = primaryBdrProgress(budget, amounts)
+  const filled = percent === null ? 0 : Math.max(0, Math.min(100, percent))
+  const details = [
+    `БДР26корр: ${summary === null ? 'нет данных' : `${formatBdr26Corr(summary.amount)} (${summary.count} стр.)`}`,
+    `Сумма за год с НДС: ${total === null ? 'некорректное значение' : formatBdr26Corr(total)}`,
+    percent === null ? 'Прогресс не рассчитан' : `Выполнение: ${percent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%`,
+  ]
+  const description = details.join('\n')
   return (
-    <div className="primary-table__select-resizable">
-      <input
-        type="search"
-        className="primary-table__select-search"
-        aria-label={`Поиск: ${label}`}
-        placeholder="Поиск..."
-        value={search}
-        disabled={disabled}
-        onChange={(event) => setSearch(event.target.value)}
-      />
-      <select
-        aria-label={label}
-        multiple={multiple}
-        size={multiple ? Math.min(5, Math.max(2, filteredOptions.length + 1)) : undefined}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => {
-          if (!multiple) {
-            onChange(event.target.value)
-            setSearch('')
-            return
-          }
-          const visibleSelected = [...event.target.selectedOptions].map((option) => option.value)
-          onChange([...new Set([...selectedValues.filter((selected) => selectedOptions.some((option) => option.value === selected)), ...visibleSelected])])
-        }}
+    <>
+      <span
+        className={`equipment-dashboard-percent__track primary-table__bdr-progress${percent !== null && percent > 100 ? ' primary-table__bdr-progress--over' : ''}`}
+        role={percent === null ? 'img' : 'progressbar'}
+        aria-label={description}
+        aria-valuemin={percent === null ? undefined : 0}
+        aria-valuemax={percent === null ? undefined : 100}
+        aria-valuenow={percent === null ? undefined : filled}
+        aria-valuetext={percent === null ? undefined : description}
       >
-        {!multiple && <option value="">{placeholder}</option>}
-        {selectedOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        {filteredOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-    </div>
+        <span style={{ width: `${filled}%` }} />
+      </span>
+      {details.map((line) => <div key={line}>{line}</div>)}
+    </>
   )
 }
 
 function monthLabel(month: PrimaryMonth): string {
-  return MONTHS.find((item) => item.key === month)?.label ?? month
+  return PRIMARY_MONTHS.find((item) => item.key === month)?.label ?? month
 }
 
 export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contractId: number) => void }): React.ReactElement {
@@ -247,11 +191,12 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
   const [monthDrafts, setMonthDrafts] = useState<Record<number, MonthDraft>>({})
   const [monthEdit, setMonthEdit] = useState<PrimaryMonth | null>(null)
   const [savingMonth, setSavingMonth] = useState(false)
+  const [quarter, setQuarter] = useState(3)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [departmentFilter, setDepartmentFilter] = useState('')
   const [columnFilters, setColumnFilters] = useState<Partial<Record<ColumnKey, string>>>({})
-  const [sort, setSort] = useState<{ key: ColumnKey; direction: 'asc' | 'desc' }>({ key: 'contractor', direction: 'asc' })
+  const [sort, setSort] = useState<{ key: ColumnKey; month?: PrimaryMonth; direction: 'asc' | 'desc' }>({ key: 'contractor', direction: 'asc' })
   const [widths, setWidths] = useState<Partial<Record<ColumnWidthKey, number>>>(readWidths)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -260,14 +205,103 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
   const [bdrRefreshError, setBdrRefreshError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [importFile, setImportFile] = useState<File | null>(null)
+  const [importPopup, setImportPopup] = useState<HTMLElement | null>(null)
+  const [paymentPopup, setPaymentPopup] = useState<{ container: HTMLElement; month: PrimaryMonth } | null>(null)
+  const [paymentError, setPaymentError] = useState<string | null>(null)
   const [importMessage, setImportMessage] = useState<string | null>(null)
-  const [expandedMonths, setExpandedMonths] = useState<Record<PrimaryMonth, boolean>>({
-    october: false,
-    november: false,
-    december: false,
-  })
+  const [expandedMonths, setExpandedMonths] = useState<Partial<Record<PrimaryMonth, boolean>>>({})
   const resizeRef = useRef<{ key: ColumnWidthKey; startX: number; startWidth: number } | null>(null)
   const bdrRequestRef = useRef(0)
+  const importPopupRef = useRef<Window | null>(null)
+  const paymentPopupRef = useRef<Window | null>(null)
+  const importSavingRef = useRef(false)
+
+  useEffect(() => () => {
+    importPopupRef.current?.close()
+    paymentPopupRef.current?.close()
+  }, [])
+
+  function closeImportPopup(): void {
+    const popup = importPopupRef.current
+    importPopupRef.current = null
+    setImportPopup(null)
+    setImportFile(null)
+    popup?.close()
+  }
+
+  function closePaymentPopup(): void {
+    const popup = paymentPopupRef.current
+    paymentPopupRef.current = null
+    setPaymentPopup(null)
+    popup?.close()
+  }
+
+  function openPaymentPopup(month: PrimaryMonth): void {
+    setPaymentError(null)
+    const existing = paymentPopupRef.current
+    if (existing && !existing.closed) {
+      existing.document.title = `План платежей: ${monthLabel(month)}`
+      setPaymentPopup((current) => current ? { ...current, month } : current)
+      existing.focus()
+      return
+    }
+    const popup = window.open('', '_blank', 'popup=yes,width=850,height=700,resizable=yes,scrollbars=yes')
+    if (!popup) {
+      setActionError('Не удалось открыть окно плана платежей. Проверьте настройки всплывающих окон браузера.')
+      return
+    }
+    popup.document.title = `План платежей: ${monthLabel(month)}`
+    document.querySelectorAll('style, link[rel~="stylesheet"]').forEach((style) => {
+      popup.document.head.appendChild(style.cloneNode(true))
+    })
+    const container = popup.document.createElement('main')
+    container.className = 'add-row-page'
+    popup.document.body.appendChild(container)
+    paymentPopupRef.current = popup
+    popup.addEventListener('beforeunload', () => {
+      if (paymentPopupRef.current === popup) {
+        paymentPopupRef.current = null
+        setPaymentPopup(null)
+      }
+    })
+    setActionError(null)
+    setPaymentPopup({ container, month })
+    popup.focus()
+  }
+
+  function openImportPopup(): void {
+    if (monthEdit !== null || formOpen || importFile || importPopupRef.current) {
+      setActionError('Завершите редактирование или текущую загрузку Excel.')
+      return
+    }
+    const popup = window.open('', '_blank', 'popup=yes,width=850,height=850,resizable=yes,scrollbars=yes')
+    if (!popup) {
+      setActionError('Не удалось открыть окно загрузки Excel. Проверьте настройки всплывающих окон браузера.')
+      return
+    }
+    popup.document.title = 'Загрузка первичных документов из Excel'
+    document.querySelectorAll('style, link[rel~="stylesheet"]').forEach((style) => {
+      popup.document.head.appendChild(style.cloneNode(true))
+    })
+    const container = popup.document.createElement('main')
+    container.className = 'add-row-page'
+    popup.document.body.appendChild(container)
+    importPopupRef.current = popup
+    popup.addEventListener('beforeunload', () => {
+      if (importPopupRef.current !== popup) return
+      importPopupRef.current = null
+      setImportPopup(null)
+      if (importSavingRef.current) {
+        setActionError('Окно закрыто во время загрузки Excel. Дождитесь результата операции.')
+      } else {
+        setImportFile(null)
+      }
+    })
+    setActionError(null)
+    setImportMessage(null)
+    setImportPopup(container)
+    popup.focus()
+  }
 
   async function loadData(): Promise<void> {
     setLoading(true)
@@ -277,10 +311,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     try {
       const responses = await Promise.all([
         fetch('/api/primary', { cache: 'no-store' }),
-        fetch('/api/gn/departments'),
-        fetch('/api/gn/objects'),
-        fetch('/api/gn/dogovors'),
-        fetch('/api/gn/contractors'),
+        ...fetchReferences('departments', 'objects', 'dogovors', 'contractors'),
         fetch('/api/primary/bdr-options'),
         fetch('/api/gn/contracts'),
       ])
@@ -363,6 +394,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
   }, [])
 
   const expenseDepartmentIndex = useMemo(() => buildBdrExpenseDepartmentIndex(bdrOptions), [bdrOptions])
+  const budgetItemIndex = useMemo(() => buildBdrBudgetItemIndex(bdrOptions), [bdrOptions])
   const bdr26CorrIndex = useMemo(() => buildBdr26CorrIndex(bdrOptions), [bdrOptions])
   const bdrIds = useMemo(() => ({
     departments: new Set(bdrOptions.map((row) => row.departmentId)),
@@ -379,32 +411,65 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
   }, [rows])
 
   const visibleRows = useMemo(() => {
+    const expenseDepartmentFor = (row: PrimaryDocument): string => getBdrExpenseDepartments(
+      expenseDepartmentIndex,
+      String(row.departmentId ?? ''),
+      row.objects.map((object) => String(object.id)),
+      String(row.contractId ?? ''),
+    )
+    const personalAccountFor = (row: PrimaryDocument): string => {
+      const contract = contracts.find((item) => item.id === row.contractId)
+      return row.personalAccount || (contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
+    }
+    const contractFor = (row: PrimaryDocument): string => {
+      const contract = contracts.find((item) => item.id === row.contractId)
+      return contract ? contractLabel(contract) : row.contract ?? ''
+    }
     const valueFor = (row: PrimaryDocument, key: ColumnKey): string | number => {
-      if (key === 'department') return row.department ?? ''
+      if (key === 'department') return formatBudgetDepartment(row.department, expenseDepartmentFor(row))
       if (key === 'contractor') return contracts.find((contract) => contract.id === row.contractId)?.contractor ?? ''
       if (key === 'objects') return labelList(row.objects)
-      if (key === 'expenseDepartment') return getBdrExpenseDepartments(expenseDepartmentIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? ''))
-      if (key === 'bdr26Corr') return getBdr26Corr(bdr26CorrIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? '')) ?? ''
+      if (key === 'expenseDepartment') return expenseDepartmentFor(row)
+      if (key === 'budgetItem') return getBdrBudgetItemCodes(getBdrBudgetItems(budgetItemIndex, row.personalAccount))
+      if (key === 'generalNote') return row.generalNote ?? ''
+      if (key === 'bdr26Corr') return getBdr26Corr(bdr26CorrIndex, row.personalAccount) ?? ''
       if (key === 'contract') {
-        const contract = contracts.find((item) => item.id === row.contractId)
-        return contract ? contractLabel(contract) : row.contract ?? ''
+        const account = personalAccountFor(row)
+        return formatBudgetDepartment(contractFor(row), account ? `лицевой счет: ${account}` : '')
       }
-      if (key === 'personalAccount') {
-        const contract = contracts.find((item) => item.id === row.contractId)
-        return row.personalAccount || (contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
-      }
-      if (key === 'amountWithVat') return Number(row.monthData[row.month]?.amountWithVat ?? 0)
-      if (key === 'sedLaunched') return Number(row.monthData[row.month]?.sedLaunched ?? false)
-      if (key === 'acceptedIn1C') return Number(row.monthData[row.month]?.acceptedIn1C ?? false)
-      if (key === 'note') return row.monthData[row.month]?.note ?? ''
+      if (key === 'personalAccount') return personalAccountFor(row)
+      const monthData = sort.month ? row.monthData[sort.month] : undefined
+      if (key === 'amountWithVat') return Number(monthData?.amountWithVat ?? 0)
+      if (key === 'sedLaunched') return Number(monthData?.sedLaunched ?? false)
+      if (key === 'acceptedIn1C') return Number(monthData?.acceptedIn1C ?? false)
+      if (key === 'note') return monthData?.note ?? ''
       return ''
+    }
+    const bdrSearchTextFor = (row: PrimaryDocument): string => {
+      const summary = getBdr26Summary(bdr26CorrIndex, row.personalAccount)
+      const monthlyAmounts = PRIMARY_MONTHS.map(({ key: month }) => (
+        monthEdit === month && monthDrafts[row.id]
+          ? monthDrafts[row.id].amountWithVat
+          : row.monthData[month]?.amountWithVat
+      ))
+      const otherValues = [
+        JSON.stringify(row),
+        ...BASE_COLUMNS
+          .filter(({ key }) => key !== 'bdr26Corr')
+          .map(({ key }) => valueFor(row, key)),
+        getBdrBudgetItems(budgetItemIndex, row.personalAccount),
+      ]
+      return primaryBdrSearchText(summary, monthlyAmounts, otherValues)
     }
     return rows.filter((row) => {
       if (departmentFilter && String(row.departmentId) !== departmentFilter) return false
       return BASE_COLUMNS.every(({ key }) => {
         const filter = columnFilters[key]?.trim()
+        if (key === 'bdr26Corr') {
+          return !filter || bdrSearchTextFor(row).includes(filter.toLocaleLowerCase('ru'))
+        }
         const value = valueFor(row, key)
-        const text = key === 'bdr26Corr' && typeof value === 'number' ? formatBdr26Corr(value) : String(value)
+        const text = String(value)
         return !filter || text.toLocaleLowerCase('ru').includes(filter.toLocaleLowerCase('ru'))
       })
     }).sort((left, right) => {
@@ -415,12 +480,12 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
         : String(leftValue).localeCompare(String(rightValue), 'ru', { numeric: true, sensitivity: 'base' })
       return sort.direction === 'asc' ? compare : -compare
     })
-  }, [bdr26CorrIndex, columnFilters, contracts, departmentFilter, expenseDepartmentIndex, rows, sort])
+  }, [bdr26CorrIndex, budgetItemIndex, columnFilters, contracts, departmentFilter, expenseDepartmentIndex, monthDrafts, monthEdit, rows, sort])
 
-  function toggleSort(key: ColumnKey): void {
-    setSort((current) => current.key === key
-      ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
-      : { key, direction: 'asc' })
+  function toggleSort(key: ColumnKey, month?: PrimaryMonth): void {
+    setSort((current) => current.key === key && current.month === month
+      ? { key, month, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+      : { key, month, direction: 'asc' })
   }
 
   function resetFilters(): void {
@@ -440,8 +505,9 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     }
     try {
       setActionError(null)
-      const header = ['ID', ...BASE_COLUMNS.map((column) => column.label),
-        ...MONTHS.flatMap((month) => MONTH_COLUMNS.map((column) => `${month.label}: ${column.label}`))]
+      const header = ['ID', ...EXPORT_LEADING_HEADERS,
+        ...PRIMARY_MONTHS.flatMap((month) => MONTH_COLUMNS.map((column) => `${month.label}: ${column.label}`)),
+        BDR_COLUMN.label, GENERAL_NOTE_COLUMN.label]
       const values = visibleRows.map((row) => {
         const contract = contracts.find((item) => item.id === row.contractId)
         const departmentId = String(row.departmentId ?? '')
@@ -451,12 +517,14 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           row.id, row.department ?? '', labelList(row.objects), contract?.contractor ?? '',
           contract ? contractLabel(contract) : row.contract ?? '',
           getBdrExpenseDepartments(expenseDepartmentIndex, departmentId, objectIds, contractId),
-          getBdr26Corr(bdr26CorrIndex, departmentId, objectIds, contractId),
+          getBdrBudgetItems(budgetItemIndex, row.personalAccount),
           row.personalAccount ?? '',
-          ...MONTHS.flatMap((month) => {
+          ...PRIMARY_MONTHS.flatMap((month) => {
             const data = row.monthData[month.key]
             return data ? [data.amountWithVat, data.sedLaunched, data.acceptedIn1C, data.note] : ['', '', '', '']
           }),
+          getBdr26Corr(bdr26CorrIndex, row.personalAccount),
+          row.generalNote ?? '',
         ]
       })
       const worksheet = XLSX.utils.aoa_to_sheet([header, ...values])
@@ -551,7 +619,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
 
   function startCreate(): void {
     setEditingId(null)
-    const initial = { ...EMPTY_DRAFT, departmentId: departmentFilter }
+    const initial = { ...EMPTY_DRAFT, departmentId: departmentFilter, month: PRIMARY_QUARTERS[quarter][0].key }
     setDraft({ ...initial, ...completePrimarySelection(initial, { bdr: bdrOptions, objects, contractors, contracts }, 'department') })
     setFormError(null)
     setFormOpen(true)
@@ -573,6 +641,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
       amountWithVat: String(monthData?.amountWithVat ?? 0),
       details: row.details ?? '',
       detailsEnabled: row.detailsEnabled,
+      generalNote: row.generalNote ?? '',
       edoArrivalDate: monthData?.edoArrivalDate?.slice(0, 10) ?? '',
       sedLaunchDate: monthData?.sedLaunchDate?.slice(0, 10) ?? '',
       sedLaunched: monthData?.sedLaunched ?? false,
@@ -597,26 +666,35 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     if (key === 'expenseDepartment') {
       return <span>{getBdrExpenseDepartments(expenseDepartmentIndex, draft.departmentId, draft.objectIds, draft.contractId)}</span>
     }
+    if (key === 'budgetItem') return <span>{getBdrBudgetItems(budgetItemIndex, draft.personalAccount)}</span>
+    if (key === 'generalNote') return <textarea aria-label="Общее примечания" value={draft.generalNote} onChange={(event) => updateDraft('generalNote', event.target.value)} />
     if (key === 'bdr26Corr') {
-      const amount = getBdr26Corr(bdr26CorrIndex, draft.departmentId, draft.objectIds, draft.contractId)
-      return <span>{formatBdr26Corr(amount)}</span>
+      const summary = getBdr26Summary(bdr26CorrIndex, draft.personalAccount)
+      const row = editingId === null ? undefined : rows.find((item) => item.id === editingId)
+      const amounts = row
+        ? PRIMARY_MONTHS.map(({ key: month }) => row.monthData[month]?.amountWithVat)
+        : [draft.amountWithVat]
+      return renderBdrProgress(summary, amounts)
     }
     if (key === 'department') {
       const selectedDepartment = editingId === null ? null : rows.find((row) => row.id === editingId)?.departmentId
       return (
-        <SearchableSelect
-          label="Подразделение записи"
-          value={draft.departmentId}
-          options={departments.filter((item) => item.id === selectedDepartment || bdrIds.departments.has(item.id))
-            .map((item) => ({ value: String(item.id), label: item.label }))}
-          placeholder="Не выбрано"
-          onChange={(value) => {
-            setDraft((current) => {
-              const next = { ...current, departmentId: String(value) }
-              return { ...next, ...completePrimarySelection(next, { bdr: bdrOptions, objects, contractors, contracts }, 'department') }
-            })
-          }}
-        />
+        <>
+          <SearchableSelect
+            label="Подразделение"
+            value={draft.departmentId}
+            options={departments.filter((item) => item.id === selectedDepartment || bdrIds.departments.has(item.id))
+              .map((item) => ({ value: String(item.id), label: item.label }))}
+            placeholder="Не выбрано"
+            onChange={(value) => {
+              setDraft((current) => {
+                const next = { ...current, departmentId: String(value) }
+                return { ...next, ...completePrimarySelection(next, { bdr: bdrOptions, objects, contractors, contracts }, 'department') }
+              })
+            }}
+          />
+          <span>{formatBudgetDepartment('', getBdrExpenseDepartments(expenseDepartmentIndex, draft.departmentId, draft.objectIds, draft.contractId))}</span>
+        </>
       )
     }
     if (key === 'contractor') {
@@ -674,19 +752,22 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
       const selectedContract = contracts.find((item) => String(item.id) === draft.contractId)
       if (selectedContract && !contractOptions.some((item) => item.id === selectedContract.id)) contractOptions.push(selectedContract)
       return (
-        <SearchableSelect
-          label="Договор"
-          value={draft.contractId}
-          options={contractOptions.map((item) => ({ value: String(item.id), label: contractLabel(item) }))}
-          disabled={!draft.contractorId}
-          onChange={(value) => {
-            const contract = contracts.find((item) => String(item.id) === String(value))
-            setDraft((current) => {
-              const next = { ...current, contractId: String(value), contractorId: String(contract?.contractorId ?? current.contractorId), personalAccount: '' }
-              return { ...next, ...completePrimarySelection(next, { bdr: bdrOptions, objects, contractors, contracts }, 'contract') }
-            })
-          }}
-        />
+        <>
+          <SearchableSelect
+            label="Договор"
+            value={draft.contractId}
+            options={contractOptions.map((item) => ({ value: String(item.id), label: contractLabel(item) }))}
+            disabled={!draft.contractorId}
+            onChange={(value) => {
+              const contract = contracts.find((item) => String(item.id) === String(value))
+              setDraft((current) => {
+                const next = { ...current, contractId: String(value), contractorId: String(contract?.contractorId ?? current.contractorId), personalAccount: '' }
+                return { ...next, ...completePrimarySelection(next, { bdr: bdrOptions, objects, contractors, contracts }, 'contract') }
+              })
+            }}
+          />
+          {renderEditorCell('personalAccount')}
+        </>
       )
     }
     if (key === 'personalAccount') {
@@ -740,6 +821,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           amountWithVat: amount,
           details: draft.details,
           detailsEnabled: draft.detailsEnabled,
+          generalNote: draft.generalNote,
           edoArrivalDate: draft.edoArrivalDate,
           sedLaunchDate: draft.sedLaunchDate,
           sedLaunched: draft.sedLaunched,
@@ -754,6 +836,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           personalAccount: draft.personalAccount,
           details: draft.details,
           detailsEnabled: draft.detailsEnabled,
+          generalNote: draft.generalNote,
         }),
       })
       if (!response.ok) {
@@ -841,23 +924,42 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
       if (key === 'note') return monthData?.note ?? ''
       return ''
     }
-    if (key === 'department') return row.department ?? ''
+    if (key === 'department') {
+      const expenseDepartment = getBdrExpenseDepartments(expenseDepartmentIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? ''))
+      return formatBudgetDepartment(row.department, expenseDepartment)
+    }
     if (key === 'objects') return labelList(row.objects)
     if (key === 'expenseDepartment') return getBdrExpenseDepartments(expenseDepartmentIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? ''))
+    if (key === 'budgetItem') {
+      const fullLabel = getBdrBudgetItems(budgetItemIndex, row.personalAccount)
+      return <span title={fullLabel || undefined} aria-label={fullLabel || getBdrBudgetItemCodes(fullLabel)}>{getBdrBudgetItemCodes(fullLabel)}</span>
+    }
+    if (key === 'generalNote') return row.generalNote ?? ''
     if (key === 'bdr26Corr') {
-      const amount = getBdr26Corr(bdr26CorrIndex, String(row.departmentId ?? ''), row.objects.map((object) => String(object.id)), String(row.contractId ?? ''))
-      return formatBdr26Corr(amount)
+      const summary = getBdr26Summary(bdr26CorrIndex, row.personalAccount)
+      const amounts = PRIMARY_MONTHS.map(({ key: currentMonth }) => (
+        monthEdit === currentMonth && monthDrafts[row.id]
+          ? monthDrafts[row.id].amountWithVat
+          : row.monthData[currentMonth]?.amountWithVat
+      ))
+      return renderBdrProgress(summary, amounts)
     }
     if (key === 'contractor') return contracts.find((item) => item.id === row.contractId)?.contractor ?? ''
     if (key === 'contract') {
       const contract = contracts.find((item) => item.id === row.contractId)
       const label = contract ? contractLabel(contract) : row.contract ?? ''
+      const account = row.personalAccount || (contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
       const contractWindowId = contract?.contractWindowId
-      if (!contractWindowId) return label
-      return (
+      const contractValue = contractWindowId ? (
         <button type="button" className="contract-cell-button" onClick={() => onOpenContract(contractWindowId)}>
           {label}
         </button>
+      ) : label
+      if (!account) return contractValue
+      return (
+        <>
+          {contractValue} (лицевой счет: {renderPrimaryValue(row, 'personalAccount')})
+        </>
       )
     }
     if (key === 'personalAccount') {
@@ -918,7 +1020,133 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     return <textarea value={monthDraft.note} onChange={(event) => updateMonthDraft(row.id, 'note', event.target.value)} />
   }
 
-  const visibleMonthColumns = MONTHS.flatMap((month) => {
+  function renderBaseHeader({ key, label }: Column): React.ReactElement {
+    return (
+      <th key={key} rowSpan={2} className="primary-table__resizable-header">
+        <div className="primary-table__column-header">
+          <button type="button" className="guide-sort-button" onClick={() => toggleSort(key)}>
+            {label}{key === BDR_COLUMN.key ? ` (итого: ${formatBdr26Corr(bdrTotal)})` : ''}{sort.key === key ? (sort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+          </button>
+          <input
+            type="search"
+            className="primary-table__column-filter"
+            aria-label={`Поиск в столбце ${label}`}
+            placeholder="Поиск..."
+            value={columnFilters[key] ?? ''}
+            onChange={(event) => setColumnFilters((current) => ({ ...current, [key]: event.target.value }))}
+          />
+        </div>
+        {renderResizeHandle(key, key, label)}
+      </th>
+    )
+  }
+
+  function renderBaseCell({ key, label }: Column, row?: PrimaryDocument): React.ReactElement {
+    return (
+      <td key={key} className="primary-table__resizable-cell">
+        {!row || editingId === row.id ? renderEditorCell(key) : renderPrimaryValue(row, key)}
+        {renderResizeHandle(key, key, label)}
+      </td>
+    )
+  }
+
+  const visibleMonths = PRIMARY_QUARTERS[quarter]
+  const visibleAccounts = visibleRows.map((row) => editingId === row.id ? draft.personalAccount : row.personalAccount)
+  if (formOpen && editingId === null) visibleAccounts.push(draft.personalAccount)
+  const bdrTotal = sumBdr26Corr(bdr26CorrIndex, visibleAccounts)
+  function monthAmounts(month: PrimaryMonth): PaymentPlanRow[] {
+    const values: Array<{ id: number | null; contractor: string; contractSubject: string; contract: string; calculation: string; amount: number | string | null | undefined }> = visibleRows.map((row) => {
+      const contract = contracts.find((item) => item.id === row.contractId)
+      const account = row.personalAccount || (contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
+      const paymentDetails = getBdrPaymentDetails(bdrOptions, row.contractId, account)
+      return {
+        id: row.id,
+        contractor: contract?.contractor ?? '',
+        contractSubject: paymentDetails.contractSubject,
+        contract: contract ? contractLabel(contract) : row.contract ?? '',
+        calculation: paymentDetails.calculation,
+        amount: monthEdit === month && monthDrafts[row.id] ? monthDrafts[row.id].amountWithVat : row.monthData[month]?.amountWithVat,
+      }
+    })
+    if (formOpen && editingId === null && draft.month === month) {
+      const contract = contracts.find((item) => String(item.id) === draft.contractId)
+      const contractor = contractors.find((item) => String(item.id) === draft.contractorId)
+      const account = draft.personalAccount || (contract && personalAccountOptions(contract.personalAccount).length === 0 ? 'НЕТ' : '')
+      const paymentDetails = getBdrPaymentDetails(bdrOptions, contract?.id ?? null, account)
+      values.unshift({
+        id: null,
+        contractor: contract?.contractor ?? contractor?.label ?? '',
+        contractSubject: paymentDetails.contractSubject,
+        contract: contract ? contractLabel(contract) : '',
+        calculation: paymentDetails.calculation,
+        amount: draft.amountWithVat,
+      })
+    }
+    return values
+  }
+  function exportPaymentPlan(month: PrimaryMonth): void {
+    try {
+      const amounts = monthAmounts(month)
+      const total = primaryBdrProgress(null, amounts.map(({ amount }) => amount)).total
+      if (total === null) throw new Error('Проверьте суммы перед выгрузкой.')
+      const rows = amounts.map(({ contractor, contractSubject, contract, calculation, amount }, index) => [
+        index + 1,
+        contractor,
+        contractSubject,
+        contract,
+        '',
+        amount == null || amount === '' ? '' : primaryBdrProgress(null, [amount]).total,
+        calculation,
+      ])
+      const sheetRows: Array<Array<string | number | null>> = Array.from({ length: 9 }, () => [])
+      sheetRows[3] = ['Справка о планируемых расчетах']
+      sheetRows.push(PAYMENT_PLAN_HEADERS, PAYMENT_PLAN_HEADERS.map((_, index) => index + 1), ...rows)
+      const sheet = XLSXStyle.utils.aoa_to_sheet(sheetRows)
+      const border = {
+        top: { style: 'thin', color: { rgb: '000000' } },
+        bottom: { style: 'thin', color: { rgb: '000000' } },
+        left: { style: 'thin', color: { rgb: '000000' } },
+        right: { style: 'thin', color: { rgb: '000000' } },
+      }
+      const titleCell = sheet[XLSXStyle.utils.encode_cell({ r: 3, c: 0 })]
+      if (titleCell) {
+        titleCell.s = {
+          font: { bold: true },
+          alignment: { horizontal: 'center', vertical: 'center' },
+        }
+      }
+      const lastTableRow = 10 + rows.length
+      for (let rowIndex = 9; rowIndex <= lastTableRow; rowIndex += 1) {
+        for (let columnIndex = 0; columnIndex < PAYMENT_PLAN_HEADERS.length; columnIndex += 1) {
+          const address = XLSXStyle.utils.encode_cell({ r: rowIndex, c: columnIndex })
+          const cell = sheet[address] ?? { t: 's', v: '' }
+          cell.s = {
+            border,
+            alignment: {
+              ...(rowIndex <= 10 || columnIndex === 0 ? { horizontal: 'center' } : {}),
+              vertical: 'center',
+              wrapText: true,
+            },
+            ...(rowIndex <= 10 ? {
+              font: { bold: true },
+              fill: { fgColor: { rgb: 'D9D9D9' } },
+            } : {}),
+          }
+          if (rowIndex > 10 && columnIndex === 5 && typeof cell.v === 'number') cell.z = '#,##0.00'
+          sheet[address] = cell
+        }
+      }
+      sheet['!merges'] = [{ s: { r: 3, c: 0 }, e: { r: 3, c: 6 } }]
+      sheet['!cols'] = [{ wch: 6 }, { wch: 28 }, { wch: 32 }, { wch: 32 }, { wch: 20 }, { wch: 16 }, { wch: 40 }]
+      const workbook = XLSXStyle.utils.book_new()
+      XLSXStyle.utils.book_append_sheet(workbook, sheet, 'План платежей')
+      XLSXStyle.writeFile(workbook, `План_платежей_${monthLabel(month)}.xlsx`)
+      setPaymentError(null)
+    } catch (exportError) {
+      setPaymentError(exportError instanceof Error ? exportError.message : 'Не удалось выгрузить план платежей')
+    }
+  }
+  const visibleMonthColumns = visibleMonths.flatMap((month) => {
     const fields = expandedMonths[month.key] ? MONTH_COLUMNS : MONTH_COLUMNS.slice(0, 1)
     return fields.map((column) => ({ ...column, month: month.key }))
   })
@@ -937,23 +1165,26 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
             className="excel-action-toolbar--equipment"
             onReset={resetFilters}
             onExport={exportToExcel}
-            onUpload={(file) => {
-              if (monthEdit !== null || formOpen || importFile) {
-                setActionError('Завершите редактирование или текущую загрузку Excel.')
-                return
-              }
-              setActionError(null)
-              setImportMessage(null)
-              setImportFile(file)
-            }}
+            onOpenUpload={openImportPopup}
+            uploading={importFile !== null || importPopup !== null}
           />
         )}
         {error && <p className="hint hint--error" role="alert">{error}</p>}
         {actionError && <p className="hint hint--error" role="alert">{actionError}</p>}
         {bdrRefreshError && <p className="hint hint--error" role="alert">Не удалось обновить данные БДР: {bdrRefreshError}</p>}
         {importMessage && <p className="hint">{importMessage}</p>}
-        {importFile && (
-          <PrimaryExcelImport
+        {paymentPopup && createPortal(
+          <PrimaryPaymentPlan
+            monthLabel={monthLabel(paymentPopup.month)}
+            amounts={monthAmounts(paymentPopup.month)}
+            error={paymentError}
+            onExport={() => exportPaymentPlan(paymentPopup.month)}
+            onClose={closePaymentPopup}
+          />,
+          paymentPopup.container,
+        )}
+        {importPopup && createPortal(
+          importFile ? <PrimaryExcelImport
             file={importFile}
             rows={rows}
             departments={departments}
@@ -961,18 +1192,56 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
             contractors={contractors}
             contracts={contracts}
             bdr={bdrOptions}
-            onCancel={() => setImportFile(null)}
+            initialMonth={visibleMonths[0].key}
+            onCancel={closeImportPopup}
+            onSavingChange={(next) => { importSavingRef.current = next }}
+            onError={(message) => {
+              if (!importPopupRef.current) {
+                setImportFile(null)
+                setActionError(message)
+              }
+            }}
             onComplete={(created, updated) => {
-              setImportFile(null)
+              closeImportPopup()
+              setActionError(null)
               setImportMessage(`Загрузка завершена. Добавлено: ${created}, обновлено: ${updated}.`)
               void loadData()
             }}
-          />
+          /> : (
+            <section className="guide-new-row add-row-form-vertical" aria-label="Загрузка первичных документов из Excel">
+              <h3>Загрузка первичных документов из Excel</h3>
+              <label className="form-field">
+                <span className="form-field-label">Файл Excel</span>
+                <input type="file" accept=".xlsx" onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file) setImportFile(file)
+                }} />
+              </label>
+              <div className="form-actions-row-compact">
+                <button type="button" className="page-action-btn page-action-btn--secondary" onClick={closeImportPopup}>Отмена</button>
+              </div>
+            </section>
+          ),
+          importPopup,
         )}
         {!error && (
-          <div className="form-fields-compact">
+          <div className="form-fields-compact primary-page__filters">
             <label className="form-field-compact">
-              <span className="form-field-label">Подразделение</span>
+              <select
+                aria-label="Квартал"
+                value={quarter}
+                disabled={monthEdit !== null || savingMonth || saving || importFile !== null || importPopup !== null}
+                onChange={(event) => {
+                  const nextQuarter = Number(event.target.value)
+                  setQuarter(nextQuarter)
+                  if (formOpen && editingId === null) updateDraft('month', PRIMARY_QUARTERS[nextQuarter][0].key)
+                  setSort((current) => current.month ? { key: 'contractor', direction: 'asc' } : current)
+                }}
+              >
+                {PRIMARY_QUARTERS.map((_, index) => <option key={index} value={index}>{index + 1} квартал</option>)}
+              </select>
+            </label>
+            <label className="form-field-compact">
               <SearchableSelect
                 label="Фильтр по подразделению"
                 value={departmentFilter}
@@ -989,11 +1258,13 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
             <table className="guide-table table-compact primary-table">
               <colgroup>
                 <col style={{ width: numberColumnWidth }} />
-                {BASE_COLUMNS.map(({ key }) => <col key={key} style={{ width: widths[key] ?? 'max-content' }} />)}
+                {LEADING_COLUMNS.map(({ key }) => <col key={key} style={{ width: widths[key] ?? 'max-content' }} />)}
                 {visibleMonthColumns.map(({ key, month }) => {
                   const widthKey: ColumnWidthKey = `${month}:${key}`
                   return <col key={`${month}-${key}`} style={{ width: widths[widthKey] ?? 'max-content' }} />
                 })}
+                <col style={{ width: widths[BDR_COLUMN.key] ?? 'max-content' }} />
+                <col style={{ width: widths[GENERAL_NOTE_COLUMN.key] ?? 'max-content' }} />
               </colgroup>
               <thead>
                 <tr>
@@ -1004,59 +1275,54 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                         type="button"
                         className="primary-table__icon-button primary-table__add-button"
                         onClick={startCreate}
-                        disabled={formOpen || monthEdit !== null || importFile !== null}
+                        disabled={formOpen || monthEdit !== null || importFile !== null || importPopup !== null}
                         aria-label="Добавить запись"
                         title="Добавить запись"
                       >+</button>
                     </div>
                   </th>
-                  {BASE_COLUMNS.map(({ key, label }) => (
-                    <th key={key} rowSpan={2} className="primary-table__resizable-header">
-                      <div className="primary-table__column-header">
-                        <button type="button" className="guide-sort-button" onClick={() => toggleSort(key)}>
-                          {label}{sort.key === key ? (sort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
-                        </button>
-                        <input
-                          type="search"
-                          className="primary-table__column-filter"
-                          aria-label={`Поиск в столбце ${label}`}
-                          placeholder="Поиск..."
-                          value={columnFilters[key] ?? ''}
-                          onChange={(event) => setColumnFilters((current) => ({ ...current, [key]: event.target.value }))}
-                        />
-                      </div>
-                      {renderResizeHandle(key, key, label)}
-                    </th>
-                  ))}
-                  {MONTHS.map((month) => {
+                  {LEADING_COLUMNS.map(renderBaseHeader)}
+                  {visibleMonths.map((month) => {
                     const expanded = expandedMonths[month.key]
                     return (
                       <th key={month.key} colSpan={expanded ? MONTH_COLUMNS.length : 1}>
                         <div className="primary-table__month-header">
                           <span>{month.label}</span>
+                          <span>{formatBdr26Corr(primaryBdrProgress(null, monthAmounts(month.key).map((item) => item.amount)).total) || 'Некорректная сумма'}</span>
+                          <div>
                           <button type="button" className="page-action-btn page-action-btn--secondary primary-table__month-toggle" disabled={monthEdit === month.key || savingMonth} onClick={() => toggleMonthExpanded(month.key)}>
                             {expanded ? '−' : '+'}
                           </button>
                           <button
                             type="button"
                             className="page-action-btn page-action-btn--secondary primary-table__month-edit-icon"
+                            onClick={() => openPaymentPopup(month.key)}
+                            aria-label={`План платежей: ${month.label}`}
+                            title="План платежей"
+                          >▤</button>
+                          <button
+                            type="button"
+                            className="page-action-btn page-action-btn--secondary primary-table__month-edit-icon"
                             onClick={() => void toggleMonthEdit(month.key)}
-                            disabled={savingMonth || importFile !== null || (monthEdit !== null && monthEdit !== month.key) || (monthEdit === null && (formOpen || editingId !== null))}
+                            disabled={savingMonth || importFile !== null || importPopup !== null || (monthEdit !== null && monthEdit !== month.key) || (monthEdit === null && (formOpen || editingId !== null))}
                             aria-label={monthEdit === month.key ? `Сохранить ${month.label}` : `Редактировать ${month.label}`}
                             title={monthEdit === month.key ? `Сохранить все изменения ${month.label}` : 'Редактировать данные месяца'}
                           >
                             {savingMonth && monthEdit === month.key ? '…' : monthEdit === month.key ? '✓' : '✎'}
                           </button>
+                          </div>
                         </div>
                       </th>
                     )
                   })}
+                  {renderBaseHeader(BDR_COLUMN)}
+                  {renderBaseHeader(GENERAL_NOTE_COLUMN)}
                 </tr>
                 <tr>
                   {visibleMonthColumns.map(({ key, month, label }) => (
                     <th key={`${month}-${key}`} className="primary-table__resizable-header">
-                      <button type="button" className="guide-sort-button" onClick={() => toggleSort(key)}>
-                        {label}{sort.key === key ? (sort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                      <button type="button" className="guide-sort-button" onClick={() => toggleSort(key, month)}>
+                        {label}{sort.key === key && sort.month === month ? (sort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
                       </button>
                       {renderResizeHandle(key, `${month}:${key}`, `${monthLabel(month)}: ${label}`)}
                     </th>
@@ -1073,18 +1339,15 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                         <button type="button" className="page-action-btn primary-table__icon-button" onClick={cancelEdit} disabled={saving} aria-label="Отменить создание записи" title="Отмена">×</button>
                       </div>
                     </td>
-                    {BASE_COLUMNS.map(({ key, label }) => (
-                      <td key={key} className="primary-table__resizable-cell">
-                        {renderEditorCell(key)}
-                        {renderResizeHandle(key, key, label)}
-                      </td>
-                    ))}
+                    {LEADING_COLUMNS.map((column) => renderBaseCell(column))}
                     {visibleMonthColumns.map(({ key, month }) => (
                       <td key={`${month}-${key}`} className={`primary-table__resizable-cell ${draft.month === month ? primaryMonthStatusClass(draft) : ''}`}>
                         {renderMonthEditorCell(month, key)}
                         {renderResizeHandle(key, `${month}:${key}`, `${monthLabel(month)}: ${MONTH_COLUMNS.find((column) => column.key === key)?.label ?? ''}`)}
                       </td>
                     ))}
+                    {renderBaseCell(BDR_COLUMN)}
+                    {renderBaseCell(GENERAL_NOTE_COLUMN)}
                   </tr>
                 )}
                 {visibleRows.map((row, index) => (
@@ -1103,7 +1366,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                             type="button"
                             className="page-action-btn primary-table__icon-button"
                             onClick={() => startEdit(row)}
-                            disabled={formOpen || monthEdit !== null || importFile !== null}
+                            disabled={formOpen || monthEdit !== null || importFile !== null || importPopup !== null}
                             aria-label={`Редактировать запись №${row.id}`}
                             title="Редактировать"
                           >
@@ -1112,12 +1375,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                         )}
                       </div>
                     </td>
-                    {BASE_COLUMNS.map(({ key, label }) => (
-                      <td key={key} className="primary-table__resizable-cell">
-                        {editingId === row.id ? renderEditorCell(key) : renderPrimaryValue(row, key)}
-                        {renderResizeHandle(key, key, label)}
-                      </td>
-                    ))}
+                    {LEADING_COLUMNS.map((column) => renderBaseCell(column, row))}
                     {visibleMonthColumns.map(({ key, month }) => (
                       <td key={`${month}-${key}`} className={`primary-table__resizable-cell ${primaryMonthStatusClass(monthEdit === month ? monthDrafts[row.id] : row.monthData[month])}`}>
                         {monthEdit === month
@@ -1126,6 +1384,8 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                         {renderResizeHandle(key, `${month}:${key}`, `${monthLabel(month)}: ${MONTH_COLUMNS.find((column) => column.key === key)?.label ?? ''}`)}
                       </td>
                     ))}
+                    {renderBaseCell(BDR_COLUMN, row)}
+                    {renderBaseCell(GENERAL_NOTE_COLUMN, row)}
                   </tr>
                 ))}
               </tbody>

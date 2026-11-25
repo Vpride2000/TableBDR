@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
 import { formatHttpError, formatErrorMessage } from '../utils/httpUtils';
+import { parseNumericValue } from '../utils/numericValues';
 import MainBudgetTableContent from './MainBudgetTableContent';
 import ExcelActionToolbar from '../components/ExcelActionToolbar';
+import { formatBudgetDepartment } from './budgetDepartment';
+import { formatBdrObjectNames } from './bdrObjects';
 
 // Компонент таблицы лимитов по услугам связи.
 // Загружает список BDR-строк, поддерживает сортировку, фильтрацию и редактирование строк.
@@ -40,7 +43,8 @@ const EXTRA_NUMERIC_COLUMNS = new Set(['БДР25корр', 'БДР26', 'БДР26
 const QUANTITY_COLUMNS = new Set(['Кол-во БДР25корр', 'Кол-во БДР26', 'Кол-во БДР26корр', 'Кол-во БДР27']);
 const FINANCIAL_EXPORT_COLUMNS = new Set(['Лимит', 'БДР25корр', 'БДР26', 'БДР26корр', 'БДР27', 'Един. лимит']);
 const NUMERIC_EXPORT_COLUMNS = new Set(['Кол-во', ...QUANTITY_COLUMNS]);
-const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Един. лимит', 'Предмет договора', 'Примечания']);
+const EXPENSE_COLUMNS = new Set(['На кого расходы ID', 'На кого расходы']);
+const MAIN_HIDDEN_COLUMNS = new Set(['Ед. изм.', 'Един. лимит', 'Предмет договора', 'Примечания', 'Объекты', ...EXPENSE_COLUMNS]);
 const COLUMN_TITLES: Record<string, string> = {
   GN_bdr_ID: '№',
   'Статья бюджета УС': 'УС',
@@ -102,18 +106,6 @@ function parseComparable(value: unknown): number | string {
   return String(value).toLowerCase();
 }
 
-// Преобразует значение из строки или числа в нормальное количество.
-// Пустые строки и нечисловые значения считаются нулем.
-function parseNumericValue(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    const normalized = value.replace(/\s+/g, '').replace(',', '.');
-    const parsed = Number(normalized);
-    return Number.isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
-}
-
 // Форматирует числовое значение в денежный вид для таблицы бюджета.
 function formatFinancialValue(value: unknown): string {
   return FINANCIAL_NUMBER_FORMATTER.format(parseNumericValue(value));
@@ -147,10 +139,9 @@ interface BudgetTableProps {
   onOpenDepartment: (rowId: number) => void;
   onOpenContractor: (rowId: number) => void;
   showMainTable?: boolean;
-  isMainTableCollapsibleByDefault?: boolean;
 }
 
-export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, onOpenObject, onOpenDepartment, onOpenContractor, showMainTable = true, isMainTableCollapsibleByDefault = false }: BudgetTableProps) {
+export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, onOpenObject, onOpenDepartment, onOpenContractor, showMainTable = true }: BudgetTableProps) {
   const [data, setData] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -320,8 +311,12 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
     const order = direction === 'asc' ? 1 : -1;
 
     return [...data].sort((a, b) => {
-      const aValue = parseComparable(a[key]);
-      const bValue = parseComparable(b[key]);
+      const aValue = parseComparable(key === 'Подразделение'
+        ? formatBudgetDepartment(a[key], a['На кого расходы'])
+        : key === 'Объект' ? formatBdrObjectNames(a) : a[key]);
+      const bValue = parseComparable(key === 'Подразделение'
+        ? formatBudgetDepartment(b[key], b['На кого расходы'])
+        : key === 'Объект' ? formatBdrObjectNames(b) : b[key]);
 
       if (aValue < bValue) return -1 * order;
       if (aValue > bValue) return 1 * order;
@@ -332,9 +327,13 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
   const filteredData = useMemo(() => {
     return sortedData.filter((row) =>
       orderedColumns.every((col) => {
+        if (EXPENSE_COLUMNS.has(col)) return true;
         const filterValue = (filters[col] ?? '').trim().toLowerCase();
         if (!filterValue) return true;
-        return String(row[col] ?? '').toLowerCase().includes(filterValue);
+        const value = col === 'Подразделение'
+          ? formatBudgetDepartment(row[col], row['На кого расходы'])
+          : col === 'Объект' ? formatBdrObjectNames(row) : String(row[col] ?? '');
+        return value.toLowerCase().includes(filterValue);
       })
     );
   }, [sortedData, filters, orderedColumns]);
@@ -385,7 +384,7 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
 
     setDraft((prev) => {
       if (column === 'Подразделение') {
-        return { ...prev, Подразделение: value, Объект: '' };
+        return { ...prev, Подразделение: value, Объект: '', Объекты: [] };
       }
 
       if (column === 'Контрагент') {
@@ -400,6 +399,15 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
 
       return { ...prev, [column]: value };
     });
+  }
+
+  function updateObjectDraft(values: string[]): void {
+    const objectNames = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+    setDraft((prev) => ({
+      ...prev,
+      'Объекты': objectNames,
+      'Объект': objectNames[0] ?? '',
+    }));
   }
 
   function formatCellValue(column: string, value: unknown): string {
@@ -549,7 +557,7 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
   }
 
   function exportToXlsx(): void {
-    const exportColumns = orderedColumns;
+    const exportColumns = orderedColumns.filter((column) => column !== 'На кого расходы ID' && column !== 'Объекты');
     const header = exportColumns.map((column) => COLUMN_TITLES[column] ?? column);
     const rows = data.map((row) => exportColumns.map((column) => (
       FINANCIAL_EXPORT_COLUMNS.has(column) || NUMERIC_EXPORT_COLUMNS.has(column)
@@ -636,6 +644,12 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
 
             const shouldUpdate = Number.isInteger(rowId) && rowId > 0 && existingIds.has(rowId) && !updatedIds.has(rowId);
             if (shouldUpdate) updatedIds.add(rowId);
+            if (shouldUpdate && payload['Объект'] !== undefined) {
+              const existingRow = data.find((item) => Number(item.GN_bdr_ID) === rowId);
+              if (String(payload['Объект']) === String(existingRow?.['Объект'] ?? '')) {
+                delete payload['Объект'];
+              }
+            }
             const createPayload = Object.fromEntries(
               Object.entries(payload)
                 .filter(([column]) => BDR_CREATE_FIELD_BY_COLUMN[column])
@@ -720,7 +734,6 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
             saving={saving}
             saveError={saveError}
             filters={filters}
-            lookupRows={lookupRows}
             contractsLookup={contractsLookup}
             COLUMN_TITLES={COLUMN_TITLES}
             LOCKED_EDIT_COLUMNS={LOCKED_EDIT_COLUMNS}
@@ -735,6 +748,7 @@ export default function BudgetTable({ onAddRow: onAddRowProp, onOpenContract, on
             onCopyPreviousColumn={copyPreviousColumn}
             onCancelEdit={cancelEdit}
             onUpdateDraft={updateDraft}
+            onUpdateObjectDraft={updateObjectDraft}
             onGetSelectOptions={getSelectOptionsForColumn}
             onFormatCellValue={formatCellValue}
             onOpenObject={onOpenObject}

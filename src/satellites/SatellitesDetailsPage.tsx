@@ -10,7 +10,6 @@ import {
 
 export default function SatellitesDetailsPage() {
   const [rows, setRows] = useState<SatelliteRow[]>([])
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isDetailTableExpanded, setIsDetailTableExpanded] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -71,7 +70,7 @@ export default function SatellitesDetailsPage() {
     const fileName = `Спутники_${timestamp}.xlsx`
 
     // Сводная таблица по филиалам
-    const summaryRows_data = [['ФИЛИАЛ', 'Сумма без НДС']]
+    const summaryRows_data: (string | number)[][] = [['ФИЛИАЛ', 'Сумма без НДС']]
     summaryRows.forEach((row) => {
       summaryRows_data.push([row.branch, row.totalWithoutVat])
     })

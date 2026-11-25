@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { primaryMonthStatusClass } from '../src/PrimaryPage.js';
+import { primaryMonthStatusClass } from '../shared/primaryMonths.js';
 
 test('primary month status reflects both checkboxes, including historical combinations', () => {
   assert.equal(primaryMonthStatusClass(), 'status-cell--inactive');

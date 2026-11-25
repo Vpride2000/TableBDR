@@ -2,11 +2,30 @@ import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 import express from 'express';
 import * as XLSX from 'xlsx';
 import { createDbClient } from '../server/db.js';
 import { setupRoutes } from '../server/routes.js';
-import { parsePrimaryExcelRows } from '../src/utils/primaryExcel.js';
+import { defaultPrimaryExcelMapping, parsePrimaryExcelRows, PRIMARY_EXCEL_FIELDS, readPrimaryExcelWorkbook } from '../src/utils/primaryExcel.js';
+
+test('Excel workbook reads buffers from another window and rejects non-XLSX data', () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['ID', 'Примечание'], [1, 'Текст']]), 'Данные');
+  const bytes = new Uint8Array(XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }));
+  const foreignBuffer: ArrayBuffer = runInNewContext('Uint8Array.from(bytes).buffer', { bytes });
+  assert.equal(foreignBuffer instanceof ArrayBuffer, false);
+  const parsed = readPrimaryExcelWorkbook(foreignBuffer);
+  assert.deepEqual(parsed.SheetNames, ['Данные']);
+  assert.deepEqual(XLSX.utils.sheet_to_json(parsed.Sheets['Данные'], { header: 1 }), [['ID', 'Примечание'], [1, 'Текст']]);
+  assert.throws(() => readPrimaryExcelWorkbook(new Uint8Array([0x50, 0x4b, 0, 0]).buffer), /корректным XLSX/);
+});
+
+test('default Excel mapping selects only ID when it exists', () => {
+  assert.deepEqual(PRIMARY_EXCEL_FIELDS.map(({ key }) => key), ['id', 'personalAccount', 'amountWithVat', 'note']);
+  assert.deepEqual(defaultPrimaryExcelMapping(['Сумма с НДС', ' ID ', 'Примечание']), { id: 1 });
+  assert.deepEqual(defaultPrimaryExcelMapping(['Сумма с НДС', 'Примечание']), {});
+});
 
 const references = {
   rows: [{ id: 1, departmentId: 1, contractId: 1000, objects: [{ id: 10 }] }],
@@ -72,7 +91,7 @@ test('batch import creates and updates atomically without changing hidden fields
         "GN_primary_document_id" SERIAL PRIMARY KEY, "GN_department_FK" INTEGER,
         "GN_dogovor_FK" INTEGER, "personal_account" TEXT NOT NULL DEFAULT '',
         "document_month" TEXT NOT NULL DEFAULT 'october', "details" TEXT NOT NULL DEFAULT '',
-        "details_enabled" BOOLEAN NOT NULL DEFAULT FALSE
+        "details_enabled" BOOLEAN NOT NULL DEFAULT FALSE, "general_note" TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE objects (id INTEGER PRIMARY KEY);
       CREATE TABLE "GN_primary_document_objects" (
@@ -106,16 +125,27 @@ test('batch import creates and updates atomically without changing hidden fields
     const submit = (month: string, records: unknown[]) => fetch(`http://127.0.0.1:${address.port}/api/primary/import`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month, records }),
     });
+    const updateGeneral = (generalNote?: unknown) => fetch(`http://127.0.0.1:${address.port}/api/primary/1/general`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        departmentId: 1, contractId: 1000, personalAccount: 'old', objectIds: [10],
+        budgetItemIds: [20], expenseDepartmentIds: [30], details: 'hidden', detailsEnabled: true,
+        ...(generalNote === undefined ? {} : { generalNote }),
+      }),
+    });
+    assert.equal((await updateGeneral('Общее примечание')).status, 200);
+    assert.equal((await updateGeneral()).status, 200);
+    assert.equal((await updateGeneral(42)).status, 400);
     const success = await submit('october', [
       { rowNumber: 2, id: 1, fields: { personalAccount: 'new', amountWithVat: null } },
       { rowNumber: 3, fields: { departmentId: 1, objectIds: [11], note: 'created' } },
     ]);
     assert.equal(success.status, 200);
     assert.deepEqual(await success.json(), { created: 1, updated: 1 });
-    const documents = await client.query('SELECT "personal_account", "details", "details_enabled" FROM "GN_primary_documents" ORDER BY "GN_primary_document_id"');
+    const documents = await client.query('SELECT "personal_account", "details", "details_enabled", "general_note" FROM "GN_primary_documents" ORDER BY "GN_primary_document_id"');
     assert.deepEqual(documents.rows, [
-      { personal_account: 'new', details: 'hidden', details_enabled: true },
-      { personal_account: '', details: '', details_enabled: false },
+      { personal_account: 'new', details: 'hidden', details_enabled: true, general_note: 'Общее примечание' },
+      { personal_account: '', details: '', details_enabled: false, general_note: '' },
     ]);
     assert.deepEqual((await client.query('SELECT * FROM "GN_primary_document_objects" ORDER BY "primary_document_id"')).rows,
       [{ primary_document_id: 1, object_id: 10 }, { primary_document_id: 2, object_id: 11 }]);
@@ -146,7 +176,23 @@ test('batch import creates and updates atomically without changing hidden fields
     ]);
     assert.equal(duplicate.status, 400);
     assert.match((await duplicate.json() as { error: string }).error, /Строка 3/);
-    assert.equal((await submit('january', [{ rowNumber: 2, fields: { note: 'a' } }])).status, 400);
+    const january = await submit('january', [{ rowNumber: 2, id: 1, fields: { note: 'January' } }]);
+    assert.equal(january.status, 200);
+    const updateMarch = await fetch(`http://127.0.0.1:${address.port}/api/primary/month/march`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documents: [{ id: 1, amountWithVat: 50, sedLaunched: true, acceptedIn1C: false, note: 'March' }] }),
+    });
+    assert.equal(updateMarch.status, 200);
+    const addedMonths = await client.query(
+      'SELECT "document_month", "amount_with_vat", "note" FROM "GN_primary_document_months" WHERE "primary_document_id" = 1 ORDER BY "document_month"',
+    );
+    assert.deepEqual(addedMonths.rows, [
+      { document_month: 'january', amount_with_vat: null, note: 'January' },
+      { document_month: 'march', amount_with_vat: '50', note: 'March' },
+      { document_month: 'november', amount_with_vat: '200', note: 'other month' },
+      { document_month: 'october', amount_with_vat: null, note: 'old note' },
+    ]);
+    assert.equal((await submit('invalid', [{ rowNumber: 2, fields: { note: 'a' } }])).status, 400);
   } finally {
     if (server) await new Promise<void>((resolve, reject) => server!.close((error) => error ? reject(error) : resolve()));
     if (previousOptions === undefined) delete process.env.PGOPTIONS;

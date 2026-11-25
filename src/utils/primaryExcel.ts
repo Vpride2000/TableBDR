@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx'
 import type { PrimaryImportFields, PrimaryImportRecord } from '../../shared/primaryExcel'
 import { getBdrContractorIds, type BdrOption } from './primaryBdr'
 
@@ -21,16 +22,23 @@ type References = {
 
 export const PRIMARY_EXCEL_FIELDS: Array<{ key: PrimaryExcelField; label: string }> = [
   { key: 'id', label: 'ID' },
-  { key: 'department', label: 'Подразделение записи' },
-  { key: 'objects', label: 'Объект' },
-  { key: 'contractor', label: 'Контрагенты' },
-  { key: 'contract', label: 'Договор' },
   { key: 'personalAccount', label: 'Лицевой счет' },
   { key: 'amountWithVat', label: 'Сумма с НДС' },
-  { key: 'sedLaunched', label: 'Запущен в СЭД' },
-  { key: 'acceptedIn1C', label: 'Принято на учет в 1С' },
   { key: 'note', label: 'Примечание' },
 ]
+
+export function defaultPrimaryExcelMapping(header: unknown[]): PrimaryExcelMapping {
+  const id = header.findIndex((value) => String(value ?? '').trim() === 'ID')
+  return id === -1 ? {} : { id }
+}
+
+export function readPrimaryExcelWorkbook(data: ArrayBuffer): XLSX.WorkBook {
+  const bytes = new Uint8Array(data)
+  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b || bytes[2] !== 0x03 || bytes[3] !== 0x04) {
+    throw new Error('Файл не является корректным XLSX')
+  }
+  return XLSX.read(bytes, { type: 'array' })
+}
 
 export function primaryContractLabel(contract: Lookup): string {
   if (!contract.date) return contract.label

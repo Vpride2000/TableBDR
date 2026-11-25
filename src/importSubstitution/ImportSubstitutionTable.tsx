@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { formatHttpError, formatErrorMessage } from '../utils/httpUtils'
+import { startColumnResize as startTableColumnResize } from '../utils/columnResize'
 import ExcelActionToolbar from '../components/ExcelActionToolbar'
 
 type Row = Record<string, unknown>;
@@ -85,26 +86,9 @@ export default function ImportSubstitutionTable(): React.ReactElement {
   }
 
   function startColumnResize(event: React.PointerEvent<HTMLSpanElement>, column: string): void {
-    event.preventDefault();
-    event.stopPropagation();
-    const header = event.currentTarget.closest('th');
-    if (!header) return;
-
-    const startX = event.clientX;
-    const startWidth = header.getBoundingClientRect().width;
-    const resizeColumn = (moveEvent: PointerEvent): void => {
-      setColumnWidths((previous) => ({
-        ...previous,
-        [column]: Math.max(60, startWidth + moveEvent.clientX - startX),
-      }));
-    };
-    const stopResizing = (): void => {
-      window.removeEventListener('pointermove', resizeColumn);
-      window.removeEventListener('pointerup', stopResizing);
-    };
-
-    window.addEventListener('pointermove', resizeColumn);
-    window.addEventListener('pointerup', stopResizing);
+    startTableColumnResize(event, 60, (width) => {
+      setColumnWidths((previous) => ({ ...previous, [column]: width }));
+    });
   }
 
   function loadData(): Promise<void> {

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { aggregateSatelliteRowsByMac, parseSatelliteRowsFromBuffer, type SatelliteRow } from './satelliteXml'
+import { aggregateSatelliteRowsByMac, parseSatelliteRowsFromBuffer } from './satelliteXml'
+import { parseFiniteNumericValue as parseAmount } from '../utils/numericValues'
 
 interface Satellite {
   GN_satellite_id: number
@@ -110,12 +111,6 @@ export default function SatellitesControlPage() {
 
   function normalizeMacKey(value: string): string {
     return (value ?? '').replace(/[^0-9a-fA-F]/g, '').toUpperCase()
-  }
-
-  function parseAmount(value: string | number): number {
-    const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
-    const numeric = Number(normalized)
-    return Number.isFinite(numeric) ? numeric : 0
   }
 
   function normalizeStatus(value: string | null | undefined): SatelliteMonthStatus {
@@ -583,8 +578,7 @@ export default function SatellitesControlPage() {
         const message = err instanceof Error ? err.message : 'Не удалось загрузить данные'
         setError(message)
       } finally {
-        if (!isActive) return
-        setLoading(false)
+        if (isActive) setLoading(false)
       }
     }
 

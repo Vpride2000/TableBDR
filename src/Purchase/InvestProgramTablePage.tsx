@@ -1,28 +1,13 @@
 import { useEffect, useState } from 'react'
 import { formatHttpError } from '../utils/httpUtils'
+import { fetchReference } from '../utils/referenceRequests'
+import { mapLookupOptions, type LookupOption } from '../utils/lookupOptions'
 import PurchaseStateTable from './PurchaseStateTable'
 
 // Вкладка «Закупки» в разделе «Оборудование»: таблицы «Состояние закупок ОНМ/ПЭН» строятся на данных
 // раздела «Импортозамещение» (Год = 2026, без суммирования), свёрнуты по умолчанию
 // и грузят строки лениво при раскрытии. Таблица «Доступно для заказа» открывается
 // в отдельном popup-окне.
-type LookupOption = { value: string; label: string }
-
-/**
- * Преобразует массив строк справочника в список опций для select.
- */
-function mapLookupOptions(
-  rows: Array<Record<string, unknown>>,
-  valueKey: string,
-  labelKey: string
-): LookupOption[] {
-  return rows.map((row) => {
-    const value = String(row[valueKey] ?? '')
-    const label = String(row[labelKey] ?? '')
-    return { value, label }
-  })
-}
-
 function openEquipmentOrderWindow(): void {
   const popup = window.open(
     `${window.location.pathname}#equipment-order-window`,
@@ -45,7 +30,7 @@ export default function InvestProgramTablePage() {
 
       try {
         const [contractorRes, ogruzRes] = await Promise.all([
-          fetch('/api/gn/contractors'),
+          fetchReference('contractors'),
           fetch('/api/gn/invest-ogruz-rekvizit'),
         ])
 

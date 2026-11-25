@@ -1,6 +1,8 @@
 // Общая логика сводной таблицы импортозамещения:
 // суммирование количества ТКО по классификациям и расчет доли «РФ в реестре».
 
+import { parseNumericValue } from '../utils/numericValues';
+
 export const TKO_CLASSIFICATIONS = ['РФ НЕ в реестре', 'Импорт', 'РФ в реестре'] as const;
 export type TkoClassification = (typeof TKO_CLASSIFICATIONS)[number];
 export type TkoSummarySortDirection = 'asc' | 'desc';
@@ -16,16 +18,6 @@ export interface TkoSummaryRow {
   total: number;
   withdrawnImportedTko: number;
   registryPercentage: number;
-}
-
-function parseNumericValue(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    const normalized = value.replace(/\s+/g, '').replace(',', '.');
-    const parsed = Number(normalized);
-    return Number.isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
 }
 
 export function buildSummaryByField(

@@ -1,13 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { formatErrorMessage, formatHttpError } from '../utils/httpUtils'
+import { startColumnResize as startTableColumnResize } from '../utils/columnResize'
+import { parseFiniteNumericValue as parseQuantity } from '../utils/numericValues'
 import ExcelActionToolbar from '../components/ExcelActionToolbar'
+import { changedEquipmentColumns, EQUIPMENT_EXCEL_COLUMNS } from './equipmentHistory'
+import { createEquipmentWorkbook } from './equipmentExcel'
+import EquipmentOptionPicker from './EquipmentOptionPicker'
 
 type Row = Record<string, unknown>;
 type SortDirection = 'asc' | 'desc';
 type SelectOption = { value: string; label: string };
 type EquipmentChange =
-  | { type: 'update'; rowId: number; before: Row }
+  | { type: 'update'; rowId: number; before: Row; columns?: string[] }
   | { type: 'create' | 'delete'; rowId: number };
 
 interface EquipmentHistoryEntry {
@@ -81,38 +86,6 @@ const COLUMNS: EquipmentColumn[] = [
   'Примечание',
 ];
 
-const EQUIPMENT_EXCEL_COLUMNS = [
-  'Подразделение',
-  'Код ТКО',
-  'Наименование ТКО',
-  'Тип',
-  'Вендор ТКО',
-  'Классификация ТКО',
-  'ЕРРП',
-  'ЕРМТР',
-  'Регистрационный номер ТКО',
-  'Количество',
-  'Выведен из эксплуатации',
-  'Инвентарный',
-  'ИМЯ',
-  'СЕРИЙНЫЙ НОМЕР',
-  'Замещенное импортное ТКО',
-  'Кол-во выводенного импортного ТКО',
-  'Статья затрат ТКО',
-  'СЧЕТ УЧЕТА',
-  'Статус закупки',
-  'Платеж ТР без НДС',
-  'Год',
-  'Примечание',
-  'ЭКСПЛ',
-  'ПЛАН',
-  'ГРУППА',
-  'ОБЪЕКТ',
-  'Поставщик',
-  'Огрузочный реквизит',
-  'оплата',
-];
-
 function compareValues(left: unknown, right: unknown): number {
   const leftNumber = Number(left);
   const rightNumber = Number(right);
@@ -121,12 +94,6 @@ function compareValues(left: unknown, right: unknown): number {
     return leftNumber - rightNumber;
   }
   return String(left ?? '').localeCompare(String(right ?? ''), 'ru', { numeric: true, sensitivity: 'base' });
-}
-
-function parseQuantity(value: unknown): number {
-  const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.');
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function formatQuantity(value: number): string {
@@ -176,6 +143,7 @@ function readLegacyEquipmentHistory(): { entries: EquipmentHistoryEntry[]; error
       && entry.changes.every((change) => (
         isRecord(change)
         && Number.isSafeInteger(change.rowId)
+        && (change.columns === undefined || (Array.isArray(change.columns) && change.columns.every((column) => typeof column === 'string')))
         && (change.type === 'create'
           || change.type === 'delete'
           || (change.type === 'update' && isRecord(change.before)))
@@ -609,42 +577,6 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
     return column === 'ОБЪЕКТ' || column === 'Вендор ТКО';
   }
 
-  function renderGroupPicker(value: unknown, onChange: (nextValue: string) => void): React.ReactElement {
-    return (
-      <div className="equipment-group-picker" role="group" aria-label="Группа">
-        {SELECT_VALUE_OPTIONS['ГРУППА'].map((option) => (
-          <button
-            key={option}
-            type="button"
-            className={String(value ?? '') === option ? 'equipment-group-picker__option equipment-group-picker__option--active' : 'equipment-group-picker__option'}
-            aria-pressed={String(value ?? '') === option}
-            onClick={() => onChange(option)}
-          >
-            {option}
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  function renderCompactPicker(column: 'ЭКСПЛ' | 'ПЛАН', value: unknown, onChange: (nextValue: string) => void): React.ReactElement {
-    return (
-      <div className="equipment-group-picker equipment-group-picker--wide" role="group" aria-label={column}>
-        {SELECT_VALUE_OPTIONS[column].map((option) => (
-          <button
-            key={option}
-            type="button"
-            className={String(value ?? '') === option ? 'equipment-group-picker__option equipment-group-picker__option--active' : 'equipment-group-picker__option'}
-            aria-pressed={String(value ?? '') === option}
-            onClick={() => onChange(option)}
-          >
-            {option}
-          </button>
-        ))}
-      </div>
-    );
-  }
-
   function formatQuantityDetails(row: EquipmentSummaryRow): string {
     if (disableQuantitySumming) return formatIntegerQuantity(parseQuantity(row.quantityValues[0] ?? 0));
 
@@ -670,21 +602,9 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
   }
 
   function startColumnResize(event: React.PointerEvent<HTMLSpanElement>, column: EquipmentColumn): void {
-    event.preventDefault();
-    event.stopPropagation();
-    const header = event.currentTarget.closest('th');
-    if (!header) return;
-    const startX = event.clientX;
-    const startWidth = header.getBoundingClientRect().width;
-    const resizeColumn = (moveEvent: PointerEvent): void => {
-      setColumnWidths((previous) => ({ ...previous, [column]: Math.max(48, startWidth + moveEvent.clientX - startX) }));
-    };
-    const stopResizing = (): void => {
-      window.removeEventListener('pointermove', resizeColumn);
-      window.removeEventListener('pointerup', stopResizing);
-    };
-    window.addEventListener('pointermove', resizeColumn);
-    window.addEventListener('pointerup', stopResizing);
+    startTableColumnResize(event, 48, (width) => {
+      setColumnWidths((previous) => ({ ...previous, [column]: width }));
+    });
   }
 
   function startEdit(row: EquipmentSummaryRow): void {
@@ -756,6 +676,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         type: 'update',
         rowId: editingRowId,
         before: { ...previousRow },
+        columns: changedEquipmentColumns(previousRow, draft),
       }]);
       const refreshed = await fetch('/api/import-substitution', { cache: 'no-store' });
       if (!refreshed.ok) throw new Error(formatHttpError(refreshed.status));
@@ -840,7 +761,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
       }
       await recordHistory(`Копирование строки №${editingRowId}`, [
         { type: 'create', rowId: copiedRowId },
-        { type: 'update', rowId: editingRowId, before: { ...sourceRow } },
+        { type: 'update', rowId: editingRowId, before: { ...sourceRow }, columns: changedEquipmentColumns(sourceRow, { ...draft, 'Количество': sourceQuantity - quantityToCopy }) },
       ]);
       sourceUpdated = false;
 
@@ -855,6 +776,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
           type: 'update',
           rowId: editingRowId,
           before: { ...sourceRow },
+          columns: changedEquipmentColumns(sourceRow, draft),
         }]);
       }
       setCopyError(requestError instanceof Error ? requestError.message : 'Не удалось скопировать строку');
@@ -930,24 +852,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
   }
 
   function exportToExcel(): void {
-    const header = ['№', ...EQUIPMENT_EXCEL_COLUMNS];
-    const rows = scopedData.map((row) => [
-      row['GN_import_substitution_id'] ?? '',
-      ...EQUIPMENT_EXCEL_COLUMNS.map((column) => {
-        const value = row[column];
-        return Array.isArray(value) ? JSON.stringify(value) : value ?? '';
-      }),
-    ]);
-    const worksheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
-    worksheet['!autofilter'] = {
-      ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: header.length - 1 } }),
-    };
-    worksheet['!cols'] = header.map((title, index) => ({
-      wch: Math.min(44, Math.max(12, ...[title, ...rows.map((row) => String(row[index] ?? ''))].map((value) => value.length + 2))),
-    }));
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Учет оборудования');
-    XLSX.writeFile(workbook, 'Учет_оборудования.xlsx');
+    XLSX.writeFile(createEquipmentWorkbook(scopedData), 'Учет_оборудования.xlsx');
   }
 
   async function importFromExcel(file: File): Promise<void> {
@@ -1002,7 +907,7 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
         if (shouldUpdate) {
           const previousRow = data.find((item) => Number(item['GN_import_substitution_id']) === rowId);
           if (!previousRow) throw new Error(`Строка ${index + 2}: не удалось сохранить исходное состояние`);
-          changes.push({ type: 'update', rowId, before: { ...previousRow } });
+          changes.push({ type: 'update', rowId, before: { ...previousRow }, columns: changedEquipmentColumns(previousRow, payload) });
         } else {
           const createdRow = await response.json() as Row;
           const createdRowId = Number(createdRow['GN_import_substitution_id']);
@@ -1103,6 +1008,15 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
                     <li key={entry.id}>
                       <div className="equipment-change-history__details">
                         <span>{entry.label}</span>
+                        {entry.changes.map((change, index) => (
+                          <span key={`${change.type}-${change.rowId}-${index}`}>
+                            Строка №{change.rowId}: {change.type === 'update'
+                              ? change.columns === undefined
+                                ? 'столбцы не сохранены'
+                                : change.columns.length > 0 ? change.columns.join(', ') : 'изменений столбцов нет'
+                              : change.type === 'create' ? 'строка добавлена' : 'строка удалена'}
+                          </span>
+                        ))}
                         <time dateTime={new Date(entry.createdAt).toISOString()}>
                           {new Date(entry.createdAt).toLocaleString('ru-RU')}
                         </time>
@@ -1185,7 +1099,15 @@ export default function EquipmentAccountingTable({ requiredType }: { requiredTyp
               && column !== 'Классификация ТКО').map((column) => (
               <label key={column}>
                 <span>{column}</span>
-                {column === 'ГРУППА' ? renderGroupPicker(newRow[column], (value) => setNewRow((previous) => ({ ...previous, [column]: value }))) : (column === 'ЭКСПЛ' || column === 'ПЛАН') ? renderCompactPicker(column, newRow[column], (value) => setNewRow((previous) => ({ ...previous, [column]: value }))) : isSelectColumn(column) ? (
+                {column === 'ГРУППА' || column === 'ЭКСПЛ' || column === 'ПЛАН' ? (
+                  <EquipmentOptionPicker
+                    label={column === 'ГРУППА' ? 'Группа' : column}
+                    value={newRow[column]}
+                    options={SELECT_VALUE_OPTIONS[column]}
+                    wide={column !== 'ГРУППА'}
+                    onChange={(value) => setNewRow((previous) => ({ ...previous, [column]: value }))}
+                  />
+                ) : isSelectColumn(column) ? (
                   <>
                     {isSearchableCreateColumn(column) ? (
                       <input

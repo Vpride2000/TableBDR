@@ -1,5 +1,9 @@
 import { Fragment, useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { formatHttpError } from '../utils/httpUtils'
+import { fetchReferences } from '../utils/referenceRequests'
+import { startColumnResize } from '../utils/columnResize'
+import { displayLookupLabel } from '../utils/lookupOptions'
+import { formatDateDisplay, normalizeDateValue } from './contractDates'
 
 // Страница управления договорами.
 // Загружает справочники, отображает список договоров и позволяет сохранять изменения.
@@ -140,31 +144,6 @@ function toRow(data: Row): ContractRow {
   }
 }
 
-function displayLookupLabel(options: LookupOption[], value: unknown): string {
-  const normalizedValue = String(value ?? '')
-  return options.find((option) => option.value === normalizedValue)?.label ?? normalizedValue
-}
-
-function normalizeDateValue(value: unknown): string {
-  if (value instanceof Date) {
-    return value.toISOString().slice(0, 10)
-  }
-
-  const normalizedValue = String(value ?? '')
-  if (normalizedValue === '') return ''
-  return normalizedValue.length >= 10 ? normalizedValue.slice(0, 10) : normalizedValue
-}
-
-function formatDateDisplay(value: string): string {
-  if (!value) return value
-  // Получаем только часть с датой (YYYY-MM-DD)
-  const dateOnly = value.slice(0, 10)
-  if (dateOnly.length < 10) return value
-  const [year, month, day] = dateOnly.split('-')
-  const shortYear = year.slice(-2)
-  return `${day}.${month}.${shortYear}`
-}
-
 function parseIsoDate(value: string): Date | null {
   if (!value) return null
 
@@ -277,12 +256,23 @@ function buildContractTermVisual(fromValue: string, toValue: string): ContractTe
 }
 
 type SortState = { key: string | null; direction: 'asc' | 'desc' }
+type PendingDocumentEditableField = 'number' | 'date' | 'description' | 'amount'
+type PendingDocument = {
+  id: string
+  type: 'contract' | 'agreement'
+  number: string
+  date: string
+  description: string
+  amount?: number
+  contractName?: string
+  contractId?: number
+  department?: string
+}
 
 export default function ContractsPage({ onOpenContract }: { onOpenContract: (contractId: number) => void }) {
   const [rows, setRows] = useState<ContractRow[]>([])
   const [contractorOptions, setContractorOptions] = useState<LookupOption[]>([])
   const [dogovorOptions, setDogovorOptions] = useState<LookupOption[]>([])
-  const [departmentOptions, setDepartmentOptions] = useState<LookupOption[]>([])
   const [agreementsByContract, setAgreementsByContract] = useState<Record<number, ContractAgreement[]>>({})
   const [expandedContracts, setExpandedContracts] = useState<Set<number>>(new Set())
   const [archiveExpanded, setArchiveExpanded] = useState(false)
@@ -296,27 +286,9 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
   const [saveError, setSaveError] = useState<string | null>(null)
   const [editingAgreementId, setEditingAgreementId] = useState<number | null>(null)
   const [draftAgreement, setDraftAgreement] = useState<ContractAgreement | null>(null)
-  const [editingPendingDocId, setEditingPendingDocId] = useState<string | null>(null)
-  const [draftPendingDoc, setDraftPendingDoc] = useState<{
-    id: string
-    type: 'contract' | 'agreement'
-    number: string
-    date: string
-    description: string
-    amount?: number
-    contractName?: string
-    department?: string
-  } | null>(null)
-  const [pendingDocuments, setPendingDocuments] = useState<Array<{
-    id: string
-    type: 'contract' | 'agreement'
-    number: string
-    date: string
-    description: string
-    amount?: number
-    contractName?: string
-    department?: string
-  }>>([])
+  const [editingPendingDocId] = useState<string | null>(null)
+  const [draftPendingDoc, setDraftPendingDoc] = useState<PendingDocument | null>(null)
+  const [pendingDocuments, setPendingDocuments] = useState<PendingDocument[]>([])
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>(() => readSavedStringRecord(CONTRACT_FILTERS_STORAGE_KEY))
   const [activeColumnWidths, setActiveColumnWidths] = useState<Record<string, number>>(readSavedColumnWidths)
 
@@ -337,26 +309,9 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
   }, [activeColumnWidths])
 
   function startActiveColumnResize(event: ReactPointerEvent<HTMLSpanElement>, columnKey: string): void {
-    event.preventDefault()
-    event.stopPropagation()
-    const header = event.currentTarget.closest('th')
-    if (!header) return
-
-    const startX = event.clientX
-    const startWidth = header.getBoundingClientRect().width
-    const resizeColumn = (moveEvent: PointerEvent): void => {
-      setActiveColumnWidths((previous) => ({
-        ...previous,
-        [columnKey]: Math.max(45, startWidth + moveEvent.clientX - startX),
-      }))
-    }
-    const stopResizing = (): void => {
-      window.removeEventListener('pointermove', resizeColumn)
-      window.removeEventListener('pointerup', stopResizing)
-    }
-
-    window.addEventListener('pointermove', resizeColumn)
-    window.addEventListener('pointerup', stopResizing)
+    startColumnResize(event, 45, (width) => {
+      setActiveColumnWidths((previous) => ({ ...previous, [columnKey]: width }))
+    })
   }
 
   useEffect(() => {
@@ -365,13 +320,11 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
       setError(null)
 
       try {
-        const [rowsRes, contractorRes, dogovorRes, agreementsRes, bdrRes, deptRes] = await Promise.all([
+        const [rowsRes, contractorRes, dogovorRes, agreementsRes, bdrRes] = await Promise.all([
           fetch('/api/gn/contracts?includeArchive=false'),
-          fetch('/api/gn/contractors'),
-          fetch('/api/gn/dogovors'),
+          ...fetchReferences('contractors', 'dogovors'),
           fetch('/api/gn/contract-additional-agreements'),
           fetch('/api/gn/bdr'),
-          fetch('/api/gn/departments'),
         ])
 
         if (!rowsRes.ok) throw new Error(formatHttpError(rowsRes.status))
@@ -385,7 +338,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
         const dogovors = (await dogovorRes.json()) as Row[]
         const agreements = (await agreementsRes.json()) as ContractAgreement[]
         const bdrData = (await bdrRes.json()) as Row[]
-        const depts = deptRes.ok ? (await deptRes.json()) as Row[] : []
 
         // Build a map of contract name to contract id (use first occurrence only)
         const contractNameToId: Record<string, number> = {}
@@ -426,17 +378,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
         })
 
         // Filter documents pending approval
-        const pendingDocs: Array<{
-          id: string
-          type: 'contract' | 'agreement'
-          number: string
-          date: string
-          description: string
-          amount?: number
-          contractName?: string
-          contractId?: number
-          department?: string
-        }> = []
+        const pendingDocs: PendingDocument[] = []
 
         // Add contracts pending approval
         nextRows.forEach((contract) => {
@@ -450,7 +392,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
               date: String(contract.GN_contract_sed_launch_date || ''),
               description: `Договор: ${contractName}`,
               contractName,
-              contractId: contract.GN_contract_id,
+              contractId,
               department: departmentsByContract[contractId] || '',
             })
           }
@@ -483,7 +425,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
         setRows(converted)
         setContractorOptions(mapLookupOptions(contractors, 'GN_c_id', 'GN_contarctor'))
         setDogovorOptions(mapLookupOptions(dogovors, 'GN_dgv_id', 'GN_dogovor'))
-        setDepartmentOptions(depts.map((d) => ({ value: String(d.GN_department ?? ''), label: String(d.GN_department ?? '') })))
         setAgreementsByContract(groupedAgreements)
         setPendingDocuments(pendingDocs)
       } catch (err) {
@@ -519,15 +460,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
 
   // Update pending documents when data changes
   useEffect(() => {
-    const pendingDocs: Array<{
-      id: string
-      type: 'contract' | 'agreement'
-      number: string
-      date: string
-      description: string
-      amount?: number
-      contractName?: string
-    }> = []
+    const pendingDocs: PendingDocument[] = []
 
     // Add contracts pending approval
     rows.forEach((contract) => {
@@ -778,7 +711,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
   }
 
 
-  function updatePendingDocDraft(field: string, value: string | number): void {
+  function updatePendingDocDraft(field: PendingDocumentEditableField, value: string | number): void {
     setDraftPendingDoc((prevDoc) => {
       if (!prevDoc) return prevDoc
 
@@ -790,9 +723,9 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
     })
   }
 
-  function getPendingDocDraftValue(field: string): string {
+  function getPendingDocDraftValue(field: PendingDocumentEditableField): string {
     if (!draftPendingDoc) return ''
-    const value = (draftPendingDoc as any)[field]
+    const value = draftPendingDoc[field]
     if (field === 'amount') {
       return String(value ?? 0)
     }
@@ -881,7 +814,7 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
           id,
           type: 'contract',
           number: contractName,
-          date: created.GN_contract_sed_launch_date || new Date().toISOString().slice(0, 10),
+          date: String(created.GN_contract_sed_launch_date || new Date().toISOString().slice(0, 10)),
           description: `Договор: ${contractName}`,
           contractName,
         },
@@ -1201,22 +1134,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                           )
                         }
 
-                        if (column.kind === 'status') {
-                          const statusValue = String(row[column.key as keyof ContractRow] ?? 'действующий')
-                          const statusClass = statusValue === 'на согласовании'
-                            ? 'status-cell status-cell--pending'
-                            : statusValue === 'действующий'
-                              ? 'status-cell status-cell--active'
-                              : statusValue === 'не действующий'
-                                ? 'status-cell status-cell--inactive'
-                                : 'status-cell'
-                          return (
-                            <td key={column.key} className={statusClass}>
-                              <span className={`invest-program-cell-text status-label ${statusClass}`}>{statusValue}</span>
-                            </td>
-                          )
-                        }
-
                         const value = String(row[column.key as keyof ContractRow] ?? '')
                         const narrowClass = column.narrow ? 'contracts-cell-narrow' : ''
                         return (
@@ -1506,22 +1423,6 @@ export default function ContractsPage({ onOpenContract }: { onOpenContract: (con
                                 return (
                                   <td key={column.key}>
                                     <span className="invest-program-cell-text">{formatDateDisplay(value)}</span>
-                                  </td>
-                                )
-                              }
-
-                              if (column.kind === 'status') {
-                                const statusValue = String(row[column.key as keyof ContractRow] ?? 'действующий')
-                                const statusClass = statusValue === 'на согласовании'
-                                  ? 'status-cell status-cell--pending'
-                                  : statusValue === 'действующий'
-                                    ? 'status-cell status-cell--active'
-                                    : statusValue === 'не действующий'
-                                      ? 'status-cell status-cell--inactive'
-                                      : 'status-cell'
-                                return (
-                                  <td key={column.key} className={statusClass}>
-                                    <span className={`invest-program-cell-text status-label ${statusClass}`}>{statusValue}</span>
                                   </td>
                                 )
                               }

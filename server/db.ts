@@ -189,11 +189,38 @@ export async function ensureBdrPersonalAccountColumn(client: Client): Promise<vo
   `);
 }
 
+export async function ensureBdrOptionalCreationColumns(client: Client): Promise<void> {
+  await client.query(`
+    ALTER TABLE "GN_bdr"
+      ALTER COLUMN "GN_bdr_kol-vo" DROP NOT NULL,
+      ALTER COLUMN "GN_bdr_edin.limit" DROP NOT NULL,
+      ALTER COLUMN "GN_bdr_limit" DROP NOT NULL
+  `);
+}
+
 export async function ensureBdrExpenseDepartmentColumn(client: Client): Promise<void> {
   await client.query(`
     ALTER TABLE "GN_bdr"
       ADD COLUMN IF NOT EXISTS "GN_bdr_expense_department_FK" INTEGER
         REFERENCES "GN_department"("GN_Dep_id") ON DELETE SET NULL
+  `);
+}
+
+export async function ensureBdrObjectsTable(client: Client): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS "GN_bdr_objects" (
+      "GN_bdr_ID" INTEGER NOT NULL REFERENCES "GN_bdr"("GN_bdr_ID") ON DELETE CASCADE,
+      "GN_do_id" INTEGER NOT NULL REFERENCES "GN_departament_object"("GN_do_id") ON DELETE RESTRICT,
+      "sort_order" INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY ("GN_bdr_ID", "GN_do_id")
+    )
+  `);
+  await client.query(`
+    INSERT INTO "GN_bdr_objects" ("GN_bdr_ID", "GN_do_id", "sort_order")
+    SELECT b."GN_bdr_ID", b."GN_departament_object_FK", 0
+    FROM "GN_bdr" b
+    WHERE b."GN_departament_object_FK" IS NOT NULL
+    ON CONFLICT ("GN_bdr_ID", "GN_do_id") DO NOTHING
   `);
 }
 
@@ -208,6 +235,7 @@ export async function ensurePrimaryDocumentsTables(client: Client): Promise<void
       "amount_with_vat" NUMERIC(15, 2) NOT NULL DEFAULT 0,
       "details" TEXT NOT NULL DEFAULT '',
       "details_enabled" BOOLEAN NOT NULL DEFAULT FALSE,
+      "general_note" TEXT NOT NULL DEFAULT '',
       "edo_arrival_date" DATE,
       "sed_launch_date" DATE,
       "sed_launched" BOOLEAN NOT NULL DEFAULT FALSE,
@@ -249,6 +277,11 @@ export async function ensurePrimaryDocumentsTables(client: Client): Promise<void
       "note" TEXT NOT NULL DEFAULT '',
       PRIMARY KEY ("primary_document_id", "document_month")
     )
+  `);
+
+  await client.query(`
+    ALTER TABLE "GN_primary_documents"
+      ADD COLUMN IF NOT EXISTS "general_note" TEXT NOT NULL DEFAULT ''
   `);
 
   await client.query(`

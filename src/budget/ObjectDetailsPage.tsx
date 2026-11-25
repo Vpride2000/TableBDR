@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { formatHttpError } from '../utils/httpUtils'
+import { formatBdrObjectNames, getBdrObjectNames } from './bdrObjects'
 
 type Row = Record<string, unknown>
 
@@ -49,16 +50,17 @@ export default function ObjectDetailsPage({ rowId, onBack }: ObjectDetailsPagePr
           throw new Error('Строка с указанным объектом не найдена')
         }
 
-        const objectValue = String(currentRow['Объект'] ?? '').trim()
-        if (!objectValue) {
+        const objectNames = getBdrObjectNames(currentRow)
+        if (objectNames.length === 0) {
           throw new Error('У выбранной строки не задан объект')
         }
+        const selectedObjectNames = new Set(objectNames)
 
         const filteredRows = allRows.filter(
-          (row) => String(row['Объект'] ?? '').trim() === objectValue
+          (row) => getBdrObjectNames(row).some((name) => selectedObjectNames.has(name))
         )
 
-        setObjectName(objectValue)
+        setObjectName(formatBdrObjectNames(currentRow))
         setRows(filteredRows)
         setSummary({
           contractors: buildSummary(filteredRows, 'Контрагент'),

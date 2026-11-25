@@ -1,19 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatHttpError } from '../utils/httpUtils';
+import { parseNumericValue } from '../utils/numericValues';
 
 // Попап со сводом БДР по двум выбранным полям.
 
 type Row = Record<string, unknown>;
-
-function parseNumericValue(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    const normalized = value.replace(/\s+/g, '').replace(',', '.');
-    const parsed = Number(normalized);
-    return Number.isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
-}
 
 const SUMMARY_NUMBER_FORMATTER = new Intl.NumberFormat('ru-RU');
 const BDR_SUMMARY_COLUMNS = [

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import * as XLSX from 'xlsx';
 import { formatHttpError } from './utils/httpUtils';
+import { startColumnResize } from './utils/columnResize';
 // Страница справочника GN.
 // Отображает разделы справочных таблиц с возможностью разворачивать
 // редактировать отдельные записи и управлять строками.
@@ -405,26 +406,9 @@ function DataTable({
   }
 
   function startDogovorColumnResize(event: ReactPointerEvent<HTMLSpanElement>, column: string): void {
-    event.preventDefault();
-    event.stopPropagation();
-    const header = event.currentTarget.closest('th');
-    if (!header) return;
-
-    const startX = event.clientX;
-    const startWidth = header.getBoundingClientRect().width;
-    const resizeColumn = (moveEvent: PointerEvent): void => {
-      setDogovorColumnWidths((previous) => ({
-        ...previous,
-        [column]: Math.max(48, startWidth + moveEvent.clientX - startX),
-      }));
-    };
-    const stopResizing = (): void => {
-      window.removeEventListener('pointermove', resizeColumn);
-      window.removeEventListener('pointerup', stopResizing);
-    };
-
-    window.addEventListener('pointermove', resizeColumn);
-    window.addEventListener('pointerup', stopResizing);
+    startColumnResize(event, 48, (width) => {
+      setDogovorColumnWidths((previous) => ({ ...previous, [column]: width }));
+    });
   }
 
   function updateDraft(column: string, value: string): void {
@@ -781,6 +765,9 @@ function DataTable({
         )}
         {section.entity === 'cellular-identifiers' && (
           <>
+            <button type="button" className="page-action-btn page-action-btn--secondary" onClick={exportIdentifiersToExcel}>
+              Выгрузить в Excel
+            </button>
             <label className="page-action-btn page-action-btn--secondary" style={{ cursor: importing ? 'default' : 'pointer' }}>
               {importing ? 'Загрузка...' : 'Загрузить из Excel'}
               <input

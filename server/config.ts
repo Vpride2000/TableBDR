@@ -211,6 +211,15 @@ export const BDR_SELECT_FIELDS = `SELECT
   pao."PAO__budget_network_item"    AS "Статья бюджета УС",
   dep."GN_department"               AS "Подразделение",
   obj."GN_departament_object"       AS "Объект",
+  COALESCE(
+    (
+      SELECT ARRAY_AGG(selected_object."GN_departament_object" ORDER BY bdr_object."sort_order", bdr_object."GN_do_id")
+      FROM "GN_bdr_objects" bdr_object
+      JOIN "GN_departament_object" selected_object ON selected_object."GN_do_id" = bdr_object."GN_do_id"
+      WHERE bdr_object."GN_bdr_ID" = b."GN_bdr_ID"
+    ),
+    ARRAY[obj."GN_departament_object"]::TEXT[]
+  ) AS "Объекты",
   dgv."GN_dogovor"                  AS "Договор",
   b."GN_bdr_personal_account"      AS "Лицевой счет",
   b."GN_bdr_expense_department_FK" AS "На кого расходы ID",

@@ -119,7 +119,7 @@ function splitTariffAndNote(value: string): { tariff: string; tariffNote: string
 
   return {
     tariff,
-    tariffNote: afterTariff.replace(/^[,;:\-]+\s*/, ''),
+    tariffNote: afterTariff.replace(/^[,;:-]+\s*/, ''),
   }
 }
 
@@ -219,12 +219,6 @@ export function parseSatelliteAmount(value: string): number {
   return Number.isFinite(result) ? result : 0
 }
 
-function parseSatelliteQuantity(value: string): number {
-  const normalized = value.replace(/\s+/g, '').replace(',', '.')
-  const result = Number(normalized)
-  return Number.isFinite(result) ? result : 0
-}
-
 function normalizeMacKey(value: string): string {
   return normalizeMacText(value).replace(/[^0-9a-fA-F]/g, '').toUpperCase()
 }
@@ -256,14 +250,14 @@ export function aggregateSatelliteRowsByMac(rows: SatelliteRow[]): SatelliteRow[
       byKey.set(key, {
         row: { ...row },
         total: amount,
-        quantityTotal: parseSatelliteQuantity(row.quantity),
+        quantityTotal: parseSatelliteAmount(row.quantity),
         order: index,
       })
       return
     }
 
     existing.total += amount
-    existing.quantityTotal += parseSatelliteQuantity(row.quantity)
+    existing.quantityTotal += parseSatelliteAmount(row.quantity)
     if (!existing.row.branch && row.branch) existing.row.branch = row.branch
     if (!existing.row.tariff && row.tariff) existing.row.tariff = row.tariff
     if (!existing.row.tariffNote && row.tariffNote) existing.row.tariffNote = row.tariffNote

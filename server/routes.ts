@@ -1,9 +1,11 @@
 import { Express, Request, Response } from 'express';
+import type { Client } from 'pg';
 import { randomUUID } from 'crypto';
 import { createDbClient, toFiniteNumber, buildFallbackCalculationLine } from './db.js';
 import { GN_TABLE_CONFIGS, BDR_SELECT_FIELDS, LimitCalculationLineInput, LimitCalculationLineRow, LimitCalculationResponseLine } from './config.js';
 import { isSafeNoteLink } from '../shared/noteFormatting.js';
 import { personalAccountOptions } from '../shared/personalAccounts.js';
+import { isPrimaryMonth, type PrimaryMonth } from '../shared/primaryMonths.js';
 import type { PrimaryImportFields, PrimaryImportRecord } from '../shared/primaryExcel.js';
 
 // Маршруты backend-сервера.
@@ -24,6 +26,28 @@ function extractNoteText(content: unknown): string {
 function parseNotesId(value: string): number | null {
   const id = Number(value);
   return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function normalizeBdrObjectNames(value: unknown): string[] | null {
+  const values = typeof value === 'string' ? [value] : value;
+  if (!Array.isArray(values) || !values.every((item) => typeof item === 'string')) return null;
+  return [...new Set(values.map((item) => item.trim()).filter(Boolean))];
+}
+
+async function resolveBdrObjectId(client: Client, name: string, departmentId: number): Promise<number> {
+  const result = await client.query<{ id: number }>(
+    `SELECT "GN_do_id" AS id
+     FROM "GN_departament_object"
+     WHERE "GN_departament_object" = $1
+       AND (
+         "GN_department_FK" = $2
+         OR $2 = ANY(COALESCE("GN_department_FKs", ARRAY[]::INTEGER[]))
+       )
+     LIMIT 1`,
+    [name, departmentId]
+  );
+  if (result.rowCount === 0) throw new Error(`Object not found for department: ${name}`);
+  return result.rows[0].id;
 }
 
 function normalizeNotesTitle(value: unknown, allowEmpty = false): string | null {
@@ -2820,6 +2844,8 @@ export function setupRoutes(app: Express): void {
 
     const payload = req.body as Record<string, unknown>;
     const updates: Array<{ column: string; value: unknown }> = [];
+    let selectedDepartmentId: number | null = null;
+    let selectedObjectIds: number[] | null = null;
 
     try {
       await client.query('BEGIN');
@@ -2840,15 +2866,28 @@ export function setupRoutes(app: Express): void {
           'Department'
         );
         updates.push({ column: 'GN_department_FK', value: id });
+        selectedDepartmentId = id;
       }
 
-      if (payload['Объект'] !== undefined) {
-        const id = await resolveLookupId(
-          'SELECT "GN_do_id" AS id FROM "GN_departament_object" WHERE "GN_departament_object" = $1 LIMIT 1',
-          String(payload['Объект']),
-          'Object'
+      if (payload['Объект'] !== undefined || payload['Объекты'] !== undefined) {
+        const objectNames = normalizeBdrObjectNames(
+          payload['Объекты'] !== undefined ? payload['Объекты'] : payload['Объект']
         );
-        updates.push({ column: 'GN_departament_object_FK', value: id });
+        if (!objectNames || objectNames.length === 0) throw new Error('Invalid Объекты');
+        let departmentId = selectedDepartmentId;
+        if (departmentId === null) {
+          const departmentResult = await client.query<{ id: number }>(
+            'SELECT "GN_department_FK" AS id FROM "GN_bdr" WHERE "GN_bdr_ID" = $1',
+            [rowId]
+          );
+          if (departmentResult.rowCount === 0) throw new Error('Row not found');
+          departmentId = departmentResult.rows[0].id;
+        }
+        selectedObjectIds = [];
+        for (const name of objectNames) {
+          selectedObjectIds.push(await resolveBdrObjectId(client, name, departmentId));
+        }
+        updates.push({ column: 'GN_departament_object_FK', value: selectedObjectIds[0] });
       }
 
       if (payload['Договор'] !== undefined) {
@@ -3010,6 +3049,16 @@ export function setupRoutes(app: Express): void {
         return;
       }
 
+      if (selectedObjectIds !== null) {
+        await client.query('DELETE FROM "GN_bdr_objects" WHERE "GN_bdr_ID" = $1', [rowId]);
+        await client.query(
+          `INSERT INTO "GN_bdr_objects" ("GN_bdr_ID", "GN_do_id", "sort_order")
+           SELECT $1, selected.object_id, (selected.ordinality - 1)::INTEGER
+           FROM unnest($2::INTEGER[]) WITH ORDINALITY AS selected(object_id, ordinality)`,
+          [rowId, selectedObjectIds]
+        );
+      }
+
       const result = await client.query(
         `${BDR_SELECT_FIELDS}
          WHERE b."GN_bdr_ID" = $1`,
@@ -3021,6 +3070,11 @@ export function setupRoutes(app: Express): void {
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('Failed to update GN_bdr row', err);
+
+      if (err instanceof Error && err.message === 'Row not found') {
+        res.status(404).json({ error: err.message });
+        return;
+      }
 
       if (err instanceof Error && (err.message.includes('not found') || err.message.includes('Invalid'))) {
         res.status(400).json({ error: err.message });
@@ -3400,6 +3454,7 @@ export function setupRoutes(app: Express): void {
       pao_budget_item,
       department,
       object_name,
+      object_names,
       dogovor,
       contractor,
       budget_item,
@@ -3407,6 +3462,7 @@ export function setupRoutes(app: Express): void {
       ed_izm,
       kol_vo,
       limit,
+      limit_bdr_column,
       bdr25_corr,
       bdr25_corr_kol_vo,
       bdr26,
@@ -3420,25 +3476,36 @@ export function setupRoutes(app: Express): void {
       comments,
     } = req.body;
 
+    const limitBdrColumn = limit_bdr_column ?? 'БДР25';
+    const requestedObjectNames = normalizeBdrObjectNames(object_names === undefined ? object_name : object_names);
     if (
       !pao_budget_item ||
       !department ||
-      !object_name ||
+      !requestedObjectNames ||
+      requestedObjectNames.length === 0 ||
       !dogovor ||
       !contractor ||
       !budget_item ||
-      !predmet_dogovora ||
-      !ed_izm ||
-      kol_vo == null ||
       limit == null ||
-      edin_limit == null
+      limit === '' ||
+      typeof limitBdrColumn !== 'string' ||
+      !new Set(['БДР25', 'БДР25корр', 'БДР26', 'БДР26корр', 'БДР27']).has(limitBdrColumn)
     ) {
       res.status(400).json({ error: 'Invalid payload' });
       return;
     }
 
-    const kolVoNumber = Number(kol_vo);
+    if (
+      (predmet_dogovora != null && typeof predmet_dogovora !== 'string') ||
+      (ed_izm != null && typeof ed_izm !== 'string')
+    ) {
+      res.status(400).json({ error: 'Invalid payload' });
+      return;
+    }
+
+    const kolVoNumber = kol_vo == null || kol_vo === '' ? null : Number(kol_vo);
     const limitNumber = Number(limit);
+    const savedLimit = limitBdrColumn === 'БДР25' ? limitNumber : null;
     const bdr25CorrNumber = bdr25_corr == null || bdr25_corr === '' ? null : Number(bdr25_corr);
     const bdr25CorrQuantityNumber = bdr25_corr_kol_vo == null || bdr25_corr_kol_vo === '' ? null : Number(bdr25_corr_kol_vo);
     const bdr26Number = bdr26 == null || bdr26 === '' ? null : Number(bdr26);
@@ -3447,10 +3514,10 @@ export function setupRoutes(app: Express): void {
     const bdr26CorrQuantityNumber = bdr26_corr_kol_vo == null || bdr26_corr_kol_vo === '' ? null : Number(bdr26_corr_kol_vo);
     const bdr27Number = bdr27 == null || bdr27 === '' ? null : Number(bdr27);
     const bdr27QuantityNumber = bdr27_kol_vo == null || bdr27_kol_vo === '' ? null : Number(bdr27_kol_vo);
-    const edinLimitNumber = Number(edin_limit);
+    const edinLimitNumber = edin_limit == null || edin_limit === '' ? null : Number(edin_limit);
 
     if (
-      Number.isNaN(kolVoNumber) ||
+      (kolVoNumber !== null && !Number.isFinite(kolVoNumber)) ||
       Number.isNaN(limitNumber) ||
       (bdr25CorrNumber !== null && Number.isNaN(bdr25CorrNumber)) ||
       (bdr25CorrQuantityNumber !== null && !Number.isFinite(bdr25CorrQuantityNumber)) ||
@@ -3460,7 +3527,7 @@ export function setupRoutes(app: Express): void {
       (bdr26CorrQuantityNumber !== null && !Number.isFinite(bdr26CorrQuantityNumber)) ||
       (bdr27Number !== null && !Number.isFinite(bdr27Number)) ||
       (bdr27QuantityNumber !== null && !Number.isFinite(bdr27QuantityNumber)) ||
-      Number.isNaN(edinLimitNumber)
+      (edinLimitNumber !== null && !Number.isFinite(edinLimitNumber))
     ) {
       res.status(400).json({ error: 'Numeric fields are invalid' });
       return;
@@ -3495,11 +3562,11 @@ export function setupRoutes(app: Express): void {
         'Department'
       );
 
-      const objectId = await getIdByName(
-        'SELECT "GN_do_id" AS id FROM "GN_departament_object" WHERE "GN_departament_object" = $1 LIMIT 1',
-        object_name,
-        'Object'
-      );
+      const objectIds: number[] = [];
+      for (const name of requestedObjectNames) {
+        objectIds.push(await resolveBdrObjectId(client, name, departmentId));
+      }
+      const objectId = objectIds[0];
 
       const dogovorId = await getIdByName(
         'SELECT "GN_dgv_id" AS id FROM "GN_dogovor" WHERE "GN_dogovor" = $1 LIMIT 1',
@@ -3551,18 +3618,18 @@ export function setupRoutes(app: Express): void {
           dogovorId,
           contractorId,
           budgetItemId,
-          predmet_dogovora,
-          ed_izm,
+          predmet_dogovora ?? '',
+          ed_izm ?? '',
           kolVoNumber,
-          limitNumber,
+          savedLimit,
           calculation ?? '',
-          bdr25CorrNumber,
+          limitBdrColumn === 'БДР25корр' ? limitNumber : bdr25CorrNumber,
           bdr25CorrQuantityNumber,
-          bdr26Number,
+          limitBdrColumn === 'БДР26' ? limitNumber : bdr26Number,
           bdr26QuantityNumber,
-          bdr26CorrNumber,
+          limitBdrColumn === 'БДР26корр' ? limitNumber : bdr26CorrNumber,
           bdr26CorrQuantityNumber,
-          bdr27Number,
+          limitBdrColumn === 'БДР27' ? limitNumber : bdr27Number,
           bdr27QuantityNumber,
           edinLimitNumber,
           comments ?? '',
@@ -3570,6 +3637,13 @@ export function setupRoutes(app: Express): void {
       );
 
       const newBdrId = insertResult.rows[0].id;
+
+      await client.query(
+        `INSERT INTO "GN_bdr_objects" ("GN_bdr_ID", "GN_do_id", "sort_order")
+         SELECT $1, selected.object_id, (selected.ordinality - 1)::INTEGER
+         FROM unnest($2::INTEGER[]) WITH ORDINALITY AS selected(object_id, ordinality)`,
+        [newBdrId, objectIds]
+      );
 
       const createdRow = await client.query(
         `${BDR_SELECT_FIELDS}
@@ -3620,7 +3694,7 @@ export function setupRoutes(app: Express): void {
     try {
       const result = await client.query(`
         SELECT "id", "label",
-               EXTRACT(EPOCH FROM "created_at") * 1000 AS "createdAt",
+               (EXTRACT(EPOCH FROM "created_at") * 1000)::double precision AS "createdAt",
                "changes"
         FROM "GN_import_substitution_history"
         ORDER BY "id" DESC
@@ -3639,6 +3713,8 @@ export function setupRoutes(app: Express): void {
     if (!change || typeof change !== 'object' || Array.isArray(change)) return false;
     const item = change as Record<string, unknown>;
     if (!Number.isSafeInteger(item.rowId) || Number(item.rowId) <= 0) return false;
+    if (item.columns !== undefined && (!Array.isArray(item.columns) || item.columns.length > 100
+      || item.columns.some((column: unknown) => typeof column !== 'string' || column.length === 0 || column.length > 200))) return false;
     if (item.type === 'create' || item.type === 'delete') return true;
     return item.type === 'update' && Boolean(item.before)
       && typeof item.before === 'object' && !Array.isArray(item.before);
@@ -4276,18 +4352,35 @@ export function setupRoutes(app: Express): void {
     const client = await createDbClient();
     try {
       const result = await client.query(`
+        WITH bdr_with_summary AS (
+          SELECT b.*,
+                 SUM(b."GN_bdr_bdr26_corr") OVER (
+                   PARTITION BY BTRIM(b."GN_bdr_personal_account", E' \\t\\r\\n')
+                 ) AS "bdr26Corr",
+                 (COUNT(b."GN_bdr_bdr26_corr") OVER (
+                   PARTITION BY BTRIM(b."GN_bdr_personal_account", E' \\t\\r\\n')
+                 ))::integer AS "bdr26Count"
+          FROM "GN_bdr" b
+          WHERE b."is_deleted" = FALSE
+        )
         SELECT DISTINCT b."GN_department_FK" AS "departmentId",
-               b."GN_departament_object_FK" AS "objectId",
+               COALESCE(bdr_object."GN_do_id", b."GN_departament_object_FK") AS "objectId",
                b."GN_contracor_FK" AS "contractorId",
                b."GN_dogovor_FK" AS "contractId",
                expense_department."GN_department" AS "expenseDepartment",
-               SUM(b."GN_bdr_bdr26_corr") OVER (
-                 PARTITION BY b."GN_department_FK", b."GN_departament_object_FK", b."GN_dogovor_FK"
-               ) AS "bdr26Corr"
-        FROM "GN_bdr" b
+               budget_item."GN_budget_network_item" AS "budgetItem",
+               b."GN_bdr_predmet_dogovora" AS "contractSubject",
+               b."GN_bdr_calculation" AS "calculation",
+               NULLIF(BTRIM(b."GN_bdr_personal_account", E' \\t\\r\\n'), '') AS "personalAccount",
+               b."bdr26Corr",
+               b."bdr26Count"
+        FROM bdr_with_summary b
+        LEFT JOIN "GN_bdr_objects" bdr_object
+          ON bdr_object."GN_bdr_ID" = b."GN_bdr_ID"
         LEFT JOIN "GN_department" expense_department
           ON expense_department."GN_Dep_id" = b."GN_bdr_expense_department_FK"
-        WHERE b."is_deleted" = FALSE
+        LEFT JOIN "GN_budget_network_item" budget_item
+          ON budget_item."GN_b_id" = b."GN_budget_network_item_FK"
       `);
       res.json(result.rows);
     } catch (err) {
@@ -4311,7 +4404,8 @@ export function setupRoutes(app: Express): void {
           primary_document."personal_account" AS "personalAccount",
           primary_document."document_month" AS month,
           primary_document."details",
-          primary_document."details_enabled" AS "detailsEnabled"
+          primary_document."details_enabled" AS "detailsEnabled",
+          primary_document."general_note" AS "generalNote"
         FROM "GN_primary_documents" primary_document
         LEFT JOIN "GN_department" department
           ON department."GN_Dep_id" = primary_document."GN_department_FK"
@@ -4417,8 +4511,8 @@ export function setupRoutes(app: Express): void {
     return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : undefined;
   }
 
-  function parsePrimaryMonth(value: unknown): 'october' | 'november' | 'december' | undefined {
-    return value === 'october' || value === 'november' || value === 'december' ? value : undefined;
+  function parsePrimaryMonth(value: unknown): PrimaryMonth | undefined {
+    return isPrimaryMonth(value) ? value : undefined;
   }
 
   function parsePrimaryPayload(body: Record<string, unknown>) {
@@ -4438,6 +4532,7 @@ export function setupRoutes(app: Express): void {
       || !Number.isFinite(amountWithVat) || edoArrivalDate === undefined || sedLaunchDate === undefined
       || (sedLaunched !== undefined && typeof sedLaunched !== 'boolean')
       || (acceptedIn1C !== undefined && typeof acceptedIn1C !== 'boolean')
+      || (body.generalNote !== undefined && typeof body.generalNote !== 'string')
       || (detailsEnabled !== undefined && typeof detailsEnabled !== 'boolean')) {
       return null;
     }
@@ -4451,6 +4546,7 @@ export function setupRoutes(app: Express): void {
       expenseDepartmentIds,
       amountWithVat,
       details: String(body.details ?? ''),
+      generalNote: typeof body.generalNote === 'string' ? body.generalNote : null,
       detailsEnabled: typeof detailsEnabled === 'boolean' ? detailsEnabled : null,
       edoArrivalDate,
       sedLaunchDate,
@@ -4635,10 +4731,10 @@ export function setupRoutes(app: Express): void {
       await client.query('BEGIN');
       const result = await client.query(
         `INSERT INTO "GN_primary_documents"
-           ("GN_department_FK", "GN_dogovor_FK", "personal_account", "document_month", "amount_with_vat", "details", "edo_arrival_date", "sed_launch_date", "note", "sed_launched", "details_enabled")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, $8::date IS NOT NULL), COALESCE($11, NULLIF(BTRIM($6), '') IS NOT NULL))
+           ("GN_department_FK", "GN_dogovor_FK", "personal_account", "document_month", "amount_with_vat", "details", "edo_arrival_date", "sed_launch_date", "note", "sed_launched", "details_enabled", "general_note")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, $8::date IS NOT NULL), COALESCE($11, NULLIF(BTRIM($6), '') IS NOT NULL), COALESCE($12, ''))
          RETURNING "GN_primary_document_id" AS id`,
-        [input.departmentId, input.contractId, input.personalAccount, input.month, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note, input.sedLaunched, input.detailsEnabled],
+        [input.departmentId, input.contractId, input.personalAccount, input.month, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note, input.sedLaunched, input.detailsEnabled, input.generalNote],
       );
       const documentId = Number(result.rows[0].id);
       await client.query(
@@ -4746,6 +4842,7 @@ export function setupRoutes(app: Express): void {
       || !expenseDepartmentIds
       || typeof body.personalAccount !== 'string'
       || typeof body.details !== 'string'
+      || (body.generalNote !== undefined && typeof body.generalNote !== 'string')
       || typeof body.detailsEnabled !== 'boolean') {
       res.status(400).json({ error: 'Проверьте подразделение, договор, лицевой счет, объекты, статьи бюджета и детализацию' });
       return;
@@ -4757,10 +4854,10 @@ export function setupRoutes(app: Express): void {
       const result = await client.query(
         `UPDATE "GN_primary_documents"
          SET "GN_department_FK" = $2, "GN_dogovor_FK" = $3, "personal_account" = $4,
-             "details" = $5, "details_enabled" = $6
+             "details" = $5, "details_enabled" = $6, "general_note" = COALESCE($7, "general_note")
          WHERE "GN_primary_document_id" = $1
          RETURNING "GN_primary_document_id"`,
-        [documentId, departmentId, contractId, body.personalAccount, body.details, body.detailsEnabled],
+        [documentId, departmentId, contractId, body.personalAccount, body.details, body.detailsEnabled, body.generalNote ?? null],
       );
       if (result.rowCount === 0) {
         await client.query('ROLLBACK');
@@ -4795,10 +4892,11 @@ export function setupRoutes(app: Express): void {
              "document_month" = $5, "amount_with_vat" = $6, "details" = $7,
              "edo_arrival_date" = $8, "sed_launch_date" = $9, "note" = $10,
              "sed_launched" = COALESCE($11, "sed_launched"),
-             "details_enabled" = COALESCE($12, NULLIF(BTRIM($7), '') IS NOT NULL)
+             "details_enabled" = COALESCE($12, NULLIF(BTRIM($7), '') IS NOT NULL),
+             "general_note" = COALESCE($13, "general_note")
          WHERE "GN_primary_document_id" = $1
          RETURNING "GN_primary_document_id"`,
-        [documentId, input.departmentId, input.contractId, input.personalAccount, input.month, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note, input.sedLaunched, input.detailsEnabled],
+        [documentId, input.departmentId, input.contractId, input.personalAccount, input.month, input.amountWithVat, input.details, input.edoArrivalDate, input.sedLaunchDate, input.note, input.sedLaunched, input.detailsEnabled, input.generalNote],
       );
       if (result.rowCount === 0) {
         await client.query('ROLLBACK');

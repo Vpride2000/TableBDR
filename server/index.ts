@@ -1,7 +1,7 @@
 ﻿import 'dotenv/config';
 import express from 'express';
 import { setupRoutes } from './routes.js';
-import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureDogovorColumns, ensureBdrPersonalAccountColumn, ensureBdrExpenseDepartmentColumn, ensurePrimaryDocumentsTables, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable, ensureOgruzReferenceColumns, ensureEquipmentModelReferenceColumns, ensureObjectDepartmentColumns, ensureReferenceTables, ensureReferenceSequences, ensureExcelImportDeletionColumns, ensureGazpromTelecomTable, ensureNotesTables, ensureDashboardTileStatusesTable, ensureDashboardSettingsTable } from './db.js';
+import { createDbClient, ensureDatabaseTables, ensureContractColumns, ensureDogovorColumns, ensureBdrPersonalAccountColumn, ensureBdrOptionalCreationColumns, ensureBdrExpenseDepartmentColumn, ensureBdrObjectsTable, ensurePrimaryDocumentsTables, ensureSatellitesXmlTable, ensureSatelliteColumns, ensureSatelliteGtNumbersTable, ensureCellularTables, bootstrapCellularFromXlsx, ensureImportSubstitutionTable, ensureOgruzReferenceColumns, ensureEquipmentModelReferenceColumns, ensureObjectDepartmentColumns, ensureReferenceTables, ensureReferenceSequences, ensureExcelImportDeletionColumns, ensureGazpromTelecomTable, ensureNotesTables, ensureDashboardTileStatusesTable, ensureDashboardSettingsTable } from './db.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -64,7 +64,9 @@ async function start(): Promise<void> {
     await ensureReferenceTables(client);
     await ensureDogovorColumns(client);
     await ensureBdrPersonalAccountColumn(client);
+    await ensureBdrOptionalCreationColumns(client);
     await ensureBdrExpenseDepartmentColumn(client);
+    await ensureBdrObjectsTable(client);
     await ensurePrimaryDocumentsTables(client);
     await ensureGazpromTelecomTable(client);
     await ensureImportSubstitutionTable(client);

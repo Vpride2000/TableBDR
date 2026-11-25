@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatHttpError } from '../utils/httpUtils';
+import { parseNumericValue } from '../utils/numericValues';
+import { formatBdrObjectNames } from './bdrObjects';
 
 // Страница подробного расчета лимита для выбранной строки BDR.
 // Загружает текущие данные по строке, отображает расчетные строки
@@ -40,12 +42,6 @@ interface LimitDraft {
   lines: CalculationLine[];
   unitLimit: string;
   comments: string;
-}
-
-function parseNumericValue(value: string): number {
-  const normalized = value.replace(/\s+/g, '').replace(',', '.');
-  const parsed = Number(normalized);
-  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function formatNumber(value: number): string {
@@ -243,7 +239,7 @@ export default function LimitDetailsPage({ rowId, onBack }: LimitDetailsPageProp
 
           <div className="limit-details-meta">
             <div><strong>Подразделение:</strong> {String(row['Подразделение'] ?? '')}</div>
-            <div><strong>Объект:</strong> {String(row['Объект'] ?? '')}</div>
+            <div><strong>Объект:</strong> {formatBdrObjectNames(row)}</div>
             <div><strong>Контрагент:</strong> {String(row['Контрагент'] ?? '')}</div>
             <div><strong>Договор:</strong> {String(row['Договор'] ?? '')}</div>
             <div><strong>Статья бюджета УС:</strong> {String(row['Статья бюджета УС'] ?? '')}</div>

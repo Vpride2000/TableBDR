@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
+import { formatBudgetDepartment } from './budgetDepartment';
+import { formatBdrObjectNames } from './bdrObjects';
 
 type Row = Record<string, unknown>;
 
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
-  GN_bdr_ID: 30,
+  GN_bdr_ID: 112,
   'Статья бюджета УС': 54,
   Подразделение: 92,
-  Объект: 92,
+  Объект: 150,
   Договор: 112,
   'Лицевой счет': 120,
   РАСЧЕТ: 78,
@@ -28,7 +30,6 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
   Примечания: 90,
 };
 const DEFAULT_COLUMN_WIDTH = 86;
-const ACTIONS_COLUMN_WIDTH = 126;
 const NOTES_COLUMN_WIDTH = 180;
 const PREVIOUS_BDR_AMOUNT_COLUMN: Record<string, string> = {
   БДР25корр: 'Лимит',
@@ -49,7 +50,6 @@ interface MainBudgetTableContentProps {
   saving: boolean;
   saveError: string | null;
   filters: Record<string, string>;
-  lookupRows: Record<string, Row[]>;
   contractsLookup: Record<string, number>;
   COLUMN_TITLES: Record<string, string>;
   LOCKED_EDIT_COLUMNS: Set<string>;
@@ -64,6 +64,7 @@ interface MainBudgetTableContentProps {
   onCopyPreviousColumn: (targetColumn: string, sourceColumn: string) => Promise<void>;
   onCancelEdit: () => void;
   onUpdateDraft: (column: string, value: string) => void;
+  onUpdateObjectDraft: (values: string[]) => void;
   onGetSelectOptions: (column: string) => Array<{ value: string; label: string }>;
   onFormatCellValue: (column: string, value: unknown) => string;
   onOpenObject: (rowId: number) => void;
@@ -84,7 +85,6 @@ export default function MainBudgetTableContent({
   saving,
   saveError,
   filters,
-  lookupRows,
   contractsLookup,
   COLUMN_TITLES,
   LOCKED_EDIT_COLUMNS,
@@ -99,6 +99,7 @@ export default function MainBudgetTableContent({
   onCopyPreviousColumn,
   onCancelEdit,
   onUpdateDraft,
+  onUpdateObjectDraft,
   onGetSelectOptions,
   onFormatCellValue,
   onOpenObject,
@@ -115,7 +116,7 @@ export default function MainBudgetTableContent({
       setColumnWidths((previous) => ({
         ...previous,
         [resizeStart.column]: Math.max(
-          resizeStart.column === 'GN_bdr_ID' ? 30 : resizeStart.column.startsWith('Кол-во') ? 44 : 40,
+          resizeStart.column === 'GN_bdr_ID' ? 112 : resizeStart.column.startsWith('Кол-во') ? 44 : 40,
           resizeStart.width + event.clientX - resizeStart.startX
         ),
       }));
@@ -154,7 +155,7 @@ export default function MainBudgetTableContent({
 
   const tableWidth = visibleMainColumns.reduce(
     (total, column) => total + getColumnWidth(column),
-    ACTIONS_COLUMN_WIDTH + NOTES_COLUMN_WIDTH
+    NOTES_COLUMN_WIDTH
   );
   const headerGroups: Array<{ title: string; columns: string[]; subTitles?: string[] }> = [
     { title: 'СТАТЬИ', columns: ['Статья бюджета УС', 'Статья бюджета'] },
@@ -208,7 +209,16 @@ export default function MainBudgetTableContent({
             </span>
           )}
           <div className="budget-main-header-controls">
-            {EXTRA_NUMERIC_COLUMNS.has(col) && sourceColumn && (
+            {col === 'GN_bdr_ID' ? (
+              <button
+                type="button"
+                className="budget-row-icon-button"
+                onClick={onAddRow}
+                disabled={editingRowId !== null || saving}
+                aria-label="Добавить строку БДР"
+                title="Добавить строку БДР"
+              >+</button>
+            ) : EXTRA_NUMERIC_COLUMNS.has(col) && sourceColumn ? (
               <button
                 type="button"
                 className="budget-copy-button"
@@ -216,7 +226,7 @@ export default function MainBudgetTableContent({
                 aria-label={`Скопировать значения из столбца ${COLUMN_TITLES[sourceColumn] ?? sourceColumn}`}
                 onClick={() => void onCopyPreviousColumn(col, sourceColumn)}
               >С</button>
-            )}
+            ) : null}
             {col !== 'GN_bdr_ID' && (
               <input
                 className="column-filter-input"
@@ -281,17 +291,6 @@ export default function MainBudgetTableContent({
               : visibleMainColumns.map((col, index) => renderColumnHeader(col, index))}
             <th
               rowSpan={headerGroups.length > 0 ? 2 : undefined}
-              style={{ width: ACTIONS_COLUMN_WIDTH, minWidth: ACTIONS_COLUMN_WIDTH, maxWidth: ACTIONS_COLUMN_WIDTH }}
-            >
-              <div className="budget-main-header-content">
-                <span className="budget-main-header-title">Действия</span>
-                <button type="button" className="budget-copy-button" onClick={onAddRow}>
-                  Добавить строку
-                </button>
-              </div>
-            </th>
-            <th
-              rowSpan={headerGroups.length > 0 ? 2 : undefined}
               style={{ width: NOTES_COLUMN_WIDTH, minWidth: NOTES_COLUMN_WIDTH, maxWidth: NOTES_COLUMN_WIDTH }}
             >
               <span className="budget-main-header-title">Примечание</span>
@@ -323,7 +322,27 @@ export default function MainBudgetTableContent({
                       : undefined}
                     style={{ width: getColumnWidth(col), minWidth: getColumnWidth(col), maxWidth: getColumnWidth(col) }}
                   >
-                    {isEditing && col !== 'GN_bdr_ID' && LOCKED_EDIT_COLUMNS.has(col) ? (
+                    {col === 'GN_bdr_ID' ? (
+                      <div className="budget-row-actions">
+                        <span>{rowId}</span>
+                        {isEditing ? (
+                          <>
+                            <button type="button" className="budget-row-icon-button" onClick={() => void onSaveEdit()} disabled={saving} aria-label="Сохранить строку" title="Сохранить">✓</button>
+                            <button type="button" className="budget-row-icon-button" onClick={onCancelEdit} disabled={saving} aria-label="Отменить изменения" title="Отмена">×</button>
+                            <button type="button" className="budget-row-icon-button budget-row-icon-button--danger" onClick={() => void onDeleteEdit()} disabled={saving} aria-label="Удалить строку" title="Удалить">🗑</button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="budget-row-icon-button"
+                            onClick={() => onStartEdit(row)}
+                            disabled={editingRowId !== null || saving}
+                            aria-label={`Редактировать строку №${rowId}`}
+                            title="Редактировать строку"
+                          >✎</button>
+                        )}
+                      </div>
+                    ) : isEditing && LOCKED_EDIT_COLUMNS.has(col) ? (
                       String(draft[col] ?? '')
                     ) : isEditing && col !== 'GN_bdr_ID' && BDR_SELECT_CONFIG[col] ? (
                       (() => {
@@ -335,25 +354,51 @@ export default function MainBudgetTableContent({
                           (needsContractor && !draft['Контрагент']);
 
                         return (
-                          <select
-                            className="budget-main-table-edit-field"
-                            value={String(draft[col] ?? '')}
-                            onChange={(event) => onUpdateDraft(col, event.target.value)}
-                            disabled={disabled}
-                          >
-                            <option value="">
-                              {needsDepartment && !draft['Подразделение']
-                                ? 'Сначала выберите Подразделение'
-                                : needsContractor && !draft['Контрагент']
-                                  ? 'Сначала выберите Контрагента'
-                                  : 'Выберите значение'}
-                            </option>
-                            {options.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
+                          <>
+                            {col === 'Объект' ? (
+                              <select
+                                className="budget-main-table-edit-field budget-main-table-object-select"
+                                multiple
+                                size={Math.min(Math.max(options.length, 3), 5)}
+                                value={Array.isArray(draft['Объекты'])
+                                  ? draft['Объекты'].map(String)
+                                  : draft['Объект'] ? [String(draft['Объект'])] : []}
+                                onChange={(event) => onUpdateObjectDraft(
+                                  Array.from(event.currentTarget.selectedOptions, (option) => option.value)
+                                )}
+                                disabled={disabled}
+                                aria-label="Объект — можно выбрать несколько"
+                                title="Удерживайте Ctrl (Windows/Linux) или Command (macOS), чтобы выбрать несколько значений"
+                              >
+                                {options.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <select
+                                className="budget-main-table-edit-field"
+                                value={String(draft[col] ?? '')}
+                                onChange={(event) => onUpdateDraft(col, event.target.value)}
+                                disabled={disabled}
+                              >
+                                <option value="">
+                                  {needsDepartment && !draft['Подразделение']
+                                    ? 'Сначала выберите Подразделение'
+                                    : needsContractor && !draft['Контрагент']
+                                      ? 'Сначала выберите Контрагента'
+                                      : 'Выберите значение'}
+                                </option>
+                                {options.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {col === 'Подразделение' && formatBudgetDepartment('', row['На кого расходы'])}
+                          </>
                         );
                       })()
                     ) : isEditing && col !== 'GN_bdr_ID' && (
@@ -373,22 +418,26 @@ export default function MainBudgetTableContent({
                         value={String(draft[col] ?? '')}
                         onChange={(event) => onUpdateDraft(col, event.target.value)}
                       />
-                    ) : !isEditing && col === 'Объект' && String(row[col] ?? '').trim() !== '' ? (
+                    ) : !isEditing && col === 'Объект' && formatBdrObjectNames(row).trim() !== '' ? (
                       <button
                         type="button"
                         className="contract-cell-button"
                         onClick={() => onOpenObject(rowId)}
                       >
-                        {String(row[col] ?? '')}
+                        {formatBdrObjectNames(row)}
                       </button>
                     ) : !isEditing && col === 'Подразделение' && String(row[col] ?? '').trim() !== '' ? (
-                      <button
-                        type="button"
-                        className="contract-cell-button"
-                        onClick={() => onOpenDepartment(rowId)}
-                      >
-                        {String(row[col] ?? '')}
-                      </button>
+                      <span>
+                        <button
+                          type="button"
+                          className="contract-cell-button"
+                          onClick={() => onOpenDepartment(rowId)}
+                        >
+                          {String(row[col] ?? '')}
+                        </button>
+                        {row['На кого расходы'] != null && String(row['На кого расходы']).trim() !== ''
+                          ? ` ${formatBudgetDepartment('', row['На кого расходы'])}` : ''}
+                      </span>
                     ) : !isEditing && col === 'Контрагент' && String(row[col] ?? '').trim() !== '' ? (
                       <button
                         type="button"
@@ -425,21 +474,12 @@ export default function MainBudgetTableContent({
                         );
                       })()
                     ) : (
-                      onFormatCellValue(col, isEditing ? draft[col] : row[col])
+                      col === 'Подразделение'
+                        ? formatBudgetDepartment(row[col], row['На кого расходы'])
+                        : onFormatCellValue(col, isEditing ? draft[col] : row[col])
                     )}
                   </td>
                 ))}
-                <td style={{ width: ACTIONS_COLUMN_WIDTH, minWidth: ACTIONS_COLUMN_WIDTH, maxWidth: ACTIONS_COLUMN_WIDTH }}>
-                  {!isEditing ? (
-                    <button type="button" className="budget-row-edit-button" onClick={() => onStartEdit(row)}>ИЗМ</button>
-                  ) : (
-                    <>
-                      <button type="button" onClick={() => void onSaveEdit()} disabled={saving}>сохр</button>
-                      <button type="button" onClick={onCancelEdit} disabled={saving}>отм</button>
-                      <button type="button" className="budget-delete-button" onClick={() => void onDeleteEdit()} disabled={saving}>удалить</button>
-                    </>
-                  )}
-                </td>
                 <td style={{ width: NOTES_COLUMN_WIDTH, minWidth: NOTES_COLUMN_WIDTH, maxWidth: NOTES_COLUMN_WIDTH }}>
                   {isEditing ? (
                     <input

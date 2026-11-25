@@ -1,23 +1,8 @@
 import { useEffect, useState } from 'react'
 import { formatHttpError } from '../utils/httpUtils'
+import { mapLookupOptions, type LookupOption } from '../utils/lookupOptions'
 
-type LookupOption = { value: string; label: string }
 type InvestRow = Record<string, string>
-
-/**
- * Преобразует массив строк справочника в список опций для select.
- */
-function mapLookupOptions(
-  rows: Array<Record<string, unknown>>,
-  valueKey: string,
-  labelKey: string
-): LookupOption[] {
-  return rows.map((row) => {
-    const value = String(row[valueKey] ?? '')
-    const label = String(row[labelKey] ?? '')
-    return { value, label }
-  })
-}
 
 // Таблица «Доступно для заказа» из раздела Закупки, вынесенная в отдельное popup-окно.
 export default function EquipmentOrderPopup() {

@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { formatHttpError, formatErrorMessage } from '../utils/httpUtils'
+import { parseFiniteNumericValue as parseNumericValue } from '../utils/numericValues'
 
 const PURCHASE_COLUMNS = [
   'Подразделение', 'Тип', 'Наименование ТКО', 'Вендор ТКО', 'Количество', 'Примечание', 'Статус закупки', 'Платеж ТР без НДС',
 ] as const
 const SORTABLE_COLUMNS = [...PURCHASE_COLUMNS, 'Поставщик', 'Огрузочный реквизит', 'оплата'] as const
+const PURCHASE_COLUMN_SET = new Set<string>(PURCHASE_COLUMNS)
 
 const PURCHASE_YEAR = 2026
 
@@ -32,12 +34,6 @@ type PurchaseStateTableProps = {
   contractorOptions: LookupOption[]
   ogruzOptions: LookupOption[]
   loadingLookups: boolean
-}
-
-function parseNumericValue(value: unknown): number {
-  const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
-  const parsed = Number(normalized)
-  return Number.isFinite(parsed) ? parsed : 0
 }
 
 // Свёрнутая по умолчанию таблица «Состояние закупок …», данные грузятся лениво
@@ -183,8 +179,8 @@ export default function PurchaseStateTable({
     ? PURCHASE_COLUMNS.filter((column) => !COMPACT_HIDDEN_COLUMNS.has(column))
     : PURCHASE_COLUMNS
   const visibleAdditionalColumns = compact
-    ? SORTABLE_COLUMNS.filter((column) => !COMPACT_HIDDEN_COLUMNS.has(column) && !PURCHASE_COLUMNS.includes(column))
-    : SORTABLE_COLUMNS.filter((column) => !PURCHASE_COLUMNS.includes(column))
+    ? SORTABLE_COLUMNS.filter((column) => !COMPACT_HIDDEN_COLUMNS.has(column) && !PURCHASE_COLUMN_SET.has(column))
+    : SORTABLE_COLUMNS.filter((column) => !PURCHASE_COLUMN_SET.has(column))
 
   return (
     <div className="guide-section">

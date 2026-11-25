@@ -1,0 +1,953 @@
+import { useState, useEffect } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
+import {
+  DEFAULT_DASHBOARD_TILE_STATUSES,
+  isDashboardTileStatus,
+  type DashboardTileKey,
+  type DashboardTileStatus,
+  type DashboardTileStatuses,
+} from './utils/dashboardTileStatuses'
+import {
+  DASHBOARD_BDR_FIELDS,
+  DEFAULT_DASHBOARD_BDR_FIELD,
+  isDashboardBdrField,
+} from './utils/dashboardBdrField'
+import { addDashboardServiceCost, type DashboardServiceAccumulator } from './utils/dashboardServices'
+import { addDashboardEquipment, type DashboardEquipmentAccumulator } from './utils/dashboardEquipment'
+import { parseFiniteNumericValue as parseDashboardNumber } from './utils/numericValues'
+import { startColumnResize } from './utils/columnResize'
+import { getBdrObjectNames } from './budget/bdrObjects'
+
+interface DashboardSummary {
+  serviceLines: number
+  serviceTypes: number
+  totalServiceBudget: number
+  contractCount: number
+  contractStatusCounts: Record<string, number>
+  agreementCount: number
+  agreementStatusCounts: Record<string, number>
+  cellularCount: number
+  cellularActiveCount: number
+  cellularGlonassCount: number
+  cellularNonBlockedPercent: number
+  cellularAccountCount: number
+  satelliteCount: number
+  satelliteActiveCount: number
+  satelliteDepartmentCount: number
+  satelliteDirectionCount: number
+  topServices: Array<{ name: string; budget: number }>
+  purchaseRows: number
+  purchaseQuantity: number
+  purchaseOnmQuantity: number
+  purchasePenQuantity: number
+  purchaseInProgressQuantity: number
+  purchaseDeliveredQuantity: number
+  purchaseInProgressOnmQuantity: number
+  purchaseInProgressPenQuantity: number
+  purchaseDeliveredOnmQuantity: number
+  purchaseDeliveredPenQuantity: number
+  importRows: number
+  importQuantity: number
+  importRegistryQuantity: number
+  importWithdrawnQuantity: number
+  importRegistryPercent: number
+  topEquipmentTypes: Array<{ type: string; quantity: number }>
+}
+
+interface ObjectUsageSummaryRow {
+  department: string
+  objectName: string
+  communicationServices: Array<{ serviceItem: string; contractorsContracts: string[]; cost: number }>
+  communicationServiceCostTotal: number
+  equipmentTypes: Array<{ type: string; quantity: number; cost: number }>
+  equipmentCostTotal: number
+}
+
+type PrimarySedMonthSummary = {
+  key: 'october' | 'november' | 'december'
+  label: string
+  selected: number
+  acceptedIn1C: number
+  total: number
+}
+
+type ObjectUsageColumnKey = 'department' | 'objectName' | 'communicationServices' | 'equipmentTypes'
+type ObjectUsageSortKey = ObjectUsageColumnKey | 'communicationServiceCostTotal' | 'equipmentCostTotal'
+
+function DashboardTrafficLight({ status, label }: { status: DashboardTileStatus; label: string }): React.ReactElement {
+  const colors: Record<DashboardTileStatus, string> = {
+    red: '#ff1f1f',
+    yellow: '#ffe600',
+    green: '#00d84a',
+  }
+  const statusLabels: Record<DashboardTileStatus, string> = {
+    red: 'тестовый режим',
+    yellow: 'частично обновлено',
+    green: 'данные актуальны',
+  }
+  return (
+    <svg
+      className="dashboard-traffic-light"
+      viewBox="0 0 24 24"
+      role="img"
+      aria-label={`${label}: ${statusLabels[status]}`}
+    >
+      <title>{`${label}: ${statusLabels[status]}`}</title>
+      <circle cx="12" cy="12" r="9" fill={colors[status]} stroke="#fff" strokeWidth="2" />
+    </svg>
+  )
+}
+
+export default function StartDashboard() {
+  const [summary, setSummary] = useState<DashboardSummary | null>(null)
+  const [tileStatuses, setTileStatuses] = useState<DashboardTileStatuses>(DEFAULT_DASHBOARD_TILE_STATUSES)
+  const [tileStatusesError, setTileStatusesError] = useState<string | null>(null)
+  const [primarySedSummary, setPrimarySedSummary] = useState<PrimarySedMonthSummary[] | null>(null)
+  const [primarySedError, setPrimarySedError] = useState<string | null>(null)
+  const [dashboardBdrField, setDashboardBdrField] = useState(DEFAULT_DASHBOARD_BDR_FIELD)
+  const [objectUsageSummary, setObjectUsageSummary] = useState<ObjectUsageSummaryRow[]>([])
+  const [objectSummaryExpanded, setObjectSummaryExpanded] = useState(false)
+  const [objectSummaryLoaded, setObjectSummaryLoaded] = useState(false)
+  const [objectSummaryLoading, setObjectSummaryLoading] = useState(false)
+  const [objectSummaryError, setObjectSummaryError] = useState<string | null>(null)
+  const [objectSummaryAttempt, setObjectSummaryAttempt] = useState(0)
+  const [objectSummaryFilters, setObjectSummaryFilters] = useState<Record<ObjectUsageColumnKey, string>>({
+    department: '',
+    objectName: '',
+    communicationServices: '',
+    equipmentTypes: '',
+  })
+  const [objectSummarySort, setObjectSummarySort] = useState<{ key: ObjectUsageSortKey; direction: 'asc' | 'desc' }>({
+    key: 'department',
+    direction: 'asc',
+  })
+  const [objectSummaryColumnWidths, setObjectSummaryColumnWidths] = useState<Record<ObjectUsageColumnKey, number>>({
+    department: 120,
+    objectName: 130,
+    communicationServices: 250,
+    equipmentTypes: 230,
+  })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    async function loadTileStatuses(): Promise<void> {
+      try {
+        const response = await fetch('/api/dashboard/tile-statuses')
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const savedStatuses = await response.json() as Partial<Record<DashboardTileKey, unknown>>
+        const validStatuses: DashboardTileStatuses = { ...DEFAULT_DASHBOARD_TILE_STATUSES }
+        for (const key of Object.keys(DEFAULT_DASHBOARD_TILE_STATUSES) as DashboardTileKey[]) {
+          const value = savedStatuses[key]
+          if (isDashboardTileStatus(value)) validStatuses[key] = value
+        }
+        if (active) setTileStatuses(validStatuses)
+      } catch (requestError) {
+        if (active) setTileStatusesError(requestError instanceof Error
+          ? requestError.message
+          : 'Не удалось загрузить статусы актуальности плиток')
+      }
+    }
+
+    void loadTileStatuses()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    async function loadPrimarySedSummary(): Promise<void> {
+      try {
+        const response = await fetch('/api/primary', { cache: 'no-store' })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const rows = await response.json() as Array<Record<string, unknown>>
+        const months: PrimarySedMonthSummary[] = [
+          { key: 'october', label: 'Октябрь', selected: 0, acceptedIn1C: 0, total: rows.length },
+          { key: 'november', label: 'Ноябрь', selected: 0, acceptedIn1C: 0, total: rows.length },
+          { key: 'december', label: 'Декабрь', selected: 0, acceptedIn1C: 0, total: rows.length },
+        ]
+        rows.forEach((row) => {
+          const monthData = row.monthData
+          if (!monthData || typeof monthData !== 'object' || Array.isArray(monthData)) return
+          months.forEach((month) => {
+            const values = (monthData as Record<string, unknown>)[month.key]
+            if (!values || typeof values !== 'object' || Array.isArray(values)) return
+            const monthValues = values as Record<string, unknown>
+            if (monthValues.sedLaunched === true) month.selected += 1
+            if (monthValues.acceptedIn1C === true) month.acceptedIn1C += 1
+          })
+        })
+        if (active) setPrimarySedSummary(months)
+      } catch (requestError) {
+        if (active) setPrimarySedError(requestError instanceof Error
+          ? requestError.message
+          : 'Не удалось загрузить данные первичных документов')
+      }
+    }
+
+    void loadPrimarySedSummary()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadSummary(): Promise<void> {
+      try {
+        const [bdrResponse, contractsResponse, agreementsResponse, cellularResponse, satellitesResponse, importSubstitutionResponse, bdrFieldResponse] = await Promise.all([
+          fetch('/api/gn/bdr'),
+          fetch('/api/gn/contracts'),
+          fetch('/api/gn/contract-additional-agreements'),
+          fetch('/api/gn/cellular'),
+          fetch('/api/satellites/summary'),
+          fetch('/api/import-substitution', { cache: 'no-store' }),
+          fetch('/api/dashboard/bdr-field'),
+        ])
+
+        if (!bdrResponse.ok) throw new Error(`BDR HTTP ${bdrResponse.status}`)
+        if (!contractsResponse.ok) throw new Error(`Contracts HTTP ${contractsResponse.status}`)
+        if (!agreementsResponse.ok) throw new Error(`Agreements HTTP ${agreementsResponse.status}`)
+        if (!cellularResponse.ok) throw new Error(`Cellular HTTP ${cellularResponse.status}`)
+        if (!satellitesResponse.ok) throw new Error(`Satellites HTTP ${satellitesResponse.status}`)
+        if (!importSubstitutionResponse.ok) throw new Error(`Import substitution HTTP ${importSubstitutionResponse.status}`)
+        if (!bdrFieldResponse.ok) throw new Error(`Dashboard BDR field HTTP ${bdrFieldResponse.status}`)
+
+        const bdrRows = (await bdrResponse.json()) as Array<Record<string, unknown>>
+        const contractRows = (await contractsResponse.json()) as Array<Record<string, unknown>>
+        const agreementRows = (await agreementsResponse.json()) as Array<Record<string, unknown>>
+        const cellularRows = (await cellularResponse.json()) as Array<Record<string, unknown>>
+        const importSubstitutionRows = (await importSubstitutionResponse.json()) as Array<Record<string, unknown>>
+        const bdrFieldPayload = await bdrFieldResponse.json() as { field?: unknown }
+        if (!isDashboardBdrField(bdrFieldPayload.field)) {
+          throw new Error('Сервер вернул неизвестный вариант БДР для сводки')
+        }
+        const selectedBdrField = bdrFieldPayload.field
+        setDashboardBdrField(selectedBdrField)
+        const satellitesSummary = (await satellitesResponse.json()) as {
+          satelliteCount: number
+          activeSatelliteCount: number
+          departmentCount: number
+          directionCount: number
+        }
+
+        const parseNumber = parseDashboardNumber
+
+        const serviceBudgetByType = new Map<string, number>()
+        bdrRows.forEach((row) => {
+          const serviceName = String(row['Статья бюджета'] ?? 'Не указана').trim()
+          const amount = parseNumber(row[selectedBdrField])
+          serviceBudgetByType.set(serviceName, (serviceBudgetByType.get(serviceName) ?? 0) + amount)
+        })
+
+        const normalizeStatus = (value: unknown): string => String(value ?? 'не указано').trim() || 'не указано'
+        const purchaseRows = importSubstitutionRows.filter((row) => Number(row['Год']) === 2026)
+        const purchaseQuantity = purchaseRows.reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseOnmQuantity = purchaseRows
+          .filter((row) => String(row['Статья затрат ТКО'] ?? '').trim() === 'ОНМ')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchasePenQuantity = purchaseRows
+          .filter((row) => String(row['Статья затрат ТКО'] ?? '').trim() === 'ПЭН')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseInProgressQuantity = purchaseRows
+          .filter((row) => ['в закупе', 'в закупке'].includes(String(row['Статус закупки'] ?? '').trim().toLowerCase()))
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseDeliveredQuantity = purchaseRows
+          .filter((row) => String(row['Статус закупки'] ?? '').trim().toLowerCase() === 'поставленно')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const isPurchaseInProgress = (row: Record<string, unknown>): boolean => (
+          ['в закупе', 'в закупке'].includes(String(row['Статус закупки'] ?? '').trim().toLowerCase())
+        )
+        const isPurchaseDelivered = (row: Record<string, unknown>): boolean => (
+          String(row['Статус закупки'] ?? '').trim().toLowerCase() === 'поставленно'
+        )
+        const purchaseInProgressOnmQuantity = purchaseRows
+          .filter((row) => isPurchaseInProgress(row) && String(row['Статья затрат ТКО'] ?? '').trim() === 'ОНМ')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseInProgressPenQuantity = purchaseRows
+          .filter((row) => isPurchaseInProgress(row) && String(row['Статья затрат ТКО'] ?? '').trim() === 'ПЭН')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseDeliveredOnmQuantity = purchaseRows
+          .filter((row) => isPurchaseDelivered(row) && String(row['Статья затрат ТКО'] ?? '').trim() === 'ОНМ')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const purchaseDeliveredPenQuantity = purchaseRows
+          .filter((row) => isPurchaseDelivered(row) && String(row['Статья затрат ТКО'] ?? '').trim() === 'ПЭН')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const importQuantity = importSubstitutionRows.reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const importRegistryQuantity = importSubstitutionRows
+          .filter((row) => String(row['Классификация ТКО'] ?? '').trim() === 'РФ в реестре')
+          .reduce((sum, row) => sum + parseNumber(row['Количество']), 0)
+        const equipmentQuantityByType = new Map<string, number>()
+        importSubstitutionRows.forEach((row) => {
+          const type = String(row['Тип'] ?? '').trim() || 'Не указан'
+          const quantity = parseNumber(row['Количество'])
+          equipmentQuantityByType.set(type, (equipmentQuantityByType.get(type) ?? 0) + quantity)
+        })
+        const topEquipmentTypes = [...equipmentQuantityByType.entries()]
+          .map(([type, quantity]) => ({ type, quantity }))
+          .sort((left, right) => right.quantity - left.quantity
+            || left.type.localeCompare(right.type, 'ru', { sensitivity: 'base' }))
+          .slice(0, 5)
+        const importWithdrawnQuantity = importSubstitutionRows.reduce(
+          (sum, row) => sum + Math.round(parseNumber(row['Выведен из эксплуатации'])),
+          0,
+        )
+        const importAdjustedQuantity = importQuantity - importWithdrawnQuantity
+        const contractStatusCounts = contractRows.reduce<Record<string, number>>((acc, row) => {
+          const status = normalizeStatus(row['GN_contract_approval_status'] ?? row['GN_contract_state'])
+          if (status.replace(/^[-–—\s]+/, '').toLocaleLowerCase('ru') === 'снят с контроля') return acc
+          acc[status] = (acc[status] ?? 0) + 1
+          return acc
+        }, {})
+
+        const agreementStatusCounts = agreementRows.reduce<Record<string, number>>((acc, row) => {
+          const status = normalizeStatus(row['GN_additional_agreement_status'])
+          acc[status] = (acc[status] ?? 0) + 1
+          return acc
+        }, {})
+
+        if (!isMounted) return
+
+        setSummary({
+          serviceLines: bdrRows.length,
+          serviceTypes: serviceBudgetByType.size,
+          totalServiceBudget: Array.from(serviceBudgetByType.values()).reduce((sum, value) => sum + value, 0),
+          contractCount: contractRows.length,
+          contractStatusCounts,
+          agreementCount: agreementRows.length,
+          agreementStatusCounts,
+          cellularCount: cellularRows.length,
+          cellularActiveCount: cellularRows.filter((row) => String(row['GN_cellular_status'] ?? '').trim().toLowerCase() === 'действующий').length,
+          cellularGlonassCount: cellularRows.filter((row) => {
+            const tariffText = `${String(row['GN_cellular_tariff_plan'] ?? '')} ${String(row['GN_cellular_tariff_plan_details'] ?? '')}`.toLowerCase()
+            return tariffText.includes('глонасс')
+          }).length,
+          cellularNonBlockedPercent: cellularRows.length === 0
+            ? 0
+            : (cellularRows.filter((row) => String(row['GN_cellular_status'] ?? '').trim().toLowerCase() !== 'заблокирован').length / cellularRows.length) * 100,
+          cellularAccountCount: new Set(cellularRows
+            .map((row) => String(row['GN_cellular_account'] ?? '').trim())
+            .filter(Boolean)).size,
+          satelliteCount: satellitesSummary.satelliteCount,
+          satelliteActiveCount: satellitesSummary.activeSatelliteCount,
+          satelliteDepartmentCount: satellitesSummary.departmentCount,
+          satelliteDirectionCount: satellitesSummary.directionCount,
+          topServices: Array.from(serviceBudgetByType.entries())
+            .sort((a, b) => a[0].localeCompare(b[0], 'ru', { numeric: true, sensitivity: 'base' }))
+            .slice(0, 5)
+            .map(([name, budget]) => ({ name, budget })),
+          purchaseRows: purchaseRows.length,
+          purchaseQuantity,
+          purchaseOnmQuantity,
+          purchasePenQuantity,
+          purchaseInProgressQuantity,
+          purchaseDeliveredQuantity,
+          purchaseInProgressOnmQuantity,
+          purchaseInProgressPenQuantity,
+          purchaseDeliveredOnmQuantity,
+          purchaseDeliveredPenQuantity,
+          importRows: importSubstitutionRows.length,
+          importQuantity,
+          importRegistryQuantity,
+          importWithdrawnQuantity,
+          importRegistryPercent: importAdjustedQuantity > 0 ? (importRegistryQuantity / importAdjustedQuantity) * 100 : 0,
+          topEquipmentTypes,
+        })
+      } catch (err) {
+        if (!isMounted) return
+        setError(err instanceof Error ? err.message : 'Не удалось загрузить данные')
+      } finally {
+        if (isMounted) setLoading(false)
+      }
+    }
+
+    void loadSummary()
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!objectSummaryExpanded || objectSummaryLoaded) return
+    const controller = new AbortController()
+    async function loadObjectSummary(): Promise<void> {
+      setObjectSummaryLoading(true)
+      setObjectSummaryError(null)
+      try {
+        const [bdrResponse, equipmentResponse] = await Promise.all([
+          fetch('/api/gn/bdr', { cache: 'no-store', signal: controller.signal }),
+          fetch('/api/import-substitution', { cache: 'no-store', signal: controller.signal }),
+        ])
+        if (!bdrResponse.ok) throw new Error(`БДР HTTP ${bdrResponse.status}`)
+        if (!equipmentResponse.ok) throw new Error(`Оборудование HTTP ${equipmentResponse.status}`)
+        const [bdrRows, equipmentRows] = await Promise.all([
+          bdrResponse.json() as Promise<Array<Record<string, unknown>>>,
+          equipmentResponse.json() as Promise<Array<Record<string, unknown>>>,
+        ])
+        const parseNumber = parseDashboardNumber
+        const objectUsage = new Map<string, {
+          department: string
+          objectName: string
+          communicationServices: Map<string, DashboardServiceAccumulator>
+          communicationServiceCostTotal: number
+          equipmentTypes: Map<string, DashboardEquipmentAccumulator>
+          equipmentCostTotal: number
+        }>()
+        const getObjectUsage = (department: string, objectName: string) => {
+          const key = `${department}\u0000${objectName}`
+          const existing = objectUsage.get(key)
+          if (existing) return existing
+          const next = {
+            department,
+            objectName,
+            communicationServices: new Map<string, DashboardServiceAccumulator>(),
+            communicationServiceCostTotal: 0,
+            equipmentTypes: new Map<string, DashboardEquipmentAccumulator>(),
+            equipmentCostTotal: 0,
+          }
+          objectUsage.set(key, next)
+          return next
+        }
+        bdrRows.forEach((row) => {
+          const cost = parseNumber(row[dashboardBdrField])
+          if (cost === 0) return
+          const department = String(row['Подразделение'] ?? '').trim() || 'Не указано'
+          const objectNames = getBdrObjectNames(row)
+          for (const objectName of objectNames.length > 0 ? objectNames : ['Не указан']) {
+            const usage = getObjectUsage(department, objectName)
+            const service = String(row['Статья бюджета УС'] ?? '').trim() || 'Статья не указана'
+            const contract = String(row['Договор'] ?? '').trim() || 'Договор не указан'
+            const contractor = String(row['Контрагент'] ?? '').trim() || 'Контрагент не указан'
+            addDashboardServiceCost(usage.communicationServices, service, `${contractor} — ${contract}`, cost)
+            usage.communicationServiceCostTotal += cost
+          }
+        })
+        equipmentRows.forEach((row) => {
+          const department = String(row['Подразделение'] ?? '').trim() || 'Не указано'
+          const rawObjects = Array.isArray(row['ОБЪЕКТ']) ? row['ОБЪЕКТ'] : [row['ОБЪЕКТ']]
+          const objectNames = rawObjects.map((value) => String(value ?? '').trim()).filter(Boolean)
+          const equipmentType = String(row['Тип'] ?? '').trim() || 'Не указан'
+          const quantity = parseNumber(row['Количество'])
+          const cost = parseNumber(row['Платеж ТР без НДС'])
+          objectNames.forEach((objectName) => {
+            const usage = getObjectUsage(department, objectName)
+            addDashboardEquipment(usage.equipmentTypes, equipmentType, quantity, cost)
+            usage.equipmentCostTotal += cost
+          })
+        })
+        if (controller.signal.aborted) return
+        setObjectUsageSummary([...objectUsage.values()]
+          .map((row) => ({
+            ...row,
+            communicationServices: [...row.communicationServices.entries()]
+              .map(([serviceItem, { contractorsContracts, cost }]) => ({
+                serviceItem,
+                cost,
+                contractorsContracts: [...contractorsContracts].sort((left, right) => left.localeCompare(right, 'ru')),
+              }))
+              .sort((left, right) => left.serviceItem.localeCompare(right.serviceItem, 'ru')),
+            equipmentTypes: [...row.equipmentTypes.entries()]
+              .map(([type, { quantity, cost }]) => ({ type, quantity, cost }))
+              .sort((left, right) => left.type.localeCompare(right.type, 'ru')),
+          }))
+          .filter((row) => row.communicationServices.length > 0)
+          .sort((left, right) => left.department.localeCompare(right.department, 'ru')
+            || left.objectName.localeCompare(right.objectName, 'ru')))
+        setObjectSummaryLoaded(true)
+      } catch (err) {
+        if (!controller.signal.aborted) setObjectSummaryError(err instanceof Error ? err.message : 'Не удалось загрузить данные')
+      } finally {
+        if (!controller.signal.aborted) setObjectSummaryLoading(false)
+      }
+    }
+    void loadObjectSummary()
+    return () => controller.abort()
+  }, [objectSummaryExpanded, objectSummaryLoaded, objectSummaryAttempt, dashboardBdrField])
+
+  const formatCount = (value: number): string => new Intl.NumberFormat('ru-RU').format(value)
+  const formatMoney = (value: number): string => new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 0,
+  }).format(value)
+  const formatServiceMoney = (value: number): string => new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 2,
+  }).format(value)
+  const formatPercent = (value: number): string => new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 1,
+  }).format(value) + '%'
+  const formatQuantity = (value: number): string => new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 2,
+  }).format(value)
+
+  function openDashboardPopup(hash: string, name: string, features: string): void {
+    const popup = window.open(`${window.location.pathname}${hash}`, name, features)
+    if (popup) popup.focus()
+  }
+
+  function openBudgetMainWindow(): void {
+    openDashboardPopup(
+      '#budget-main-window',
+      'budget-main-window',
+      'popup=yes,width=1400,height=900,resizable=yes,scrollbars=yes',
+    )
+  }
+
+  function openImportSubstitutionTableWindow(): void {
+    openDashboardPopup(
+      '#import-substitution-table-window',
+      'import-substitution-table-window',
+      'popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes',
+    )
+  }
+
+  function openEquipmentAccountingWindow(): void {
+    const popup = window.open(
+      `${window.location.pathname}#equipment-accounting-window`,
+      'equipment-accounting-window',
+      'popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes',
+    )
+    if (popup) popup.focus()
+  }
+
+  const objectSummaryColumns: Array<{ key: ObjectUsageColumnKey; label: string }> = [
+    { key: 'department', label: 'Подразделение' },
+    { key: 'objectName', label: 'Объект' },
+    { key: 'communicationServices', label: 'Услуги связи' },
+    { key: 'equipmentTypes', label: 'ОБОРУДОВАНИЕ' },
+  ]
+  const objectSummaryTableWidth = Object.values(objectSummaryColumnWidths).reduce((total, width) => total + width, 0)
+
+  const getObjectSummarySortValue = (row: ObjectUsageSummaryRow, key: ObjectUsageSortKey): string | number => {
+    if (key === 'department') return row.department
+    if (key === 'objectName') return row.objectName
+    if (key === 'communicationServices') {
+      return row.communicationServices
+        .map(({ serviceItem, contractorsContracts, cost }) => `${serviceItem} ${contractorsContracts.join('; ')} ${cost}`)
+        .join(' ')
+    }
+    if (key === 'communicationServiceCostTotal') return row.communicationServiceCostTotal
+    if (key === 'equipmentTypes') return row.equipmentTypes.map(({ type, quantity, cost }) => `${type} ${quantity} ${cost}`).join(' ')
+    return row.equipmentCostTotal
+  }
+
+  const filteredAndSortedObjectUsageSummary = (objectSummaryExpanded ? objectUsageSummary : [])
+    .filter((row) => objectSummaryColumns.every(({ key }) => (
+      String(getObjectSummarySortValue(row, key)).toLocaleLowerCase()
+        .includes(objectSummaryFilters[key].trim().toLocaleLowerCase())
+    )))
+    .sort((left, right) => {
+      const leftValue = getObjectSummarySortValue(left, objectSummarySort.key)
+      const rightValue = getObjectSummarySortValue(right, objectSummarySort.key)
+      const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+        ? leftValue - rightValue
+        : String(leftValue).localeCompare(String(rightValue), 'ru', { numeric: true, sensitivity: 'base' })
+      return objectSummarySort.direction === 'asc' ? comparison : -comparison
+    })
+
+  const objectSummaryCostTotals = filteredAndSortedObjectUsageSummary.reduce(
+    (totals, row) => ({
+      communicationServiceCostTotal: totals.communicationServiceCostTotal + row.communicationServiceCostTotal,
+      equipmentCostTotal: totals.equipmentCostTotal + row.equipmentCostTotal,
+    }),
+    { communicationServiceCostTotal: 0, equipmentCostTotal: 0 },
+  )
+
+  function toggleObjectSummarySort(key: ObjectUsageSortKey): void {
+    setObjectSummarySort((previous) => previous.key === key
+      ? { key, direction: previous.direction === 'asc' ? 'desc' : 'asc' }
+      : { key, direction: 'asc' })
+  }
+
+  function startObjectSummaryColumnResize(event: ReactPointerEvent<HTMLSpanElement>, key: ObjectUsageColumnKey): void {
+    startColumnResize(event, 64, (width) => {
+      setObjectSummaryColumnWidths((previous) => ({ ...previous, [key]: width }))
+    }, true)
+  }
+
+  if (loading) {
+    return <p className="hint">Загрузка сводной информации...</p>
+  }
+
+  if (error || !summary) {
+    return <p className="hint hint--error">Ошибка загрузки: {error ?? 'данные недоступны'}</p>
+  }
+
+  const usefulLinks = [
+    { label: 'Диск на портале', href: 'http://portal.corp.nedra.gazprom.ru/company/personal/user/10705/disk/path/Отдел%20телекоммуникаций%20СИУСиС/' },
+    { label: 'Файл Услуги связи', href: 'http://portal.corp.nedra.gazprom.ru/~XHH57' },
+    { label: 'Redmine Отдел телекоммуникаций', href: 'https://appredmine.adm.ggr.gazprom.ru/projects/telecom/issues?per_page=50&query_id=30' },
+    { label: 'Управление связи', href: 'https://ucn.adm.gazprom.ru/ucn/' },
+    { label: 'Zabbix', href: 'https://monitoring.adm.ggr.gazprom.ru/zabbix/index.php' },
+    { label: 'NetBox', href: 'https://netbox.esk.nedra.gazprom.ru/' },
+  ]
+
+  const renderStatusItems = (statusCounts: Record<string, number>) => (
+    <ul className="dashboard-stat-list">
+      {Object.entries(statusCounts).map(([status, count]) => (
+        <li className="dashboard-stat-item" key={status}>
+          <span>{status}</span>
+          <strong>{formatCount(count)}</strong>
+        </li>
+      ))}
+    </ul>
+  )
+
+  return (
+    <section className="dashboard-section">
+      <div className="dashboard-header">             
+          <h2>Обзор ключевых метрик</h2>        
+      </div>
+      {tileStatusesError && (
+        <p className="hint hint--error" role="alert">
+          Не удалось загрузить статусы актуальности: {tileStatusesError}
+        </p>
+      )}
+
+      <div className="dashboard-grid">
+        <a
+          className="dashboard-card dashboard-card--link dashboard-card--budget-summary"
+          href="#budget-main-window"
+          onClick={(event) => {
+            event.preventDefault()
+            openBudgetMainWindow()
+          }}
+        >
+          <DashboardTrafficLight status={tileStatuses.services} label="Услуги связи" />
+          <h3>
+            Услуги связи ({DASHBOARD_BDR_FIELDS.find((field) => field.value === dashboardBdrField)?.label ?? dashboardBdrField})
+          </h3>
+          <ul className="dashboard-compact-list">
+            {summary.topServices.map((item) => (
+              <li key={item.name}>
+                {item.name} — {formatMoney(item.budget)}
+              </li>
+            ))}
+            <li className="dashboard-compact-list__total">
+              Итого — {formatMoney(summary.totalServiceBudget)}
+            </li>
+          </ul>
+        </a>
+
+        <a className="dashboard-card dashboard-card--link" href="#contracts">
+          <DashboardTrafficLight status={tileStatuses.contracts} label="Договоры" />
+          <h3>Договоры</h3>
+          <p className="dashboard-card-value">Всего договоров: <strong>{formatCount(summary.contractCount)}</strong></p>
+          {renderStatusItems(summary.contractStatusCounts)}
+          <p className="dashboard-card-value dashboard-card-value--spaced">Всего доп. соглашений: <strong>{formatCount(summary.agreementCount)}</strong></p>
+          {renderStatusItems(summary.agreementStatusCounts)}
+        </a>
+        <a className="dashboard-card dashboard-card--link" href="#primary">
+          <DashboardTrafficLight status={tileStatuses.primary} label="Первичные" />
+          <h3>Первичные</h3>
+          <p className="dashboard-card-value">Запущен в СЭД / принято на учет в 1С</p>
+          {primarySedError && (
+            <p className="hint hint--error" role="alert">
+              Не удалось загрузить данные первичных документов: {primarySedError}
+            </p>
+          )}
+          {primarySedSummary ? (
+            <ul className="dashboard-stat-list">
+              {primarySedSummary.map((month) => (
+                <li className="dashboard-stat-item" key={month.key}>
+                  <span>{month.label} ({formatCount(month.total)})</span>
+                  <strong>
+                    {formatCount(month.selected)} ({formatPercent(month.total > 0 ? (month.selected / month.total) * 100 : 0)})
+                    {' / '}
+                    {formatCount(month.acceptedIn1C)} ({formatPercent(month.total > 0 ? (month.acceptedIn1C / month.total) * 100 : 0)})
+                  </strong>
+                </li>
+              ))}
+            </ul>
+          ) : !primarySedError ? (
+            <p className="dashboard-card-value">Загрузка...</p>
+          ) : null}
+        </a>
+        <a className="dashboard-card dashboard-card--link" href="#cellular">
+          <DashboardTrafficLight status={tileStatuses.cellular} label="Сотовая связь" />
+          <h3>Сотовая связь</h3>
+          <ul className="dashboard-stat-list">
+            <li className="dashboard-stat-item">
+              <span>Номера</span>
+              <strong>{formatCount(summary.cellularCount)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Действующие (с ГЛОНАСС)</span>
+              <strong>
+                {formatCount(summary.cellularActiveCount)} ({formatPercent(summary.cellularCount > 0
+                  ? (summary.cellularActiveCount / summary.cellularCount) * 100
+                  : 0)})
+              </strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>С тарифом Глонасс</span>
+              <strong>{formatCount(summary.cellularGlonassCount)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Лицевые счета</span>
+              <strong>{formatCount(summary.cellularAccountCount)}</strong>
+            </li>
+          </ul>
+        </a>
+
+        <a className="dashboard-card dashboard-card--link" href="#satellites-control">
+          <DashboardTrafficLight status={tileStatuses.satellites} label="Спутники" />
+          <h3>Спутники (ГКС)</h3>
+          <ul className="dashboard-stat-list">
+            <li className="dashboard-stat-item">
+              <span>Спутниковые станции</span>
+              <strong>{formatCount(summary.satelliteCount)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Активные станции</span>
+              <strong>
+                {formatCount(summary.satelliteActiveCount)} ({formatPercent(summary.satelliteCount > 0
+                  ? (summary.satelliteActiveCount / summary.satelliteCount) * 100
+                  : 0)})
+              </strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Филиалы</span>
+              <strong>{formatCount(summary.satelliteDepartmentCount)}</strong>
+            </li>
+          </ul>
+        </a>
+
+        <a className="dashboard-card dashboard-card--link" href="#equipment-purchases">
+          <DashboardTrafficLight status={tileStatuses.purchases} label="Закупки" />
+          <h3>Закупки</h3>
+          <ul className="dashboard-stat-list">
+            <li className="dashboard-stat-item">
+              <span>Строк за 2026 год</span>
+              <strong>{formatCount(summary.purchaseRows)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Всего оборудования</span>
+              <strong>{formatQuantity(summary.purchaseQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>ОНМ / ПЭН</span>
+              <strong>{formatQuantity(summary.purchaseOnmQuantity)} / {formatQuantity(summary.purchasePenQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>В закупке / поставленно</span>
+              <strong>{formatQuantity(summary.purchaseInProgressQuantity)} / {formatQuantity(summary.purchaseDeliveredQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>В закупке: ОНМ / ПЭН</span>
+              <strong>{formatQuantity(summary.purchaseInProgressOnmQuantity)} / {formatQuantity(summary.purchaseInProgressPenQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Поставленно: ОНМ / ПЭН</span>
+              <strong>{formatQuantity(summary.purchaseDeliveredOnmQuantity)} / {formatQuantity(summary.purchaseDeliveredPenQuantity)}</strong>
+            </li>
+          </ul>          
+        </a>
+
+        <a
+          className="dashboard-card dashboard-card--link"
+          href="#import-substitution-table-window"
+          onClick={(event) => {
+            event.preventDefault()
+            openImportSubstitutionTableWindow()
+          }}
+        >
+          <DashboardTrafficLight status={tileStatuses['import-substitution']} label="Импортозамещение" />
+          <h3>Импортозамещение</h3>
+          <ul className="dashboard-stat-list">
+            <li className="dashboard-stat-item">
+              <span>Позиций</span>
+              <strong>{formatCount(summary.importRows)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>Общий объем</span>
+              <strong>{formatQuantity(summary.importQuantity)}</strong>
+            </li>
+            <li className="dashboard-stat-item">
+              <span>РФ в реестре</span>
+              <strong>{formatQuantity(summary.importRegistryQuantity)} ({formatPercent(summary.importRegistryPercent)})</strong>
+            </li>
+          </ul>
+                  </a>
+
+        <button
+          type="button"
+          className="dashboard-card dashboard-card--link dashboard-card--equipment-dashboard"
+          onClick={openEquipmentAccountingWindow}
+          aria-label="Открыть учет оборудования в новом окне"
+        >
+          <DashboardTrafficLight status={tileStatuses['equipment-accounting']} label="Учет оборудования" />
+          <h3>Учет оборудования</h3>
+          <ul className="dashboard-stat-list dashboard-equipment-import-list">
+            {summary.topEquipmentTypes.map((item) => (
+              <li className="dashboard-stat-item" key={item.type}>
+                <span>{item.type}</span>
+                <strong>{formatQuantity(item.quantity)}</strong>
+              </li>
+            ))}
+            {summary.topEquipmentTypes.length === 0 && (
+              <li className="dashboard-stat-item"><span>Нет данных</span></li>
+            )}
+          </ul>
+        </button>
+
+        <div className="dashboard-card dashboard-card--links">
+          <h3>ссылки</h3>
+          <ul className="dashboard-links-list">
+            {usefulLinks.map((link) => (
+              <li key={link.href}>
+                <a href={link.href} target="_blank" rel="noreferrer">
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <section className="dashboard-object-summary">
+        <h2>
+          <button type="button" className="invest-program-section-toggle page-text-link"
+            aria-expanded={objectSummaryExpanded} aria-controls="dashboard-object-summary-content"
+            onClick={() => setObjectSummaryExpanded((expanded) => !expanded)}>
+            <span aria-hidden="true">{objectSummaryExpanded ? '▾' : '▸'}</span>
+            Сводка по подразделениям и объектам
+          </button>
+        </h2>
+        <div id="dashboard-object-summary-content" hidden={!objectSummaryExpanded}>
+        {objectSummaryExpanded && objectSummaryLoading && <p className="hint">Загрузка данных...</p>}
+        {objectSummaryExpanded && objectSummaryError && (
+          <>
+            <p className="hint hint--error" role="alert">Ошибка: {objectSummaryError}</p>
+            <button type="button" className="page-text-link" onClick={() => setObjectSummaryAttempt((attempt) => attempt + 1)}>
+              Повторить загрузку
+            </button>
+          </>
+        )}
+        {objectSummaryExpanded && objectSummaryLoaded && (
+        <div className="guide-table-wrap dashboard-object-summary__table-wrap">
+          <table
+            className="guide-table table-compact dashboard-object-summary__table"
+            style={{ width: '100%', minWidth: objectSummaryTableWidth, tableLayout: 'fixed' }}
+          >
+            <colgroup>
+              {objectSummaryColumns.map(({ key }) => (
+                <col key={key} style={{ width: `${objectSummaryColumnWidths[key]}px` }} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr>
+                {objectSummaryColumns.map(({ key, label }) => (
+                  <th
+                    key={key}
+                    className="dashboard-object-summary__resizable-header"
+                    style={{ width: objectSummaryColumnWidths[key] }}
+                  >
+                    <button
+                      type="button"
+                      className="dashboard-object-summary__sort-button"
+                      onClick={() => toggleObjectSummarySort(key)}
+                    >
+                      {key === 'communicationServices'
+                        ? `Услуги связи (${DASHBOARD_BDR_FIELDS.find((field) => field.value === dashboardBdrField)?.label ?? dashboardBdrField})`
+                        : label}
+                      {objectSummarySort.key === key ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                    </button>
+                    <input
+                      className="dashboard-object-summary__filter"
+                      type="search"
+                      aria-label={`Фильтр: ${label}`}
+                      value={objectSummaryFilters[key]}
+                      onChange={(event) => setObjectSummaryFilters((previous) => ({
+                        ...previous,
+                        [key]: event.target.value,
+                      }))}
+                    />
+                    {key === 'communicationServices' && (
+                      <>
+                        <button type="button" className="dashboard-object-summary__sort-button"
+                          onClick={() => toggleObjectSummarySort('communicationServiceCostTotal')}>
+                          Затраты в год{objectSummarySort.key === 'communicationServiceCostTotal' ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </button>
+                        <span className="dashboard-object-summary__header-total">
+                          {formatServiceMoney(objectSummaryCostTotals.communicationServiceCostTotal)}
+                        </span>
+                      </>
+                    )}
+                    {key === 'equipmentTypes' && (
+                      <>
+                        <button type="button" className="dashboard-object-summary__sort-button"
+                          onClick={() => toggleObjectSummarySort('equipmentCostTotal')}>
+                          Стоимость оборудования{objectSummarySort.key === 'equipmentCostTotal' ? (objectSummarySort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </button>
+                        <span className="dashboard-object-summary__header-total">
+                          {formatServiceMoney(objectSummaryCostTotals.equipmentCostTotal)}
+                        </span>
+                      </>
+                    )}
+                    <span
+                      className="dashboard-object-summary__resizer"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={`Изменить ширину столбца ${label}`}
+                      onPointerDown={(event) => startObjectSummaryColumnResize(event, key)}
+                    />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredAndSortedObjectUsageSummary.map((row) => (
+                <tr key={`${row.department}\u0000${row.objectName}`}>
+                  <td>{row.department}</td>
+                  <td>{row.objectName}</td>
+                  <td>
+                    {row.communicationServices.length > 0 ? (
+                      <ul className="dashboard-object-summary__list">
+                        {row.communicationServices.map(({ serviceItem, contractorsContracts, cost }) => (
+                          <li key={serviceItem}>
+                            <strong>{serviceItem}</strong> ({contractorsContracts.join('; ')}) — {formatServiceMoney(cost)}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : '—'}
+                    <strong>Итого: {formatServiceMoney(row.communicationServiceCostTotal)}</strong>
+                  </td>
+                  <td>
+                    {row.equipmentTypes.length > 0 ? (
+                      <ul className="dashboard-object-summary__list">
+                        {row.equipmentTypes.map(({ type, quantity, cost }) => (
+                          <li key={type}>{type} — {formatQuantity(quantity)} шт. — {formatServiceMoney(cost)}</li>
+                        ))}
+                      </ul>
+                    ) : '—'}
+                    <strong>Итого: {formatServiceMoney(row.equipmentCostTotal)}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={2}><strong>Итого</strong></td>
+                <td><strong>{formatServiceMoney(objectSummaryCostTotals.communicationServiceCostTotal)}</strong></td>
+                <td><strong>{formatServiceMoney(objectSummaryCostTotals.equipmentCostTotal)}</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+          {filteredAndSortedObjectUsageSummary.length === 0 && (
+            <p className="hint">
+              {objectUsageSummary.length === 0 ? 'Нет данных по объектам.' : 'По заданным фильтрам данные не найдены.'}
+            </p>
+          )}
+        </div>
+        )}
+        </div>
+      </section>
+    </section>
+  )
+}
+

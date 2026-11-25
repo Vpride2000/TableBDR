@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
 import type { PrimaryImportMonth, PrimaryImportRecord } from '../shared/primaryExcel'
+import { PRIMARY_MONTHS } from '../shared/primaryMonths'
 import { formatHttpError } from './utils/httpUtils'
-import { parsePrimaryExcelRows, PRIMARY_EXCEL_FIELDS, type PrimaryExcelField, type PrimaryExcelMapping } from './utils/primaryExcel'
+import { defaultPrimaryExcelMapping, parsePrimaryExcelRows, PRIMARY_EXCEL_FIELDS, readPrimaryExcelWorkbook, type PrimaryExcelMapping } from './utils/primaryExcel'
 import type { BdrOption } from './utils/primaryBdr'
 
 type Lookup = { id: number; label: string; departmentIds?: number[]; contractorId?: number; date?: string }
@@ -15,16 +16,12 @@ type Props = {
   contractors: Lookup[]
   contracts: Lookup[]
   bdr: BdrOption[]
+  initialMonth: PrimaryImportMonth
   onCancel: () => void
   onComplete: (created: number, updated: number) => void
+  onSavingChange: (saving: boolean) => void
+  onError: (message: string) => void
 }
-
-const MONTHS: Array<{ key: PrimaryImportMonth; label: string }> = [
-  { key: 'october', label: 'Октябрь' },
-  { key: 'november', label: 'Ноябрь' },
-  { key: 'december', label: 'Декабрь' },
-]
-const MONTHLY_FIELDS = new Set<PrimaryExcelField>(['amountWithVat', 'sedLaunched', 'acceptedIn1C', 'note'])
 
 function readSheet(workbook: XLSX.WorkBook, name: string): unknown[][] {
   const sheet = workbook.Sheets[name]
@@ -36,24 +33,11 @@ function readSheet(workbook: XLSX.WorkBook, name: string): unknown[][] {
   return matrix
 }
 
-function defaultMapping(header: unknown[], month: PrimaryImportMonth): PrimaryExcelMapping {
-  const mapping: PrimaryExcelMapping = {}
-  const monthName = MONTHS.find((item) => item.key === month)?.label ?? ''
-  for (const field of PRIMARY_EXCEL_FIELDS) {
-    const candidates = MONTHLY_FIELDS.has(field.key)
-      ? [`${monthName}: ${field.label}`, field.label]
-      : [field.label]
-    const column = candidates.map((candidate) => header.findIndex((value) => String(value ?? '').trim() === candidate)).find((index) => index >= 0)
-    if (column !== undefined && !Object.values(mapping).includes(column)) mapping[field.key] = column
-  }
-  return mapping
-}
-
-export default function PrimaryExcelImport({ file, rows, departments, objects, contractors, contracts, bdr, onCancel, onComplete }: Props): React.ReactElement {
+export default function PrimaryExcelImport({ file, rows, departments, objects, contractors, contracts, bdr, initialMonth, onCancel, onComplete, onSavingChange, onError }: Props): React.ReactElement {
   const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null)
   const [sheetName, setSheetName] = useState('')
   const [matrix, setMatrix] = useState<unknown[][]>([])
-  const [month, setMonth] = useState<PrimaryImportMonth>('october')
+  const [month, setMonth] = useState<PrimaryImportMonth>(initialMonth)
   const [mapping, setMapping] = useState<PrimaryExcelMapping>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -63,7 +47,7 @@ export default function PrimaryExcelImport({ file, rows, departments, objects, c
     let active = true
     async function openFile(): Promise<void> {
       try {
-        const nextWorkbook = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+        const nextWorkbook = readPrimaryExcelWorkbook(await file.arrayBuffer())
         const first = nextWorkbook.SheetNames[0]
         if (!first) throw new Error('В файле отсутствуют листы')
         if (active) {
@@ -73,7 +57,7 @@ export default function PrimaryExcelImport({ file, rows, departments, objects, c
         const nextMatrix = readSheet(nextWorkbook, first)
         if (active) {
           setMatrix(nextMatrix)
-          setMapping(defaultMapping(nextMatrix[0], 'october'))
+          setMapping(defaultPrimaryExcelMapping(nextMatrix[0]))
           setError(null)
         }
       } catch (readError) {
@@ -84,7 +68,7 @@ export default function PrimaryExcelImport({ file, rows, departments, objects, c
     }
     void openFile()
     return () => { active = false }
-  }, [file])
+  }, [file, initialMonth])
 
   function changeSheet(name: string): void {
     if (!workbook) return
@@ -92,7 +76,7 @@ export default function PrimaryExcelImport({ file, rows, departments, objects, c
     try {
       const next = readSheet(workbook, name)
       setMatrix(next)
-      setMapping(defaultMapping(next[0], month))
+      setMapping(defaultPrimaryExcelMapping(next[0]))
       setError(null)
     } catch (readError) {
       setMatrix([])
@@ -104,6 +88,7 @@ export default function PrimaryExcelImport({ file, rows, departments, objects, c
   async function submit(): Promise<void> {
     setError(null)
     setSaving(true)
+    onSavingChange(true)
     try {
       const records: PrimaryImportRecord[] = parsePrimaryExcelRows(matrix, mapping, { rows, departments, objects, contractors, contracts, bdr })
       const response = await fetch('/api/primary/import', {
@@ -118,9 +103,12 @@ export default function PrimaryExcelImport({ file, rows, departments, objects, c
       const result = await response.json() as { created: number; updated: number }
       onComplete(result.created, result.updated)
     } catch (importError) {
-      setError(importError instanceof Error ? importError.message : 'Не удалось загрузить Excel')
+      const message = importError instanceof Error ? importError.message : 'Не удалось загрузить Excel'
+      setError(message)
+      onError(message)
     } finally {
       setSaving(false)
+      onSavingChange(false)
     }
   }
 
@@ -141,9 +129,8 @@ export default function PrimaryExcelImport({ file, rows, departments, objects, c
             <select value={month} disabled={saving} onChange={(event) => {
               const next = event.target.value as PrimaryImportMonth
               setMonth(next)
-              setMapping(defaultMapping(matrix[0] ?? [], next))
             }}>
-              {MONTHS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+              {PRIMARY_MONTHS.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
             </select>
           </label>
           <p className="hint">Заголовки должны быть в первой строке. Строки с ID обновляются, без ID добавляются. Пустые ячейки выбранных столбцов очищают значения; невыбранные столбцы не изменяются.</p>
@@ -166,7 +153,6 @@ export default function PrimaryExcelImport({ file, rows, departments, objects, c
               </select>
             </label>
           ))}
-          <p className="hint">Объекты перечисляются через «;». Флажки: да/нет или 1/0. Расчётные столбцы «На кого расходы» и «БДР26корр» не импортируются.</p>
         </div>
       )}
       {error && <p className="hint hint--error" role="alert">{error}</p>}

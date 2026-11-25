@@ -15,7 +15,7 @@ interface AddBudgetRowPageProps {
 interface NewBdrFormState {
   pao_budget_item: string;
   department: string;
-  object_name: string;
+  object_names: string[];
   dogovor: string;
   contractor: string;
   budget_item: string;
@@ -23,6 +23,7 @@ interface NewBdrFormState {
   ed_izm: string;
   kol_vo: string;
   limit: string;
+  limit_bdr_column: string;
   edin_limit: string;
   comments: string;
 }
@@ -34,6 +35,7 @@ interface FieldDefinition {
   placeholder: string;
   required?: boolean;
   type?: 'text' | 'number';
+  multiple?: boolean;
   selectConfig?: {
     endpoint: string;
     labelKey: string;
@@ -42,6 +44,14 @@ interface FieldDefinition {
 
 type SelectOption = { value: string; label: string };
 type LookupRowsByField = Partial<Record<keyof NewBdrFormState, Array<Record<string, unknown>>>>;
+
+const LIMIT_BDR_COLUMN_OPTIONS: SelectOption[] = [
+  { value: 'БДР25', label: 'БДР25 (столбец «Лимит»)' },
+  { value: 'БДР25корр', label: 'БДР25корр' },
+  { value: 'БДР26', label: 'БДР26' },
+  { value: 'БДР26корр', label: 'БДР26корр' },
+  { value: 'БДР27', label: 'БДР27' },
+];
 
 const FORM_FIELDS: FieldDefinition[] = [
   {
@@ -67,11 +77,12 @@ const FORM_FIELDS: FieldDefinition[] = [
     },
   },
   {
-    name: 'object_name',
+    name: 'object_names',
     label: 'Объект',
-    comment: 'Укажите объект из справочника GN_departament_object.',
+    comment: 'Выберите один или несколько объектов. Для множественного выбора удерживайте Ctrl (Windows/Linux) или Command (macOS).',
     placeholder: 'Например: Главный офис',
     required: true,
+    multiple: true,
     selectConfig: {
       endpoint: '/api/gn/objects',
       labelKey: 'GN_departament_object',
@@ -115,27 +126,24 @@ const FORM_FIELDS: FieldDefinition[] = [
     label: 'Предмет договора',
     comment: 'Краткое описание услуги или предмета закупки.',
     placeholder: 'Например: Корпоративный канал передачи данных',
-    required: true,
   },
   {
     name: 'ed_izm',
     label: 'Ед. изм.',
     comment: 'Единица измерения: шт., мес., пакет и т.д.',
     placeholder: 'Например: мес.',
-    required: true,
   },
   {
     name: 'kol_vo',
     label: 'Кол-во',
     comment: 'Числовое значение количества по позиции.',
     placeholder: 'Например: 2',
-    required: true,
     type: 'number',
   },
   {
     name: 'limit',
     label: 'Лимит',
-    comment: 'Общий лимит по позиции в числовом формате.',
+    comment: 'Введите сумму и выберите столбец БДР, в который её сохранить.',
     placeholder: 'Например: 120000',
     required: true,
     type: 'number',
@@ -145,7 +153,6 @@ const FORM_FIELDS: FieldDefinition[] = [
     label: 'Един. лимит',
     comment: 'Лимит на единицу, только число.',
     placeholder: 'Например: 5000',
-    required: true,
     type: 'number',
   },
   {
@@ -159,7 +166,7 @@ const FORM_FIELDS: FieldDefinition[] = [
 const EMPTY_NEW_ROW: NewBdrFormState = {
   pao_budget_item: '',
   department: '',
-  object_name: '',
+  object_names: [],
   dogovor: '',
   contractor: '',
   budget_item: '',
@@ -167,6 +174,7 @@ const EMPTY_NEW_ROW: NewBdrFormState = {
   ed_izm: '',
   kol_vo: '',
   limit: '',
+  limit_bdr_column: 'БДР25',
   edin_limit: '',
   comments: '',
 };
@@ -202,10 +210,17 @@ export default function AddBudgetRowPage({ onBack, showFormOnLoad = false }: Add
   }, []);
 
   function onNewRowChange(event: ChangeEvent<HTMLInputElement | HTMLSelectElement>): void {
-    const { name, value } = event.target;
+    const target = event.currentTarget;
+    if (target instanceof HTMLSelectElement && target.multiple) {
+      const selectedValues = Array.from(target.selectedOptions, (option) => option.value);
+      setNewRow((prev) => ({ ...prev, [target.name]: selectedValues }));
+      return;
+    }
+
+    const { name, value } = target;
     setNewRow((prev) => {
       if (name === 'department') {
-        return { ...prev, department: value, object_name: '' };
+        return { ...prev, department: value, object_names: [] };
       }
 
       if (name === 'contractor') {
@@ -222,7 +237,7 @@ export default function AddBudgetRowPage({ onBack, showFormOnLoad = false }: Add
 
     const rows = lookupRows[field.name] ?? [];
 
-    if (field.name === 'object_name') {
+    if (field.name === 'object_names') {
       if (!newRow.department) return [];
 
       const departments = lookupRows.department ?? [];
@@ -323,14 +338,34 @@ export default function AddBudgetRowPage({ onBack, showFormOnLoad = false }: Add
             {FORM_FIELDS.map((field) => (
               <div className="form-field" key={field.name}>
                 <label htmlFor={field.name} className="form-field-label">
-                  {field.label}
+                  {field.label}{field.required ? ' (обязательно)' : ''}
                 </label>
                 <p className="form-field-comment">{field.comment}</p>
+                {field.name === 'limit' && (
+                  <>
+                    <label htmlFor="limit_bdr_column" className="form-field-label">
+                      Столбец БДР
+                    </label>
+                    <select
+                      id="limit_bdr_column"
+                      name="limit_bdr_column"
+                      value={newRow.limit_bdr_column}
+                      onChange={onNewRowChange}
+                    >
+                      {LIMIT_BDR_COLUMN_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
                 {field.selectConfig ? (
                   (() => {
                     const options = getSelectOptions(field);
-                    const needsDepartment = field.name === 'object_name';
+                    const needsDepartment = field.name === 'object_names';
                     const needsContractor = field.name === 'dogovor';
+                    const fieldValue = newRow[field.name];
                     const disabled =
                       (needsDepartment && !newRow.department) ||
                       (needsContractor && !newRow.contractor);
@@ -339,18 +374,24 @@ export default function AddBudgetRowPage({ onBack, showFormOnLoad = false }: Add
                   <select
                     id={field.name}
                     name={field.name}
-                    value={newRow[field.name]}
+                    multiple={field.multiple}
+                    size={field.multiple ? Math.min(Math.max(options.length, 3), 5) : undefined}
+                    value={field.multiple
+                      ? Array.isArray(fieldValue) ? fieldValue : []
+                      : String(fieldValue ?? '')}
                     onChange={onNewRowChange}
                     required={Boolean(field.required)}
                     disabled={disabled}
                   >
-                    <option value="">
-                      {needsDepartment && !newRow.department
-                        ? 'Сначала выберите Подразделение'
-                        : needsContractor && !newRow.contractor
-                          ? 'Сначала выберите Контрагента'
-                          : 'Выберите значение'}
-                    </option>
+                    {!field.multiple && (
+                      <option value="">
+                        {needsDepartment && !newRow.department
+                          ? 'Сначала выберите Подразделение'
+                          : needsContractor && !newRow.contractor
+                            ? 'Сначала выберите Контрагента'
+                            : 'Выберите значение'}
+                      </option>
+                    )}
                     {options.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
@@ -365,7 +406,7 @@ export default function AddBudgetRowPage({ onBack, showFormOnLoad = false }: Add
                     name={field.name}
                     type={field.type ?? 'text'}
                     step={field.type === 'number' ? 'any' : undefined}
-                    value={newRow[field.name]}
+                    value={String(newRow[field.name] ?? '')}
                     onChange={onNewRowChange}
                     placeholder={field.placeholder}
                     required={Boolean(field.required)}

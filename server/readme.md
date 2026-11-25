@@ -123,16 +123,17 @@
   - `dogovor`: string
   - `contractor`: string
   - `budget_item`: string
-  - `predmet_dogovora`: string
-  - `ed_izm`: string
-  - `kol_vo`: number
+  - `predmet_dogovora?`: string
+  - `ed_izm?`: string
+  - `kol_vo?`: number
   - `limit`: number
+  - `limit_bdr_column?`: `БДР25` | `БДР25корр` | `БДР26` | `БДР26корр` | `БДР27`; по умолчанию `БДР25`
   - `bdr25_corr_kol_vo?`: number
   - `bdr26_kol_vo?`: number
   - `bdr26_corr_kol_vo?`: number
   - `bdr27?`: number
   - `bdr27_kol_vo?`: number
-  - `edin_limit`: number
+  - `edin_limit?`: number
   - `comments?`: string
 
 ### `PUT /api/gn/bdr/:id`

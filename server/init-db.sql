@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS "GN_primary_documents" (
   "amount_with_vat" NUMERIC(15, 2) NOT NULL DEFAULT 0,
   "details" TEXT NOT NULL DEFAULT '',
   "details_enabled" BOOLEAN NOT NULL DEFAULT FALSE,
+  "general_note" TEXT NOT NULL DEFAULT '',
   "edo_arrival_date" DATE,
   "sed_launch_date" DATE,
   "sed_launched" BOOLEAN NOT NULL DEFAULT FALSE,
@@ -250,8 +251,8 @@ CREATE TABLE IF NOT EXISTS "GN_bdr" (
   "GN_budget_network_item_FK" INTEGER NOT NULL,
   "GN_bdr_predmet_dogovora" TEXT NOT NULL,
   "GN_bdr_ed.izm" TEXT NOT NULL,
-  "GN_bdr_kol-vo" NUMERIC NOT NULL,
-  "GN_bdr_limit" NUMERIC NOT NULL,
+  "GN_bdr_kol-vo" NUMERIC,
+  "GN_bdr_limit" NUMERIC,
   "GN_bdr_calculation" TEXT NOT NULL DEFAULT '',
   "GN_bdr_bdr25_corr" NUMERIC,
   "GN_bdr_bdr25_corr_kol_vo" NUMERIC,
@@ -261,9 +262,16 @@ CREATE TABLE IF NOT EXISTS "GN_bdr" (
   "GN_bdr_bdr26_corr_kol_vo" NUMERIC,
   "GN_bdr_bdr27_kol_vo" NUMERIC,
   "GN_bdr_bdr27" NUMERIC,
-  "GN_bdr_edin.limit" NUMERIC NOT NULL,
+  "GN_bdr_edin.limit" NUMERIC,
   "GN_bdr_comments" TEXT NOT NULL,
   PRIMARY KEY("GN_bdr_ID")
+);
+
+CREATE TABLE IF NOT EXISTS "GN_bdr_objects" (
+  "GN_bdr_ID" INTEGER NOT NULL REFERENCES "GN_bdr"("GN_bdr_ID") ON DELETE CASCADE,
+  "GN_do_id" INTEGER NOT NULL REFERENCES "GN_departament_object"("GN_do_id") ON DELETE RESTRICT,
+  "sort_order" INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY ("GN_bdr_ID", "GN_do_id")
 );
 
 CREATE TABLE IF NOT EXISTS "GN_bdr_limit_calculation" (

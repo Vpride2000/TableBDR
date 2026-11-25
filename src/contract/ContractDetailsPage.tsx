@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { formatHttpError } from '../utils/httpUtils';
+import { fetchReferences } from '../utils/referenceRequests';
 import type { ContractAdditionalAgreement } from '../types/types';
 import { personalAccountOptions } from '../../shared/personalAccounts';
+import { parseFiniteNumericValue as parseBudgetAmount } from '../utils/numericValues';
+import { displayLookupLabel, mapLookupOptions, type LookupOption } from '../utils/lookupOptions';
+import { formatDateDisplay, normalizeDateValue } from './contractDates';
 
 // Страница просмотра деталей по конкретному договору.
 type Row = Record<string, unknown>;
-type LookupOption = { value: string; label: string }
 type DogovorMetadata = { date: string; signer: string; personalAccount: string }
 const CONTRACT_CONTROL_UPDATED_KEY = 'contracts-control-updated'
 const BDR_UPDATED_EVENT_KEY = 'bdr:last-update'
@@ -15,12 +18,6 @@ const BDR_CURRENCY_FORMATTER = new Intl.NumberFormat('ru-RU', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
-
-function parseBudgetAmount(value: unknown): number {
-  const normalized = String(value ?? '').replace(/\s+/g, '').replace(',', '.')
-  const amount = Number(normalized)
-  return Number.isFinite(amount) ? amount : 0
-}
 
 type ContractInfo = {
   GN_contract_id: number
@@ -73,7 +70,6 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
   const [editAgreementDate, setEditAgreementDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [editAgreementDescription, setEditAgreementDescription] = useState('');
   const [editAgreementAmount, setEditAgreementAmount] = useState('0');
-  const [editAgreementStatus, setEditAgreementStatus] = useState('действующий');
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [isAddingAgreement, setIsAddingAgreement] = useState(false);
@@ -128,9 +124,7 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
       try {
         const [contractsResponse, contractorsResponse, dogovorsResponse, departmentsResponse, agreementsResponse] = await Promise.all([
           fetch('/api/gn/contracts'),
-          fetch('/api/gn/contractors'),
-          fetch('/api/gn/dogovors'),
-          fetch('/api/gn/departments'),
+          ...fetchReferences('contractors', 'dogovors', 'departments'),
           fetch('/api/gn/contract-additional-agreements'),
         ]);
 
@@ -180,27 +174,6 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
     void loadContractMetadata();
   }, [contractId]);
 
-  function mapLookupOptions(rows: Row[], valueKey: string, labelKey: string): LookupOption[] {
-    return rows.map((row) => ({
-      value: String(row[valueKey] ?? ''),
-      label: String(row[labelKey] ?? ''),
-    }))
-  }
-
-  function displayLookupLabel(options: LookupOption[], value: unknown): string {
-    const normalizedValue = String(value ?? '')
-    return options.find((option) => option.value === normalizedValue)?.label ?? normalizedValue
-  }
-
-  function normalizeDateValue(value: unknown): string {
-    if (value instanceof Date) {
-      return value.toISOString().slice(0, 10)
-    }
-    const normalizedValue = String(value ?? '')
-    if (normalizedValue === '') return ''
-    return normalizedValue.length >= 10 ? normalizedValue.slice(0, 10) : normalizedValue
-  }
-
   function normalizeDateValueWithFallback(value: unknown): string {
     const normalized = normalizeDateValue(value)
     if (normalized === '') {
@@ -208,16 +181,6 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
       return new Date().toISOString().slice(0, 10)
     }
     return normalized
-  }
-
-  function formatDateDisplay(value: string): string {
-    if (!value) return value
-    // Получаем только часть с датой (YYYY-MM-DD)
-    const dateOnly = value.slice(0, 10)
-    if (dateOnly.length < 10) return value
-    const [year, month, day] = dateOnly.split('-')
-    const shortYear = year.slice(-2)
-    return `${day}.${month}.${shortYear}`
   }
 
   function startEditContract(): void {
