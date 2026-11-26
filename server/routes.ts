@@ -28,6 +28,19 @@ function parseNotesId(value: string): number | null {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
+function isValidOptionalContractAmount(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') return true;
+  if (typeof value !== 'number' && typeof value !== 'string') return false;
+  return String(value).trim() !== '' && Number.isFinite(Number(value));
+}
+
+function normalizeOptionalContractMonth(value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return `${value}-01`;
+  if (/^\d{4}-(0[1-9]|1[0-2])-\d{2}$/.test(value)) return value;
+  return null;
+}
+
 function normalizeBdrObjectNames(value: unknown): string[] | null {
   const values = typeof value === 'string' ? [value] : value;
   if (!Array.isArray(values) || !values.every((item) => typeof item === 'string')) return null;
@@ -1570,6 +1583,11 @@ export function setupRoutes(app: Express): void {
       const result = await client.query(`
         SELECT
           c.*,
+          CASE
+            WHEN c."GN_contract_limit" IS NOT NULL AND c."GN_contract_fact" IS NOT NULL
+              THEN c."GN_contract_limit" - c."GN_contract_fact"
+            ELSE NULL
+          END AS "GN_contract_remaining_limit",
           d."GN_dogovor" AS "GN_contract_name",
           d."GN_dogovor_note" AS "GN_dogovor_note",
           signer."GN_department" AS "GN_dogovor_signer"
@@ -1628,10 +1646,26 @@ export function setupRoutes(app: Express): void {
       GN_contract_term_to?: string;
       GN_contract_side?: string;
       GN_contract_asez_number?: string;
+      GN_contract_limit?: number | string | null;
+      GN_contract_vat?: string;
+      GN_contract_fact?: number | string | null;
+      GN_contract_fact_date?: string | null;
+      GN_contract_basis?: string;
     };
 
     if (!payload || !payload.GN_contract_dogovor_FK) {
       res.status(400).json({ error: 'Missing required fields: GN_contract_dogovor_FK' });
+      return;
+    }
+    if (!isValidOptionalContractAmount(payload.GN_contract_limit)
+      || !isValidOptionalContractAmount(payload.GN_contract_fact)
+      || (payload.GN_contract_vat !== undefined && !['22%', 'без НДС', 'смешанный'].includes(payload.GN_contract_vat))
+      || (payload.GN_contract_basis !== undefined && !['17.1.9', 'ВЗЛ', 'прочее'].includes(payload.GN_contract_basis))
+      || (payload.GN_contract_fact_date != null
+        && payload.GN_contract_fact_date !== ''
+        && normalizeOptionalContractMonth(payload.GN_contract_fact_date) === null)
+    ) {
+      res.status(400).json({ error: 'Invalid contract parameters' });
       return;
     }
 
@@ -1653,9 +1687,19 @@ export function setupRoutes(app: Express): void {
            "GN_contract_term_from",
            "GN_contract_term_to",
            "GN_contract_side",
-           "GN_contract_asez_number"
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           "GN_contract_asez_number",
+           "GN_contract_limit",
+           "GN_contract_vat",
+           "GN_contract_fact",
+           "GN_contract_fact_date",
+           "GN_contract_basis"
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          RETURNING *,
+           CASE
+             WHEN "GN_contract_limit" IS NOT NULL AND "GN_contract_fact" IS NOT NULL
+               THEN "GN_contract_limit" - "GN_contract_fact"
+             ELSE NULL
+           END AS "GN_contract_remaining_limit",
            (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name",
            (SELECT "GN_dogovor_note" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_dogovor_note",
            (SELECT signer."GN_department"
@@ -1675,6 +1719,11 @@ export function setupRoutes(app: Express): void {
           payload.GN_contract_term_to ?? null,
           payload.GN_contract_side ?? '',
           payload.GN_contract_asez_number ?? '',
+          payload.GN_contract_limit === undefined || payload.GN_contract_limit === '' ? null : Number(payload.GN_contract_limit),
+          payload.GN_contract_vat ?? '22%',
+          payload.GN_contract_fact === undefined || payload.GN_contract_fact === '' ? null : Number(payload.GN_contract_fact),
+          normalizeOptionalContractMonth(payload.GN_contract_fact_date),
+          payload.GN_contract_basis ?? '17.1.9',
         ]
       );
 
@@ -1702,6 +1751,11 @@ export function setupRoutes(app: Express): void {
       GN_contract_term_to?: string;
       GN_contract_side?: string;
       GN_contract_asez_number?: string;
+      GN_contract_limit?: number | string | null;
+      GN_contract_vat?: string;
+      GN_contract_fact?: number | string | null;
+      GN_contract_fact_date?: string | null;
+      GN_contract_basis?: string;
     };
 
     if (!Number.isFinite(id)
@@ -1712,6 +1766,17 @@ export function setupRoutes(app: Express): void {
       || payload.GN_contract_state === undefined
     ) {
       res.status(400).json({ error: 'Invalid contract update payload' });
+      return;
+    }
+    if (!isValidOptionalContractAmount(payload.GN_contract_limit)
+      || !isValidOptionalContractAmount(payload.GN_contract_fact)
+      || (payload.GN_contract_vat !== undefined && !['22%', 'без НДС', 'смешанный'].includes(payload.GN_contract_vat))
+      || (payload.GN_contract_basis !== undefined && !['17.1.9', 'ВЗЛ', 'прочее'].includes(payload.GN_contract_basis))
+      || (payload.GN_contract_fact_date != null
+        && payload.GN_contract_fact_date !== ''
+        && normalizeOptionalContractMonth(payload.GN_contract_fact_date) === null)
+    ) {
+      res.status(400).json({ error: 'Invalid contract parameters' });
       return;
     }
 
@@ -1734,9 +1799,19 @@ export function setupRoutes(app: Express): void {
            "GN_contract_term_from" = $9,
            "GN_contract_term_to" = $10,
            "GN_contract_side" = $11,
-           "GN_contract_asez_number" = $12
-         WHERE "GN_contract_id" = $13
+           "GN_contract_asez_number" = $12,
+           "GN_contract_limit" = CASE WHEN $13 THEN $14::numeric ELSE "GN_contract_limit" END,
+           "GN_contract_vat" = CASE WHEN $15 THEN $16 ELSE "GN_contract_vat" END,
+           "GN_contract_fact" = CASE WHEN $17 THEN $18::numeric ELSE "GN_contract_fact" END,
+           "GN_contract_fact_date" = CASE WHEN $19 THEN $20::date ELSE "GN_contract_fact_date" END,
+           "GN_contract_basis" = CASE WHEN $21 THEN $22 ELSE "GN_contract_basis" END
+         WHERE "GN_contract_id" = $23
          RETURNING *,
+           CASE
+             WHEN "GN_contract_limit" IS NOT NULL AND "GN_contract_fact" IS NOT NULL
+               THEN "GN_contract_limit" - "GN_contract_fact"
+             ELSE NULL
+           END AS "GN_contract_remaining_limit",
            (SELECT "GN_dogovor" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_contract_name",
            (SELECT "GN_dogovor_note" FROM "GN_dogovor" WHERE "GN_dogovor"."GN_dgv_id" = "GN_contracts"."GN_contract_dogovor_FK") AS "GN_dogovor_note",
            (SELECT signer."GN_department"
@@ -1756,6 +1831,16 @@ export function setupRoutes(app: Express): void {
           payload.GN_contract_term_to ?? null,
           payload.GN_contract_side ?? '',
           payload.GN_contract_asez_number ?? '',
+          payload.GN_contract_limit !== undefined,
+          payload.GN_contract_limit === null || payload.GN_contract_limit === '' ? null : Number(payload.GN_contract_limit),
+          payload.GN_contract_vat !== undefined,
+          payload.GN_contract_vat,
+          payload.GN_contract_fact !== undefined,
+          payload.GN_contract_fact === null || payload.GN_contract_fact === '' ? null : Number(payload.GN_contract_fact),
+          payload.GN_contract_fact_date !== undefined,
+          normalizeOptionalContractMonth(payload.GN_contract_fact_date),
+          payload.GN_contract_basis !== undefined,
+          payload.GN_contract_basis,
           id,
         ]
       );

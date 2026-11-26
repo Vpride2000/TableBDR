@@ -9,6 +9,7 @@ export default function PrimarySearchableSelect({
   onChange,
   multiple = false,
   disabled = false,
+  searchable = true,
   placeholder = 'Выберите значение',
 }: {
   label: string
@@ -17,25 +18,30 @@ export default function PrimarySearchableSelect({
   onChange: (value: string | string[]) => void
   multiple?: boolean
   disabled?: boolean
+  searchable?: boolean
   placeholder?: string
 }): React.ReactElement {
   const [search, setSearch] = useState('')
   const sortedOptions = [...options].sort((left, right) => left.label.localeCompare(right.label, 'ru', { numeric: true, sensitivity: 'base' }))
-  const filteredOptions = sortedOptions.filter((option) => option.label.toLocaleLowerCase('ru').includes(search.trim().toLocaleLowerCase('ru')))
+  const filteredOptions = searchable
+    ? sortedOptions.filter((option) => option.label.toLocaleLowerCase('ru').includes(search.trim().toLocaleLowerCase('ru')))
+    : sortedOptions
   const selectedValues = Array.isArray(value) ? value : [value]
   const selectedOptions = sortedOptions.filter((option) => selectedValues.includes(option.value) && !filteredOptions.includes(option))
 
   return (
     <div className="primary-table__select-resizable">
-      <input
-        type="search"
-        className="primary-table__select-search"
-        aria-label={`Поиск: ${label}`}
-        placeholder="Поиск..."
-        value={search}
-        disabled={disabled}
-        onChange={(event) => setSearch(event.target.value)}
-      />
+      {searchable && (
+        <input
+          type="search"
+          className="primary-table__select-search"
+          aria-label={`Поиск: ${label}`}
+          placeholder="Поиск..."
+          value={search}
+          disabled={disabled}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      )}
       <select
         aria-label={label}
         multiple={multiple}

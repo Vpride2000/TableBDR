@@ -148,6 +148,16 @@ export async function ensureContractColumns(client: Client): Promise<void> {
       await client.query(`ALTER TABLE "GN_contracts" ADD COLUMN IF NOT EXISTS "${columnName}" TEXT DEFAULT ''`);
     }
   }
+
+  await client.query(`
+    ALTER TABLE "GN_contracts"
+      ADD COLUMN IF NOT EXISTS "GN_contract_approval_status" TEXT NOT NULL DEFAULT 'действующий',
+      ADD COLUMN IF NOT EXISTS "GN_contract_limit" NUMERIC,
+      ADD COLUMN IF NOT EXISTS "GN_contract_vat" TEXT NOT NULL DEFAULT '22%',
+      ADD COLUMN IF NOT EXISTS "GN_contract_fact" NUMERIC,
+      ADD COLUMN IF NOT EXISTS "GN_contract_fact_date" DATE,
+      ADD COLUMN IF NOT EXISTS "GN_contract_basis" TEXT NOT NULL DEFAULT '17.1.9'
+  `);
 }
 
 export async function ensureDogovorColumns(client: Client): Promise<void> {
@@ -1022,8 +1032,11 @@ export async function ensureExcelImportDeletionColumns(client: Client): Promise<
   }
 
   await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_calculation" TEXT NOT NULL DEFAULT ''`);
+  await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr25_corr" NUMERIC`);
   await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr25_corr_kol_vo" NUMERIC`);
+  await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr26" NUMERIC`);
   await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr26_kol_vo" NUMERIC`);
+  await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr26_corr" NUMERIC`);
   await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr26_corr_kol_vo" NUMERIC`);
   await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr27_kol_vo" NUMERIC`);
   await client.query(`ALTER TABLE "GN_bdr" ADD COLUMN IF NOT EXISTS "GN_bdr_bdr27" NUMERIC`);

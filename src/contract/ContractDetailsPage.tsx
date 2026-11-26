@@ -18,6 +18,30 @@ const BDR_CURRENCY_FORMATTER = new Intl.NumberFormat('ru-RU', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
+const CONTRACT_MONTH_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+})
+
+function formatContractMonth(value: string): string {
+  const month = value.slice(0, 7)
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
+    ? CONTRACT_MONTH_FORMATTER.format(new Date(`${month}-01T00:00:00Z`))
+    : ''
+}
+
+function getContractTermMonths(fromValue: string, toValue: string): number | null {
+  const from = fromValue.slice(0, 10)
+  const to = toValue.slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return null
+
+  const [fromYear, fromMonth] = from.split('-').map(Number)
+  const [toYear, toMonth] = to.split('-').map(Number)
+  if (fromMonth < 1 || fromMonth > 12 || toMonth < 1 || toMonth > 12) return null
+
+  return Math.abs((toYear - fromYear) * 12 + toMonth - fromMonth) + 1
+}
 
 type ContractInfo = {
   GN_contract_id: number
@@ -34,6 +58,12 @@ type ContractInfo = {
   GN_contract_term_to?: string
   GN_contract_side?: string
   GN_contract_asez_number?: string
+  GN_contract_limit?: number | string | null
+  GN_contract_remaining_limit?: number | string | null
+  GN_contract_vat?: string
+  GN_contract_fact?: number | string | null
+  GN_contract_fact_date?: string | null
+  GN_contract_basis?: string
 }
 
 interface ContractDetailsPageProps {
@@ -213,9 +243,11 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
     })
   }
 
-  async function removeContractFromControl(): Promise<void> {
+  async function updateContractControlStatus(isOnControl: boolean): Promise<void> {
     if (!contractInfo) return;
-    if (!window.confirm(`Убрать договор «${contractInfo.GN_contract_name || ''}» с контроля?`)) return;
+    const approvalStatus = isOnControl ? 'действующий' : 'снят с контроля';
+    const action = isOnControl ? 'Вернуть на контроль' : 'Убрать с контроля';
+    if (!window.confirm(`${action} договор «${contractInfo.GN_contract_name || ''}»?`)) return;
     setContractSaveLoading(true);
     setContractSaveError(null);
     setContractControlMessage(null);
@@ -223,7 +255,7 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
     try {
       const updatedDraft = {
         ...contractInfo,
-        GN_contract_approval_status: 'снят с контроля',
+        GN_contract_approval_status: approvalStatus,
         GN_contract_status_updated_at: new Date().toISOString().slice(0, 10),
       };
       const response = await fetch(`/api/gn/contracts/${contractInfo.GN_contract_id}`, {
@@ -240,10 +272,10 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
       const updatedContract = (await response.json()) as ContractInfo;
       setContractInfo(updatedContract);
       setContractDraft(updatedContract);
-      setContractControlMessage('Договор убран с контроля.');
+      setContractControlMessage(isOnControl ? 'Договор возвращён на контроль.' : 'Договор убран с контроля.');
       localStorage.setItem(CONTRACT_CONTROL_UPDATED_KEY, String(Date.now()));
     } catch (err) {
-      setContractSaveError(err instanceof Error ? err.message : 'Не удалось убрать договор с контроля');
+      setContractSaveError(err instanceof Error ? err.message : `Не удалось выполнить действие: ${action.toLocaleLowerCase('ru')}`);
     } finally {
       setContractSaveLoading(false);
     }
@@ -540,30 +572,31 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
   const columns = ['Подразделение', 'Объект', 'Лицевой счет', 'На кого расходы', 'Статья бюджета УС', 'Статья бюджета', 'БДР26корр'];
   const contractRows = rows;
   const accountOptions = personalAccountOptions(dogovorMetadata.personalAccount);
+  const personalAccountSummary = dogovorMetadata.personalAccount.split(/\r?\n/).filter(Boolean).join(', ');
+  const contractTermMonths = getContractTermMonths(
+    contractInfo?.GN_contract_term_from ?? '',
+    contractInfo?.GN_contract_term_to ?? '',
+  );
+  const remainingContractLimit = contractInfo?.GN_contract_remaining_limit == null || contractInfo.GN_contract_remaining_limit === ''
+    ? null
+    : Number(contractInfo.GN_contract_remaining_limit);
   const totalBdr26Corr = contractRows.reduce((total, row) => total + parseBudgetAmount(row['БДР26корр']), 0);
 
   return (
     <section className="contract-details">
       <div className="contract-details-header">
         <div className="contract-details-summary">
-          <h2><strong>Договор:</strong> {contractInfo?.GN_contract_name || 'Загрузка...'}</h2>
-          {contractInfo && (
-            <>
-              <div className="contract-details-meta-row">
-                <strong>ДАТА ПОДПИСАНИЯ:</strong> {dogovorMetadata.date ? formatDateDisplay(dogovorMetadata.date) : ''}
-              </div>
-              <div className="contract-details-meta-row">
-                <strong>Контрагент:</strong> {displayLookupLabel(contractorOptions, contractInfo.GN_contract_contractor_FK)}
-              </div>
-              <div className="contract-details-meta-row">
-                <strong>Подписант:</strong> {dogovorMetadata.signer}
-              </div>
-              <div className="contract-details-meta-row">
-                <strong>Лицевой счет:</strong>
-                <span>{dogovorMetadata.personalAccount.split(/\r?\n/).filter(Boolean).join(', ')}</span>
-              </div>
-            </>
-          )}
+          <h2>
+            Договор <strong>{contractInfo?.GN_contract_name || 'Загрузка...'}</strong>
+            {contractInfo && (
+              <>
+                {' '}от <strong>{dogovorMetadata.date ? formatDateDisplay(dogovorMetadata.date) : '—'}</strong>
+                {' '}с <strong>{displayLookupLabel(contractorOptions, contractInfo.GN_contract_contractor_FK)}</strong>
+                , подписал <strong>{dogovorMetadata.signer || '—'}</strong>
+                , лицевые счета <strong>{personalAccountSummary || '—'}</strong>.
+              </>
+            )}
+          </h2>
         </div>
       </div>
 
@@ -571,7 +604,30 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
       {contractError && <p className="hint hint--error">Ошибка: {contractError}</p>}
       {contractInfo && (
         <div className="contract-details-contract-meta">
-          <h3>Параметры договора</h3>
+          <h3>
+            Параметры договора{' '}
+            {!isEditingContract && (
+              <button
+                type="button"
+                className="page-text-link"
+                style={{ textTransform: 'none' }}
+                aria-label="Редактировать параметры договора"
+                onClick={startEditContract}
+              >
+                (ред)
+              </button>
+            )}
+            {' '}
+            <label className="page-text-link" style={{ textTransform: 'none' }}>
+              <input
+                type="checkbox"
+                checked={contractInfo.GN_contract_approval_status !== 'снят с контроля'}
+                disabled={contractSaveLoading}
+                onChange={(event) => void updateContractControlStatus(event.target.checked)}
+              />
+              {' '}На контроле
+            </label>
+          </h3>
 
           {!isEditingContract ? (
             <div className="contract-details-meta-preview">
@@ -579,35 +635,35 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
                 <strong>Статус:</strong> {contractInfo.GN_contract_approval_status || 'действующий'}
               </div>
               <div className="contract-details-meta-row">
-                <strong>Состояние:</strong> {contractInfo.GN_contract_state}
-              </div>
-              <div className="contract-details-meta-row">
-                <strong>Дата начала действия</strong> {contractInfo.GN_contract_term_from ? formatDateDisplay(contractInfo.GN_contract_term_from) : ''}
-              </div> 
-              <div className="contract-details-meta-row">
-                <strong>Дата окончания действия:</strong> {contractInfo.GN_contract_term_to ? formatDateDisplay(contractInfo.GN_contract_term_to) : ''}
+                Срок действия с <strong>{contractInfo.GN_contract_term_from ? formatDateDisplay(contractInfo.GN_contract_term_from) : '—'}</strong>
+                {' '}по <strong>{contractInfo.GN_contract_term_to ? formatDateDisplay(contractInfo.GN_contract_term_to) : '—'}</strong>
+                {contractTermMonths !== null && <> (<strong>{contractTermMonths} мес.</strong>)</>}.
               </div>
 
               <div className="contract-details-meta-row">
-                <strong>Номер АСЭЗ:</strong> {contractInfo.GN_contract_asez_number || ''}
+                <strong>Лимит договора:</strong>{' '}
+                <strong>{contractInfo.GN_contract_limit === null || contractInfo.GN_contract_limit === undefined || contractInfo.GN_contract_limit === ''
+                  ? '—'
+                  : BDR_CURRENCY_FORMATTER.format(Number(contractInfo.GN_contract_limit))}</strong>
+                {'; в бюджете на год '}
+                <strong>{BDR_CURRENCY_FORMATTER.format(totalBdr26Corr)}</strong>
               </div>
-              <button
-                type="button"
-                className="page-action-btn page-action-btn--secondary"
-                onClick={startEditContract}
-              >
-                Редактировать параметры договора
-              </button>
-              {contractInfo.GN_contract_approval_status !== 'снят с контроля' && (
-                <button
-                  type="button"
-                  className="page-action-btn page-action-btn--secondary"
-                  onClick={() => void removeContractFromControl()}
-                  disabled={contractSaveLoading}
-                >
-                  Убрать с контроля
-                </button>
-              )}
+              <div className="contract-details-meta-row">
+                <strong>Факт</strong>
+                {contractInfo.GN_contract_fact_date && ` (${formatContractMonth(contractInfo.GN_contract_fact_date)})`}
+                : <strong>{contractInfo.GN_contract_fact === null || contractInfo.GN_contract_fact === undefined || contractInfo.GN_contract_fact === ''
+                  ? '—'
+                  : BDR_CURRENCY_FORMATTER.format(Number(contractInfo.GN_contract_fact))}</strong>
+                {', остаток лимита '}
+                <strong>{remainingContractLimit === null ? '—' : BDR_CURRENCY_FORMATTER.format(remainingContractLimit)}</strong>
+              </div>
+              <div className="contract-details-meta-row">
+                <strong>Используемый НДС:</strong> {contractInfo.GN_contract_vat || '22%'}
+              </div>
+              <div className="contract-details-meta-row">
+                <strong>Основание заключения:</strong> {contractInfo.GN_contract_basis || '17.1.9'}
+                {` (Номер АСЭЗ: ${contractInfo.GN_contract_asez_number || '—'})`}
+              </div>
               {contractControlMessage && <p className="hint">{contractControlMessage}</p>}
               {contractSaveError && <p className="hint hint--error">{contractSaveError}</p>}
             </div>
@@ -662,6 +718,59 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
                   onChange={(event) => updateContractDraft('GN_contract_asez_number', event.target.value)}
                 />
               </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-limit">Лимит договора, руб.</label>
+                <input
+                  id="contract-limit"
+                  type="number"
+                  step="0.01"
+                  value={contractDraft?.GN_contract_limit ?? ''}
+                  onChange={(event) => updateContractDraft('GN_contract_limit', event.target.value)}
+                />
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-vat">Используемый НДС</label>
+                <select
+                  id="contract-vat"
+                  value={contractDraft?.GN_contract_vat ?? '22%'}
+                  onChange={(event) => updateContractDraft('GN_contract_vat', event.target.value)}
+                >
+                  <option value="22%">22%</option>
+                  <option value="без НДС">без НДС</option>
+                  <option value="смешанный">смешанный</option>
+                </select>
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-fact">Факт, руб.</label>
+                <input
+                  id="contract-fact"
+                  type="number"
+                  step="0.01"
+                  value={contractDraft?.GN_contract_fact ?? ''}
+                  onChange={(event) => updateContractDraft('GN_contract_fact', event.target.value)}
+                />
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-fact-date">Месяц факта</label>
+                <input
+                  id="contract-fact-date"
+                  type="month"
+                  value={contractDraft?.GN_contract_fact_date?.slice(0, 7) ?? ''}
+                  onChange={(event) => updateContractDraft('GN_contract_fact_date', event.target.value)}
+                />
+              </div>
+              <div className="form-field form-field-compact">
+                <label className="form-field-label" htmlFor="contract-basis">Основание заключения</label>
+                <select
+                  id="contract-basis"
+                  value={contractDraft?.GN_contract_basis ?? '17.1.9'}
+                  onChange={(event) => updateContractDraft('GN_contract_basis', event.target.value)}
+                >
+                  <option value="17.1.9">17.1.9</option>
+                  <option value="ВЗЛ">ВЗЛ</option>
+                  <option value="прочее">прочее</option>
+                </select>
+              </div>
               <p className="hint">Лицевой счет и подразделение расходов сохраняются сразу при выборе; отмена редактирования договора их не отменяет.</p>
               <div className="form-actions-row-compact">
                 <button
@@ -696,14 +805,16 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
           <table className="guide-table table-compact contract-details-table">
             <thead>
               <tr>
+                <th>№</th>
                 {columns.map((col) => (
                   <th key={col}>{col}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {contractRows.map((row) => (
+              {contractRows.map((row, rowIndex) => (
                   <tr key={Number(row.GN_bdr_ID)}>
+                    <td>{rowIndex + 1}</td>
                     {columns.map((col) => (
                       <td key={col}>
                         {isEditingContract && col === 'Лицевой счет' ? (
@@ -741,29 +852,32 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={columns.length - 1}>Итого БДР26корр</td>
+                <td colSpan={columns.length}>Итого БДР26корр</td>
                 <td>{BDR_CURRENCY_FORMATTER.format(totalBdr26Corr)}</td>
               </tr>
             </tfoot>
           </table>
           {accountSaveError && <p className="hint hint--error">Ошибка сохранения лицевого счёта: {accountSaveError}</p>}
           {expenseDepartmentSaveError && <p className="hint hint--error">Ошибка сохранения подразделения расходов: {expenseDepartmentSaveError}</p>}
-          <p className="contract-details-count">Всего строк: {contractRows.length}</p>
         </div>
       )}
 
-      <h3>Дополнительные соглашения</h3>
-      {!isAddingAgreement && (
-        <button
-          type="button"
-          className="page-action-btn page-action-btn--success"
-          onClick={() => setIsAddingAgreement(true)}
-        >
-          Добавить соглашение
-        </button>
-      )}
+      <div className="contract-agreements-heading">
+        <h3>Дополнительные соглашения</h3>
+        {!isAddingAgreement && (
+          <button
+            type="button"
+            className="contract-agreements-add"
+            aria-label="Добавить соглашение"
+            title="Добавить соглашение"
+            onClick={() => setIsAddingAgreement(true)}
+          >
+            +
+          </button>
+        )}
+      </div>
       {isAddingAgreement && (
-        <div className="form-fields-compact">
+        <div className="form-fields-compact contract-agreement-create-form">
           <div className="form-field form-field-compact">
             <label className="form-field-label" htmlFor="agreement-number">Номер</label>
             <input
@@ -794,7 +908,7 @@ export default function ContractDetailsPage({ contractId }: ContractDetailsPageP
               placeholder="0"
             />
           </div>
-          <div className="form-field form-field-compact" style={{flex: '1 1 320px'}}>
+          <div className="form-field form-field-compact contract-agreement-description">
             <label className="form-field-label" htmlFor="agreement-description">Описание</label>
             <input
               id="agreement-description"

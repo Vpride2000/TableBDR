@@ -21,6 +21,7 @@ type Lookup = {
   contractor?: string
   contractorId?: number
   contractWindowId?: number
+  contractRemainingLimit?: number | null
   date?: string
   departmentIds?: number[]
 }
@@ -148,14 +149,19 @@ function labelList(values: Lookup[]): string {
   return values.map(({ label }) => label).join('; ')
 }
 
-function renderBdrProgress(summary: { amount: number; count: number } | null, amounts: Array<number | string | null | undefined>): React.ReactElement {
+function renderBdrProgress(
+  summary: { amount: number; count: number } | null,
+  amounts: Array<number | string | null | undefined>,
+  contractRemainingLimit: number | null,
+): React.ReactElement {
   const budget = summary?.amount ?? null
   const { total, percent } = primaryBdrProgress(budget, amounts)
   const filled = percent === null ? 0 : Math.max(0, Math.min(100, percent))
   const details = [
-    `БДР26корр: ${summary === null ? 'нет данных' : `${formatBdr26Corr(summary.amount)} (${summary.count} стр.)`}`,
-    `Сумма за год с НДС: ${total === null ? 'некорректное значение' : formatBdr26Corr(total)}`,
-    percent === null ? 'Прогресс не рассчитан' : `Выполнение: ${percent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%`,
+    `В бюджете по ЛС: ${summary === null ? 'нет данных' : `${formatBdr26Corr(summary.amount)} (${summary.count} стр.)`}`,
+    `Расход за год, с НДС: ${total === null ? 'некорректное значение' : formatBdr26Corr(total)}`,
+    percent === null ? 'Прогресс не рассчитан' : `Выполнение бюджета по ЛС: ${percent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%`,
+    `Остаток лимита договора: ${contractRemainingLimit === null ? 'нет данных' : formatBdr26Corr(contractRemainingLimit)}`,
   ]
   const description = details.join('\n')
   return (
@@ -171,7 +177,11 @@ function renderBdrProgress(summary: { amount: number; count: number } | null, am
       >
         <span style={{ width: `${filled}%` }} />
       </span>
-      {details.map((line) => <div key={line}>{line}</div>)}
+      {details.map((line) => (
+        <div key={line}>
+          {line.startsWith('Остаток лимита договора:') ? <em>{line}</em> : line}
+        </div>
+      ))}
     </>
   )
 }
@@ -335,12 +345,19 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           : [Number(row.GN_department_FK)].filter(Number.isSafeInteger),
       })))
       const contractorNames = new Map(contractorRows.map((row) => [Number(row.GN_c_id), String(row.GN_contarctor ?? '')]))
-      const contractWindowIds = new Map<number, number>()
+      const contractDetailsByDogovor = new Map<number, { contractWindowId: number; contractRemainingLimit: number | null }>()
       contractRegistryRows.forEach((row) => {
         const dogovorId = Number(row.GN_contract_dogovor_FK)
         const contractId = Number(row.GN_contract_id)
-        if (Number.isSafeInteger(dogovorId) && Number.isSafeInteger(contractId) && !contractWindowIds.has(dogovorId)) {
-          contractWindowIds.set(dogovorId, contractId)
+        const rawRemainingLimit = row.GN_contract_remaining_limit
+        const contractRemainingLimit = rawRemainingLimit === null || rawRemainingLimit === undefined || rawRemainingLimit === ''
+          ? null
+          : Number(rawRemainingLimit)
+        if (contractRemainingLimit !== null && !Number.isFinite(contractRemainingLimit)) {
+          throw new Error('Некорректный остаток лимита договора')
+        }
+        if (Number.isSafeInteger(dogovorId) && Number.isSafeInteger(contractId) && !contractDetailsByDogovor.has(dogovorId)) {
+          contractDetailsByDogovor.set(dogovorId, { contractWindowId: contractId, contractRemainingLimit })
         }
       })
       setContracts(contractRows.map((row) => ({
@@ -349,7 +366,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
         personalAccount: String(row.GN_dogovor_personal_account ?? ''),
         contractor: contractorNames.get(Number(row.GN_contarctor_FK)) ?? '',
         contractorId: Number(row.GN_contarctor_FK),
-        contractWindowId: contractWindowIds.get(Number(row.GN_dgv_id)),
+        ...contractDetailsByDogovor.get(Number(row.GN_dgv_id)),
         date: row.GN_dogovor_date ? String(row.GN_dogovor_date) : '',
       })))
       const options = parseBdrOptions(bdrRows)
@@ -435,7 +452,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
       if (key === 'bdr26Corr') return getBdr26Corr(bdr26CorrIndex, row.personalAccount) ?? ''
       if (key === 'contract') {
         const account = personalAccountFor(row)
-        return formatBudgetDepartment(contractFor(row), account ? `лицевой счет: ${account}` : '')
+        return formatBudgetDepartment(contractFor(row), account ? `ЛС № ${account}. расчет детализации` : '')
       }
       if (key === 'personalAccount') return personalAccountFor(row)
       const monthData = sort.month ? row.monthData[sort.month] : undefined
@@ -459,7 +476,8 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           .map(({ key }) => valueFor(row, key)),
         getBdrBudgetItems(budgetItemIndex, row.personalAccount),
       ]
-      return primaryBdrSearchText(summary, monthlyAmounts, otherValues)
+      const contractRemainingLimit = contracts.find((contract) => contract.id === row.contractId)?.contractRemainingLimit ?? null
+      return primaryBdrSearchText(summary, monthlyAmounts, otherValues, contractRemainingLimit)
     }
     return rows.filter((row) => {
       if (departmentFilter && String(row.departmentId) !== departmentFilter) return false
@@ -674,7 +692,8 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
       const amounts = row
         ? PRIMARY_MONTHS.map(({ key: month }) => row.monthData[month]?.amountWithVat)
         : [draft.amountWithVat]
-      return renderBdrProgress(summary, amounts)
+      const contractRemainingLimit = contracts.find((contract) => contract.id === Number(draft.contractId))?.contractRemainingLimit ?? null
+      return renderBdrProgress(summary, amounts, contractRemainingLimit)
     }
     if (key === 'department') {
       const selectedDepartment = editingId === null ? null : rows.find((row) => row.id === editingId)?.departmentId
@@ -910,6 +929,17 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
     )
   }
 
+  function openPrimaryAccountDetails(row: PrimaryDocument): void {
+    setActionError(null)
+    const popup = window.open(
+      `${window.location.pathname}#primary-account-window-${row.id}`,
+      `primary-account-window-${row.id}`,
+      'popup=yes,width=900,height=700,resizable=yes,scrollbars=yes',
+    )
+    if (popup) popup.focus()
+    else setActionError('Не удалось открыть окно детализации. Проверьте настройки всплывающих окон браузера.')
+  }
+
   function renderPrimaryValue(row: PrimaryDocument, key: ColumnKey, month?: PrimaryMonth): React.ReactNode {
     if (MONTH_COLUMN_KEYS.has(key)) {
       if (!month) return null
@@ -942,7 +972,8 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           ? monthDrafts[row.id].amountWithVat
           : row.monthData[currentMonth]?.amountWithVat
       ))
-      return renderBdrProgress(summary, amounts)
+      const contractRemainingLimit = contracts.find((contract) => contract.id === row.contractId)?.contractRemainingLimit ?? null
+      return renderBdrProgress(summary, amounts, contractRemainingLimit)
     }
     if (key === 'contractor') return contracts.find((item) => item.id === row.contractId)?.contractor ?? ''
     if (key === 'contract') {
@@ -958,7 +989,15 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
       if (!account) return contractValue
       return (
         <>
-          {contractValue} (лицевой счет: {renderPrimaryValue(row, 'personalAccount')})
+          {contractValue} (ЛС № {account}.{' '}
+          <button
+            type="button"
+            className="contract-cell-button"
+            aria-label={`Расчёт детализации лицевого счёта ${account}, запись ${row.id}`}
+            onClick={() => openPrimaryAccountDetails(row)}
+          >
+            расчет детализации
+          </button>)
         </>
       )
     }
@@ -971,16 +1010,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
           type="button"
           className="contract-cell-button"
           aria-label={`Расчёт детализации лицевого счёта ${account}, запись ${row.id}`}
-          onClick={() => {
-            setActionError(null)
-            const popup = window.open(
-              `${window.location.pathname}#primary-account-window-${row.id}`,
-              `primary-account-window-${row.id}`,
-              'popup=yes,width=900,height=700,resizable=yes,scrollbars=yes',
-            )
-            if (popup) popup.focus()
-            else setActionError('Не удалось открыть окно детализации. Проверьте настройки всплывающих окон браузера.')
-          }}
+          onClick={() => openPrimaryAccountDetails(row)}
         >
           {account}
         </button>
@@ -1247,6 +1277,7 @@ export default function PrimaryPage({ onOpenContract }: { onOpenContract: (contr
                 value={departmentFilter}
                 options={departmentFilterOptions}
                 placeholder="Все подразделения"
+                searchable={false}
                 disabled={monthEdit !== null || savingMonth}
                 onChange={(value) => setDepartmentFilter(String(value))}
               />

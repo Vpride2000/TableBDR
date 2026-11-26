@@ -47,8 +47,23 @@ async function main(): Promise<void> {
         "GN_contract_date" DATE,
         "GN_contract_term_from" DATE,
         "GN_contract_term_to" DATE,
+        "GN_contract_approval_status" TEXT NOT NULL DEFAULT 'действующий',
+        "GN_contract_limit" NUMERIC,
+        "GN_contract_vat" TEXT NOT NULL DEFAULT '22%',
+        "GN_contract_fact" NUMERIC,
+        "GN_contract_fact_date" DATE,
+        "GN_contract_basis" TEXT NOT NULL DEFAULT '17.1.9',
         PRIMARY KEY("GN_contract_id")
       )
+    `);
+    await client.query(`
+      ALTER TABLE "GN_contracts"
+        ADD COLUMN IF NOT EXISTS "GN_contract_approval_status" TEXT NOT NULL DEFAULT 'действующий',
+        ADD COLUMN IF NOT EXISTS "GN_contract_limit" NUMERIC,
+        ADD COLUMN IF NOT EXISTS "GN_contract_vat" TEXT NOT NULL DEFAULT '22%',
+        ADD COLUMN IF NOT EXISTS "GN_contract_fact" NUMERIC,
+        ADD COLUMN IF NOT EXISTS "GN_contract_fact_date" DATE,
+        ADD COLUMN IF NOT EXISTS "GN_contract_basis" TEXT NOT NULL DEFAULT '17.1.9'
     `);
 
     const countResult = await client.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM "GN_contracts"`);

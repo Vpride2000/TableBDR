@@ -4047,10 +4047,12 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 
 .contract-details-edit-form {
   max-width: 440px;
+  gap: 6px;
 }
 
 .contract-details-edit-form > .form-field {
   grid-template-columns: minmax(0, 190px) minmax(120px, 1fr);
+  gap: 4px;
 }
 
 .contract-details-edit-form .form-field-label {
@@ -4061,6 +4063,75 @@ table.guide-table.gazprom-telecom-grid thead th > button.gazprom-telecom-sort-bu
 .contract-details-edit-form select {
   min-width: 0;
   box-sizing: border-box;
+  padding: 3px 6px;
+  font-size: 0.8rem;
+}
+
+.contract-details-edit-form > .hint {
+  margin: 0;
+}
+
+.contract-agreements-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.contract-agreements-heading h3 {
+  margin: 0;
+}
+
+.contract-agreements-add {
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: #0c4a6e;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.contract-agreements-add:hover {
+  color: #075985;
+}
+
+.contract-agreement-create-form {
+  display: grid;
+  grid-template-columns: max-content max-content max-content minmax(220px, 1fr);
+  align-items: center;
+}
+
+.contract-agreement-create-form > .form-field-compact {
+  min-width: 0;
+}
+
+.contract-agreement-create-form > .form-field-compact input {
+  width: 120px;
+  box-sizing: border-box;
+}
+
+.contract-agreement-create-form > .contract-agreement-description input {
+  width: 100%;
+  min-width: 0;
+}
+
+.contract-agreement-create-form > .form-actions-row-compact {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 760px) {
+  .contract-agreement-create-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .contract-agreement-create-form > .contract-agreement-description {
+    grid-column: 1 / -1;
+  }
+
+  .contract-agreement-create-form > .form-field-compact input {
+    flex: 1;
+    width: auto;
+  }
 }
 
 .contracts-agreements-row td {

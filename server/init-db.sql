@@ -178,6 +178,11 @@ CREATE TABLE IF NOT EXISTS "GN_contracts" (
   "GN_contract_term_from" DATE,
   "GN_contract_term_to" DATE,
   "GN_contract_approval_status" TEXT NOT NULL DEFAULT 'действующий',
+  "GN_contract_limit" NUMERIC,
+  "GN_contract_vat" TEXT NOT NULL DEFAULT '22%',
+  "GN_contract_fact" NUMERIC,
+  "GN_contract_fact_date" DATE,
+  "GN_contract_basis" TEXT NOT NULL DEFAULT '17.1.9',
   PRIMARY KEY("GN_contract_id")
 );
 
@@ -337,7 +342,14 @@ ALTER TABLE "GN_bdr"
 ALTER TABLE "GN_bdr"
   ADD FOREIGN KEY("GN_budget_network_item_FK") REFERENCES "GN_budget_network_item"("GN_b_id")
   ON UPDATE NO ACTION ON DELETE NO ACTION;
-
+ALTER TABLE "GN_contracts"
+ADD COLUMN IF NOT EXISTS "GN_contract_approval_status" TEXT NOT NULL DEFAULT 'действующий';
+ALTER TABLE "GN_contracts"
+  ADD COLUMN IF NOT EXISTS "GN_contract_limit" NUMERIC,
+  ADD COLUMN IF NOT EXISTS "GN_contract_vat" TEXT NOT NULL DEFAULT '22%',
+  ADD COLUMN IF NOT EXISTS "GN_contract_fact" NUMERIC,
+  ADD COLUMN IF NOT EXISTS "GN_contract_fact_date" DATE,
+  ADD COLUMN IF NOT EXISTS "GN_contract_basis" TEXT NOT NULL DEFAULT '17.1.9';
 -- Seed data for GN_department tables
 INSERT INTO "GN_department" ("GN_department") VALUES
   ('Отдел информационных технологий'),

@@ -172,6 +172,7 @@ export function primaryBdrSearchText(
   summary: { amount: number; count: number } | null,
   monthlyAmounts: Array<number | string | null | undefined>,
   otherValues: unknown[],
+  contractRemainingLimit: number | null = null,
 ): string {
   const { total, percent } = primaryBdrProgress(summary?.amount ?? null, monthlyAmounts)
   const amountValues = (value: number | null): string[] => value === null
@@ -182,9 +183,12 @@ export function primaryBdrSearchText(
     ...amountValues(summary?.amount ?? null),
     summary ? `${summary.count} стр.` : '',
     total === null ? 'некорректное значение' : '',
-    'сумма за год с ндс',
+    'в бюджете по лс',
+    'расход за год с ндс',
     ...amountValues(total),
-    percent === null ? 'прогресс не рассчитан' : `выполнение ${percent} ${percent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%`,
+    'остаток лимита договора',
+    ...amountValues(contractRemainingLimit),
+    percent === null ? 'прогресс не рассчитан' : `выполнение бюджета по лс ${percent} ${percent.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%`,
     ...otherValues.map((value) => typeof value === 'string' ? value : String(value ?? '')),
   ].join(' ').toLocaleLowerCase('ru')
 }
@@ -263,4 +267,3 @@ export function completePrimarySelection(
   }
   return result
 }
-
